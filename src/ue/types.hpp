@@ -12,6 +12,8 @@
 
 #include <array>
 #include <atomic>
+
+#include <ue/rrc/measurement.hpp>
 #include <deque>
 #include <memory>
 #include <queue>
@@ -106,6 +108,7 @@ struct UeConfig
     std::optional<std::string> imeiSv{};
     SupportedAlgs supportedAlgs{};
     std::vector<std::string> gnbSearchList{};
+    MeasSourceConfig measSourceConfig{};
     std::vector<SessionConfig> defaultSessions{};
     IntegrityMaxDataRateConfig integrityMaxRate{};
     NetworkSlice defaultConfiguredNssai{};

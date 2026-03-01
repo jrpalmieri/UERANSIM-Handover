@@ -15,6 +15,7 @@
 
 #include <ue/nts.hpp>
 #include <ue/types.hpp>
+#include <ue/rrc/measurement.hpp>
 #include <utils/logger.hpp>
 #include <utils/nts.hpp>
 
@@ -40,11 +41,23 @@ extern "C"
     struct ASN_RRC_Paging;
     struct ASN_RRC_MIB;
     struct ASN_RRC_SIB1;
+    struct ASN_RRC_RRCReconfiguration;
 }
 
 namespace nr::ue
 {
 
+class MeasurementProvider;
+
+/**
+ * @brief Task that performs all RRC-related operations, including:
+ * - Cell selection and management
+ * - RRC connection establishment, maintenance, and release
+ * - NAS transport
+ * - Measurement reporting
+ * - Access control
+ *  
+ */
 class UeRrcTask : public NtsTask
 {
   private:
@@ -62,6 +75,16 @@ class UeRrcTask : public NtsTask
     /* Procedure related */
     ERrcLastSetupRequest m_lastSetupReq{};
 
+    /* Measurement framework */
+    UeMeasConfig m_measConfig{};
+    std::unique_ptr<MeasurementProvider> m_measProvider;
+
+    /* Handover state */
+    bool m_handoverInProgress{};
+    long m_hoTxId{};             // RRC transaction ID of the pending handover
+    int  m_hoTargetPci{};        // Target cell PCI from ReconfigurationWithSync
+    bool m_measurementsSuspended{};  // Phase 3: measurements paused during handover
+
     /* Establishment procedure related */
     int m_establishmentCause{};
     ASN_RRC_InitialUE_Identity_t m_initialId{};
@@ -71,7 +94,7 @@ class UeRrcTask : public NtsTask
 
   public:
     explicit UeRrcTask(TaskBase *base);
-    ~UeRrcTask() override = default;
+    ~UeRrcTask() override;
 
   protected:
     void onStart() override;
@@ -137,6 +160,27 @@ class UeRrcTask : public NtsTask
 
     /* Access Control */
     void performUac(std::shared_ptr<LightSync<UacInput, UacOutput>> &uacCtl);
+
+    /* Measurement framework */
+    void evaluateMeasurements();
+    void applyMeasConfig(const UeMeasConfig &cfg);
+    void resetMeasurements();
+    void sendMeasurementReport(int measId, int servingRsrp,
+                               const std::vector<struct TriggeredNeighbor> &neighbours,
+                               const std::unordered_map<int, CellMeasurement> &allMeas);
+    std::unordered_map<int, CellMeasurement> collectMeasurements();
+    int getServingCellRsrp(const std::unordered_map<int, CellMeasurement> &allMeas) const;
+    int resolveCellId(const CellMeasurement &cm) const;
+    void receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg);
+
+    /* Handover execution */
+    void performHandover(long txId, int targetPhysCellId, int newCRNTI,
+                         int t304Ms, bool hasRachConfig = false);
+    int  findCellByPci(int physCellId);
+    void handleT304Expiry();
+    void suspendMeasurements();
+    void resumeMeasurements();
+    void refreshSecurityKeys();
 };
 
 } // namespace nr::ue

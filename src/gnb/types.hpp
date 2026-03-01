@@ -150,6 +150,16 @@ struct RrcUeContext
     int64_t establishmentCause{};
     std::optional<GutiMobileIdentity> sTmsi{};
 
+    /* Handover state (Phase 4) */
+    bool handoverInProgress{};
+    int handoverTargetPci{};
+    int handoverNewCrnti{};
+    long handoverTxId{};
+
+    /* Last measurement report data */
+    int lastMeasReportPci{-1};
+    int lastMeasReportRsrp{-140};
+
     explicit RrcUeContext(const int ueId) : ueId(ueId)
     {
     }

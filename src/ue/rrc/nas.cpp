@@ -20,6 +20,16 @@
 namespace nr::ue
 {
 
+/**
+ * @brief Routine that delivers uplink NAS message from NAS layer to RRC layer.
+ *  This is usually triggered by the events related to the NAS layer, such as 
+ *  uplink NAS delivery, local release connection, and RRC notify.  IF UE is in state
+ *  RRC_IDLE, this routine will also trigger the connection establishment procedure. 
+ *  If UE is in state RRC_INACTIVE, this routine will fail silently (TODO: support RRC_INACTIVE state).
+ * 
+ * @param pduId 
+ * @param nasPdu 
+ */
 void UeRrcTask::deliverUplinkNas(uint32_t pduId, OctetString &&nasPdu)
 {
     if (!m_base->shCtx.currentCell.get<bool>([](auto &value) { return value.hasValue(); }))

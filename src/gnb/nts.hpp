@@ -190,7 +190,8 @@ struct NmGnbRrcToNgap : NtsMessage
     {
         INITIAL_NAS_DELIVERY,
         UPLINK_NAS_DELIVERY,
-        RADIO_LINK_FAILURE
+        RADIO_LINK_FAILURE,
+        HANDOVER_NOTIFY,
     } present;
 
     // INITIAL_NAS_DELIVERY

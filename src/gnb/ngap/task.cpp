@@ -66,6 +66,11 @@ void NgapTask::onLoop()
             handleRadioLinkFailure(w.ueId);
             break;
         }
+        case NmGnbRrcToNgap::HANDOVER_NOTIFY: {
+            m_logger->info("Handover complete notification for UE[%d]", w->ueId);
+            // TODO: Trigger PathSwitchRequest to AMF when acting as target gNB
+            break;
+        }
         }
         break;
     }

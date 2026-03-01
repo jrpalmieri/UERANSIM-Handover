@@ -25,6 +25,7 @@ void UeRrcTask::performCycle()
 {
     if (m_state == ERrcState::RRC_CONNECTED)
     {
+        evaluateMeasurements();
     }
     else if (m_state == ERrcState::RRC_IDLE)
     {

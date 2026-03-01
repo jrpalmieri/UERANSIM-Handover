@@ -30,6 +30,8 @@ extern "C"
 
     struct ASN_RRC_RRCSetupRequest;
     struct ASN_RRC_RRCSetupComplete;
+    struct ASN_RRC_RRCReconfigurationComplete;
+    struct ASN_RRC_MeasurementReport;
     struct ASN_RRC_ULInformationTransfer;
 }
 
@@ -107,6 +109,12 @@ class GnbRrcTask : public NtsTask
     /* Connection Control */
     void receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest &msg);
     void receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplete &msg);
+
+    /* Handover (Phase 4) */
+    void receiveRrcReconfigurationComplete(int ueId, const ASN_RRC_RRCReconfigurationComplete &msg);
+    void receiveMeasurementReport(int ueId, const ASN_RRC_MeasurementReport &msg);
+    void sendHandoverCommand(int ueId, int targetPci, int newCrnti, int t304Ms);
+    void handleHandoverComplete(int ueId);
 };
 
 } // namespace nr::gnb

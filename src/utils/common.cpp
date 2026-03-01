@@ -18,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <cstring>
 
 #include <arpa/inet.h>
 #include <unistd.h>

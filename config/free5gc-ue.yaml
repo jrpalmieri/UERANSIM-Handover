@@ -81,3 +81,25 @@ ciphering:
 integrityMaxRate:
   uplink: 'full'
   downlink: 'full'
+
+# Out-of-band measurement source for handover support (optional)
+# Supported types: 'none', 'udp', 'unix', 'file'
+# - udp:  Receive JSON measurements on a UDP socket
+#     address: '127.0.0.1'   # bind address
+#     port: 7200              # UDP port
+# - unix: Receive JSON measurements on a Unix datagram socket
+#     path: '/tmp/ue-meas.sock'
+# - file: Periodically read measurements from a JSON file
+#     path: '/tmp/ue-meas.json'
+#     pollInterval: 1000      # ms
+#
+# JSON format:
+#   {"measurements": [
+#     {"cellId": 1, "rsrp": -85, "rsrq": -10, "sinr": 15},
+#     {"nci": 36, "rsrp": -78}
+#   ]}
+#
+# measurementSource:
+#   type: 'udp'
+#   address: '127.0.0.1'
+#   port: 7200

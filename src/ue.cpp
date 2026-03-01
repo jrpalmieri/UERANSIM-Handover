@@ -248,6 +248,38 @@ static nr::ue::UeConfig *ReadConfigYaml()
         result->uacAcc.cls15 = yaml::GetBool(config["uacAcc"], "class15");
     }
 
+    // --- Measurement source (optional) ---
+    if (yaml::HasField(config, "measurementSource"))
+    {
+        auto mSrc = config["measurementSource"];
+        std::string srcType = yaml::GetString(mSrc, "type");
+        if (srcType == "udp")
+        {
+            result->measSourceConfig.type = nr::ue::EMeasSourceType::UDP;
+            if (yaml::HasField(mSrc, "address"))
+                result->measSourceConfig.udpAddress = yaml::GetString(mSrc, "address");
+            if (yaml::HasField(mSrc, "port"))
+                result->measSourceConfig.udpPort =
+                    static_cast<uint16_t>(yaml::GetInt32(mSrc, "port", 1, 65535));
+        }
+        else if (srcType == "unix")
+        {
+            result->measSourceConfig.type = nr::ue::EMeasSourceType::UNIX_SOCK;
+            result->measSourceConfig.unixSocketPath = yaml::GetString(mSrc, "path");
+        }
+        else if (srcType == "file")
+        {
+            result->measSourceConfig.type = nr::ue::EMeasSourceType::FILE;
+            result->measSourceConfig.filePath = yaml::GetString(mSrc, "path");
+            if (yaml::HasField(mSrc, "pollInterval"))
+                result->measSourceConfig.filePollIntervalMs = yaml::GetInt32(mSrc, "pollInterval", 100, 60000);
+        }
+        else if (srcType != "none")
+        {
+            throw std::runtime_error("Invalid measurementSource type: " + srcType);
+        }
+    }
+
     return result;
 }
 

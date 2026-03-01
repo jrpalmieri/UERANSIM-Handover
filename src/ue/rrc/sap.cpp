@@ -16,6 +16,13 @@
 namespace nr::ue
 {
 
+/**
+ * @brief Routine that handles messages from RLS task to RRC layer.
+ *  These messages are usually triggered by the events related to the radio link, 
+ *  such as signal change, radio link failure, and downlink RRC delivery.
+ * 
+ * @param msg - the message
+ */
 void UeRrcTask::handleRlsSapMessage(NmUeRlsToRrc &msg)
 {
     switch (msg.present)
@@ -35,6 +42,13 @@ void UeRrcTask::handleRlsSapMessage(NmUeRlsToRrc &msg)
     }
 }
 
+/**
+ * @brief Routine that handles messages from NAS task to RRC layer.
+ *  These messages are usually triggered by the events related to the NAS layer, 
+ *  such as uplink NAS delivery, local release connection, and RRC notify.
+ * 
+ * @param msg - the message
+ */
 void UeRrcTask::handleNasSapMessage(NmUeNasToRrc &msg)
 {
     switch (msg.present)

@@ -7,6 +7,7 @@
 //
 
 #include "task.hpp"
+#include "meas_provider.hpp"
 #include <asn/rrc/ASN_RRC_RRCSetupRequest-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCSetupRequest.h>
 #include <asn/rrc/ASN_RRC_ULInformationTransfer-IEs.h>
@@ -19,6 +20,7 @@
 
 static constexpr const int TIMER_ID_MACHINE_CYCLE = 1;
 static constexpr const int TIMER_PERIOD_MACHINE_CYCLE = 2500;
+static constexpr const int TIMER_ID_T304 = 2;
 
 namespace nr::ue
 {
@@ -32,16 +34,29 @@ UeRrcTask::UeRrcTask(TaskBase *base) : m_base{base}, m_timers{}
     m_establishmentCause = ASN_RRC_EstablishmentCause_mt_Access;
 }
 
+UeRrcTask::~UeRrcTask() = default;
+
 void UeRrcTask::onStart()
 {
     triggerCycle();
 
     setTimer(TIMER_ID_MACHINE_CYCLE, TIMER_PERIOD_MACHINE_CYCLE);
+
+    // Start OOB measurement provider if configured
+    if (m_base->config->measSourceConfig.type != EMeasSourceType::NONE)
+    {
+        m_measProvider = std::make_unique<MeasurementProvider>(
+            m_base->config->measSourceConfig, m_base->logBase);
+        m_measProvider->start();
+        m_logger->info("OOB measurement provider started (type=%s)",
+                       ToJson(m_base->config->measSourceConfig.type).str().c_str());
+    }
 }
 
 void UeRrcTask::onQuit()
 {
-    // TODO
+    if (m_measProvider)
+        m_measProvider->stop();
 }
 
 void UeRrcTask::onLoop()
@@ -76,6 +91,10 @@ void UeRrcTask::onLoop()
         {
             setTimer(TIMER_ID_MACHINE_CYCLE, TIMER_PERIOD_MACHINE_CYCLE);
             performCycle();
+        }
+        else if (w->timerId == TIMER_ID_T304)
+        {
+            handleT304Expiry();
         }
         break;
     }
