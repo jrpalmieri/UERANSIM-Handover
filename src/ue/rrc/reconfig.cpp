@@ -248,9 +248,9 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
                 auto *nasPdu = nasList.array[i];
                 if (nasPdu && nasPdu->buf && nasPdu->size > 0)
                 {
-                    auto *w = new NmUeRrcToNas(NmUeRrcToNas::NAS_DELIVERY);
+                    auto w = std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::NAS_DELIVERY);
                     w->nasPdu = OctetString::FromArray(nasPdu->buf, static_cast<size_t>(nasPdu->size));
-                    m_base->nasTask->push(w);
+                    m_base->nasTask->push(std::move(w));
                 }
             }
         }

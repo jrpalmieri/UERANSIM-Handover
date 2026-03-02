@@ -110,9 +110,9 @@ void GnbRrcTask::handleHandoverComplete(int ueId)
 
     // Notify NGAP of handover completion so it can trigger PathSwitchRequest
     // if this is the target gNB receiving the handover.
-    auto *w = new NmGnbRrcToNgap(NmGnbRrcToNgap::HANDOVER_NOTIFY);
+    auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_NOTIFY);
     w->ueId = ueId;
-    m_base->ngapTask->push(w);
+    m_base->ngapTask->push(std::move(w));
 
     m_logger->info("Handover complete notification sent to NGAP for UE[%d]", ueId);
 }

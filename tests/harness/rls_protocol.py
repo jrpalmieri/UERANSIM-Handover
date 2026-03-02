@@ -37,7 +37,7 @@ from typing import List, Optional
 # ---------------------------------------------------------------------------
 
 RLS_COMPAT_MARKER = 0x03
-RLS_VERSION = (3, 2, 2)
+RLS_VERSION = (3, 2, 7)
 RLS_HEADER_FMT = "!BBBBB"          # marker, major, minor, patch, msgType
 RLS_HEADER_SIZE = struct.calcsize(RLS_HEADER_FMT)  # 5
 RLS_STI_FMT = "!Q"                 # uint64

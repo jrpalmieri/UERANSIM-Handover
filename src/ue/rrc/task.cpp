@@ -92,7 +92,7 @@ void UeRrcTask::onLoop()
             setTimer(TIMER_ID_MACHINE_CYCLE, TIMER_PERIOD_MACHINE_CYCLE);
             performCycle();
         }
-        else if (w->timerId == TIMER_ID_T304)
+        else if (w.timerId == TIMER_ID_T304)
         {
             handleT304Expiry();
         }

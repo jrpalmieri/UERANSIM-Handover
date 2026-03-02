@@ -140,7 +140,8 @@ class TestRrcReconfigWithSync:
         )
         decoded = self.rrc._asn1.decode("DL-DCCH-Message", encoded)
         assert "message" in decoded
-        c1 = decoded["message"][1]
+        # asn1tools decodes CHOICE as tuple: ('c1', ('rrcReconfiguration', {...}))
+        c1 = decoded["message"][1][1]
         assert c1["rrc-TransactionIdentifier"] == 3
 
     @needs_asn1tools
@@ -152,7 +153,8 @@ class TestRrcReconfigWithSync:
             transaction_id=1, target_pci=77, new_crnti=0xABCD, t304_ms=500
         )
         decoded = self.rrc._asn1.decode("DL-DCCH-Message", encoded)
-        c1 = decoded["message"][1]
+        # asn1tools decodes CHOICE as tuple: ('c1', ('rrcReconfiguration', {...}))
+        c1 = decoded["message"][1][1]
         # Navigate to nonCriticalExtension -> masterCellGroup
         ies = c1["criticalExtensions"][1]
         v1530 = ies.get("nonCriticalExtension", {})
@@ -193,11 +195,12 @@ class TestRrcReconfCompleteId:
 
     def test_first_nibble_1_is_reconfig_complete(self):
         """UL-DCCH c1 choice 1 = rrcReconfigurationComplete."""
+        # UPER: 1 bit outer CHOICE (0=c1) + 4-bit c1 index (1=reconfig) = 0_0001_000 = 0x08
         cm = CapturedMessage(
             timestamp=0.0,
             rls_msg=None,
             channel=RrcChannel.UL_DCCH,
-            raw_pdu=bytes([0x10, 0x00]),  # first nibble = 1
+            raw_pdu=bytes([0x08, 0x00]),
         )
         assert FakeGnb._is_rrc_reconfiguration_complete(cm) is True
 
@@ -222,7 +225,8 @@ class TestRrcReconfCompleteId:
 
     def test_various_transaction_ids(self):
         """Different transaction IDs should still be identified."""
-        for tx_high in [0x10, 0x14, 0x18, 0x1C]:
+        # c1 index 1 → top 5 bits = 00001, remaining 3 bits vary with txnId
+        for tx_high in [0x08, 0x0C, 0x0A, 0x0E]:
             cm = CapturedMessage(
                 timestamp=0.0,
                 rls_msg=None,

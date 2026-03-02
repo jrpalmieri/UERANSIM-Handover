@@ -18,7 +18,7 @@ Logger::Logger(const std::string &name, const std::vector<std::shared_ptr<spdlog
     logger = new spdlog::logger(name, std::begin(sinks), std::end(sinks));
 
     logger->set_level(spdlog::level::debug);
-    logger->flush_on(spdlog::level::warn);
+    logger->flush_on(spdlog::level::info);
 }
 
 Logger::~Logger()

@@ -176,9 +176,9 @@ void UeRrcTask::performHandover(long txId, int targetPhysCellId, int newCRNTI,
     m_base->shCtx.currentCell.set(newCellInfo);
 
     // Tell RLS to route UL via the new cell
-    auto *w1 = new NmUeRrcToRls(NmUeRrcToRls::ASSIGN_CURRENT_CELL);
+    auto w1 = std::make_unique<NmUeRrcToRls>(NmUeRrcToRls::ASSIGN_CURRENT_CELL);
     w1->cellId = targetCellId;
-    m_base->rlsTask->push(w1);
+    m_base->rlsTask->push(std::move(w1));
 
     m_logger->info("Serving cell switched: cell[%d] → cell[%d]",
                    previousCell.cellId, targetCellId);
@@ -221,9 +221,9 @@ void UeRrcTask::performHandover(long txId, int targetPhysCellId, int newCRNTI,
     resumeMeasurements();
 
     // ---- 11. Notify NAS of the cell change ----
-    auto *w2 = new NmUeRrcToNas(NmUeRrcToNas::ACTIVE_CELL_CHANGED);
+    auto w2 = std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::ACTIVE_CELL_CHANGED);
     w2->previousTai = Tai{previousCell.plmn, previousCell.tac};
-    m_base->nasTask->push(w2);
+    m_base->nasTask->push(std::move(w2));
 
     m_logger->info("Handover to cell[%d] completed (PCI=%d, newC-RNTI=%d)",
                    targetCellId, targetPhysCellId, newCRNTI);

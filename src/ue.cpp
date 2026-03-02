@@ -406,6 +406,7 @@ static nr::ue::UeConfig *GetConfigByUe(int ueIndex)
     c->integrityMaxRate = g_refConfig->integrityMaxRate;
     c->uacAic = g_refConfig->uacAic;
     c->uacAcc = g_refConfig->uacAcc;
+    c->measSourceConfig = g_refConfig->measSourceConfig;
 
     if (c->supi.has_value())
         IncrementNumber(c->supi->value, ueIndex);

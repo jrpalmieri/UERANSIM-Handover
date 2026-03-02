@@ -65,6 +65,8 @@ class UeProcess:
         self._proc: Optional[subprocess.Popen] = None
         self._log_lines: List[str] = []
         self._tmp_dir: Optional[str] = None
+        self._master_fd: Optional[int] = None
+        self._pty_file = None
 
     @property
     def pid(self) -> Optional[int]:
@@ -130,9 +132,9 @@ class UeProcess:
 
         # OOB measurement source
         if meas_source_type.upper() != "NONE":
-            cfg["measSource"] = {
-                "type": meas_source_type,
-                "udpPort": meas_udp_port,
+            cfg["measurementSource"] = {
+                "type": meas_source_type.lower(),
+                "port": meas_udp_port,
             }
 
         self._tmp_dir = tempfile.mkdtemp(prefix="ueransim_test_")
@@ -182,6 +184,13 @@ class UeProcess:
             self._proc.wait(timeout=2)
         finally:
             self._proc = None
+            if self._pty_file is not None:
+                try:
+                    self._pty_file.close()
+                except OSError:
+                    pass
+                self._pty_file = None
+                self._master_fd = None
 
     def cleanup(self):
         """Stop process and remove temporary files."""
@@ -199,21 +208,52 @@ class UeProcess:
     # ------------------------------------------------------------------
 
     def collect_output(self, timeout_s: float = 0.5):
-        """Read available stdout lines (non-blocking) and append to log."""
+        """Read available stdout lines (non-blocking) and append to log.
+
+        Uses raw non-blocking reads on the underlying file descriptor to
+        avoid a subtle issue where ``select`` + ``readline()`` on a
+        ``TextIOWrapper`` can miss data that was already buffered inside
+        Python's I/O stack (select reports the OS pipe as not-ready while
+        the BufferedReader already consumed the bytes).
+        """
         if self._proc is None or self._proc.stdout is None:
             return
         import select
+        import fcntl
+
+        fd = self._proc.stdout.fileno()
+
+        # Set non-blocking on the raw FD
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+        partial = b""
         end = time.monotonic() + timeout_s
-        while time.monotonic() < end:
-            ready, _, _ = select.select([self._proc.stdout], [], [], 0.1)
-            if ready:
-                line = self._proc.stdout.readline()
-                if line:
-                    self._log_lines.append(line.rstrip("\n"))
-                else:
+        try:
+            while time.monotonic() < end:
+                remaining = end - time.monotonic()
+                if remaining <= 0:
                     break
-            else:
-                break
+                wait = min(remaining, 0.1)
+                ready, _, _ = select.select([fd], [], [], wait)
+                if ready:
+                    try:
+                        data = os.read(fd, 65536)
+                    except BlockingIOError:
+                        continue
+                    if not data:
+                        break  # EOF
+                    partial += data
+                    # Process complete lines
+                    while b"\n" in partial:
+                        line_bytes, partial = partial.split(b"\n", 1)
+                        line = line_bytes.decode("utf-8", errors="replace")
+                        clean = re.sub(r'\x1b\[[0-9;]*m', '', line)
+                        if clean:
+                            self._log_lines.append(clean)
+        finally:
+            # Restore blocking mode
+            fcntl.fcntl(fd, fcntl.F_SETFL, fl)
 
     def wait_for_log(self, pattern: str, timeout_s: float = 15.0) -> Optional[str]:
         """Wait until a log line matching *pattern* appears.
@@ -243,17 +283,25 @@ class UeProcess:
         self.collect_output(timeout_s=0.3)
         state = UeState()
 
-        for line in reversed(self._log_lines):
+        for line in self._log_lines:
             # RRC state changes
             if "RRC-IDLE" in line or "switched to RRC-IDLE" in line.upper():
                 state.rrc_state = "RRC_IDLE"
+                state.connected = False
+            elif "RRC Release received" in line:
+                # UE doesn't log "RRC-IDLE" explicitly, but RRC Release → IDLE
+                state.rrc_state = "RRC_IDLE"
+                state.connected = False
             elif "RRC-CONNECTED" in line or "switched to RRC-CONNECTED" in line.upper():
                 state.rrc_state = "RRC_CONNECTED"
                 state.connected = True
             elif "RRC-INACTIVE" in line:
                 state.rrc_state = "RRC_INACTIVE"
 
-            # RM state
+            # RM state — the UE doesn't log "RM-REGISTERED" directly,
+            # but RM state is implied by MM state:
+            #   MM_REGISTERED  → RM_REGISTERED
+            #   MM_DEREGISTERED → RM_DEREGISTERED
             if "RM-REGISTERED" in line:
                 state.rm_state = "RM_REGISTERED"
                 state.registered = True
@@ -269,10 +317,14 @@ class UeProcess:
             # MM state
             if "MM-DEREGISTERED" in line:
                 state.mm_state = "MM_DEREGISTERED"
-            elif "MM-REGISTERED-INITIATED" in line:
+                state.rm_state = "RM_DEREGISTERED"
+                state.registered = False
+            elif "MM-REGISTERED-INITIATED" in line or "MM-REGISTER-INITIATED" in line:
                 state.mm_state = "MM_REGISTERED_INITIATED"
             elif "MM-REGISTERED" in line and "INITIATED" not in line:
                 state.mm_state = "MM_REGISTERED"
+                state.rm_state = "RM_REGISTERED"
+                state.registered = True
 
             # MM sub-state
             m = re.search(r"MM state is (.+?)(?:\.|$)", line)

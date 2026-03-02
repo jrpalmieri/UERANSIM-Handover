@@ -89,12 +89,12 @@ class TestRlsEncoding:
         assert decoded.pdu_ids == pdu_ids
 
     def test_header_format(self):
-        """First 5 bytes: 0x03, major=3, minor=2, patch=2, msgType."""
+        """First 5 bytes: 0x03, major=3, minor=2, patch=7, msgType."""
         encoded = encode_heartbeat_ack(0, -60)
         assert encoded[0] == 0x03
         assert encoded[1] == 3   # major
         assert encoded[2] == 2   # minor
-        assert encoded[3] == 2   # patch
+        assert encoded[3] == 7   # patch
         assert encoded[4] == int(EMessageType.HEARTBEAT_ACK)
 
     def test_malformed_data_returns_none(self):
@@ -267,7 +267,7 @@ class TestNasBuilder:
 
         assert protected[0] == nas.EPD_5GMM
         # Security header should be SEC_INTEGRITY_NEW_CTX (0x03)
-        sec_header = (protected[1] >> 4) & 0x0F
+        sec_header = protected[1] & 0x0F
         assert sec_header == nas.SEC_INTEGRITY_NEW_CTX
         # MAC is bytes 2-5 (4 bytes)
         mac = protected[2:6]

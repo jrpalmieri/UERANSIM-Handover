@@ -464,6 +464,11 @@ class TestTimeToTrigger:
         fake_gnb.perform_rrc_setup()
         time.sleep(1)
 
+        # Inject a *good* signal so A2 isn't immediately triggered
+        meas_injector.set_cell(cell_id=1, rsrp=-80)
+        meas_injector.send()
+        time.sleep(0.5)
+
         # A2 with TTT=640ms
         fake_gnb.send_meas_config(
             report_configs=[{
@@ -477,7 +482,7 @@ class TestTimeToTrigger:
         )
         time.sleep(0.5)
 
-        # Start injecting poor signal
+        # Start injecting poor signal — A2 entering condition now met
         inject_start = time.monotonic()
         meas_injector.set_cell(cell_id=1, rsrp=-115)
         meas_injector.send_repeatedly(interval_s=0.3, duration_s=10.0)

@@ -102,6 +102,7 @@ class FakeGnb:
 
         # Captured messages
         self._captured: Deque[CapturedMessage] = deque(maxlen=1000)
+        self._consumed_idx: int = 0
         self._lock = threading.Lock()
 
         # RRC codec
@@ -158,7 +159,7 @@ class FakeGnb:
     def send_rrc(self, channel: RrcChannel, pdu: bytes):
         """Send an RRC PDU to the UE on the given channel."""
         msg = encode_pdu_transmission(
-            self._ue_sti, EPduType.RRC, self._next_pdu_id(),
+            self._gnb_sti, EPduType.RRC, self._next_pdu_id(),
             int(channel), pdu,
         )
         self._send_raw(msg)
@@ -489,15 +490,19 @@ class FakeGnb:
         timeout_s: float = 10.0,
         filter_fn: Optional[Callable[[CapturedMessage], bool]] = None,
     ) -> Optional[CapturedMessage]:
-        """Wait for a captured UL message on *channel*, optionally filtered."""
-        start_idx = len(self._captured)
+        """Wait for a captured UL message on *channel*, optionally filtered.
+
+        Searches from the internal consumption index so that each call
+        returns the *next* matching message (not one already returned).
+        """
         end = time.monotonic() + timeout_s
         while time.monotonic() < end:
             with self._lock:
-                for i in range(start_idx, len(self._captured)):
+                for i in range(self._consumed_idx, len(self._captured)):
                     cm = self._captured[i]
                     if cm.channel == channel:
                         if filter_fn is None or filter_fn(cm):
+                            self._consumed_idx = i + 1
                             return cm
             time.sleep(0.2)
         return None
@@ -507,19 +512,17 @@ class FakeGnb:
         """Heuristic: check if a UL-DCCH PDU is a MeasurementReport."""
         if len(cm.raw_pdu) < 1:
             return False
-        # In UPER, UL-DCCH c1 choice 0 = measurementReport
-        first_nibble = (cm.raw_pdu[0] >> 4) & 0x0F
-        return first_nibble == 0
+        # In UPER, UL-DCCH: 1 bit outer CHOICE (0=c1) + 4-bit c1 index.
+        # measurementReport = c1 index 0 → top 5 bits = 00000.
+        return (cm.raw_pdu[0] >> 3) == 0
 
     @staticmethod
     def _is_rrc_reconfiguration_complete(cm: CapturedMessage) -> bool:
         """Heuristic: check if a UL-DCCH PDU is RRCReconfigurationComplete.
 
         In UPER, UL-DCCH-MessageType → c1 → choice index 1 =
-        rrcReconfigurationComplete.  The first 4 bits of the encoded
-        PDU represent the c1 choice index.
+        rrcReconfigurationComplete.  Top 5 bits = 00001.
         """
         if len(cm.raw_pdu) < 1:
             return False
-        first_nibble = (cm.raw_pdu[0] >> 4) & 0x0F
-        return first_nibble == 1
+        return (cm.raw_pdu[0] >> 3) == 1

@@ -67,7 +67,7 @@ void NgapTask::onLoop()
             break;
         }
         case NmGnbRrcToNgap::HANDOVER_NOTIFY: {
-            m_logger->info("Handover complete notification for UE[%d]", w->ueId);
+            m_logger->info("Handover complete notification for UE[%d]", w.ueId);
             // TODO: Trigger PathSwitchRequest to AMF when acting as target gNB
             break;
         }
