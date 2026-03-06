@@ -21,6 +21,8 @@ enum class RrcChannel
     UL_CCCH,
     UL_CCCH1,
     UL_DCCH,
+    DL_CHO,         // Custom channel for Conditional Handover configuration
+    DL_SIB19,       // Custom channel for SIB19 NTN configuration (Rel-17)
 };
 
 } // namespace nr::rrc

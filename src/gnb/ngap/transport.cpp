@@ -17,8 +17,12 @@
 #include <lib/asn/utils.hpp>
 
 #include <asn/ngap/ASN_NGAP_AMF-UE-NGAP-ID.h>
+#include <asn/ngap/ASN_NGAP_HandoverCommand.h>
+#include <asn/ngap/ASN_NGAP_HandoverPreparationFailure.h>
 #include <asn/ngap/ASN_NGAP_InitiatingMessage.h>
 #include <asn/ngap/ASN_NGAP_NGAP-PDU.h>
+#include <asn/ngap/ASN_NGAP_PathSwitchRequestAcknowledge.h>
+#include <asn/ngap/ASN_NGAP_PathSwitchRequestFailure.h>
 #include <asn/ngap/ASN_NGAP_ProtocolIE-Field.h>
 #include <asn/ngap/ASN_NGAP_RAN-UE-NGAP-ID.h>
 #include <asn/ngap/ASN_NGAP_SuccessfulOutcome.h>
@@ -292,6 +296,10 @@ void NgapTask::handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer 
         case ASN_NGAP_InitiatingMessage__value_PR_Paging:
             receivePaging(amf->ctxId, &value.choice.Paging);
             break;
+        case ASN_NGAP_InitiatingMessage__value_PR_HandoverRequest:
+            // This gNB is the target. Not yet implemented for source-only simulation.
+            m_logger->warn("Received HandoverRequest (target gNB role) — not implemented");
+            break;
         default:
             m_logger->err("Unhandled NGAP initiating-message received (%d)", value.present);
             break;
@@ -305,6 +313,12 @@ void NgapTask::handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer 
         case ASN_NGAP_SuccessfulOutcome__value_PR_NGSetupResponse:
             receiveNgSetupResponse(amf->ctxId, &value.choice.NGSetupResponse);
             break;
+        case ASN_NGAP_SuccessfulOutcome__value_PR_HandoverCommand:
+            receiveHandoverCommand(amf->ctxId, &value.choice.HandoverCommand);
+            break;
+        case ASN_NGAP_SuccessfulOutcome__value_PR_PathSwitchRequestAcknowledge:
+            receivePathSwitchRequestAcknowledge(amf->ctxId, &value.choice.PathSwitchRequestAcknowledge);
+            break;
         default:
             m_logger->err("Unhandled NGAP successful-outcome received (%d)", value.present);
             break;
@@ -317,6 +331,12 @@ void NgapTask::handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer 
         {
         case ASN_NGAP_UnsuccessfulOutcome__value_PR_NGSetupFailure:
             receiveNgSetupFailure(amf->ctxId, &value.choice.NGSetupFailure);
+            break;
+        case ASN_NGAP_UnsuccessfulOutcome__value_PR_HandoverPreparationFailure:
+            receiveHandoverPreparationFailure(amf->ctxId, &value.choice.HandoverPreparationFailure);
+            break;
+        case ASN_NGAP_UnsuccessfulOutcome__value_PR_PathSwitchRequestFailure:
+            receivePathSwitchRequestFailure(amf->ctxId, &value.choice.PathSwitchRequestFailure);
             break;
         default:
             m_logger->err("Unhandled NGAP unsuccessful-outcome received (%d)", value.present);

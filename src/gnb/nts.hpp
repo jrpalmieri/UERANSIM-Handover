@@ -166,7 +166,14 @@ struct NmGnbNgapToRrc : NtsMessage
         NAS_DELIVERY,
         AN_RELEASE,
         PAGING,
+        HANDOVER_COMMAND_DELIVERY,
+        PATH_SWITCH_REQUEST_ACK,
     } present;
+
+    // HANDOVER_COMMAND_DELIVERY
+    OctetString rrcContainer{};
+    int hoTargetPci{};
+    int hoNewCrnti{};
 
     // NAS_DELIVERY
     // AN_RELEASE
@@ -192,7 +199,13 @@ struct NmGnbRrcToNgap : NtsMessage
         UPLINK_NAS_DELIVERY,
         RADIO_LINK_FAILURE,
         HANDOVER_NOTIFY,
+        HANDOVER_REQUIRED,
     } present;
+
+    // HANDOVER_REQUIRED
+    int hoTargetPci{};
+    int hoTargetNci{};
+    NgapCause hoCause{};
 
     // INITIAL_NAS_DELIVERY
     // UPLINK_NAS_DELIVERY

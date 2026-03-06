@@ -71,6 +71,8 @@ class RrcChannel(IntEnum):
     UL_CCCH = 5
     UL_CCCH1 = 6
     UL_DCCH = 7
+    DL_CHO = 8
+    DL_SIB19 = 9
 
 
 # ---------------------------------------------------------------------------

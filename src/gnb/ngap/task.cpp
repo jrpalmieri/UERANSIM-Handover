@@ -68,7 +68,12 @@ void NgapTask::onLoop()
         }
         case NmGnbRrcToNgap::HANDOVER_NOTIFY: {
             m_logger->info("Handover complete notification for UE[%d]", w.ueId);
-            // TODO: Trigger PathSwitchRequest to AMF when acting as target gNB
+            handleHandoverNotifyFromRrc(w.ueId);
+            break;
+        }
+        case NmGnbRrcToNgap::HANDOVER_REQUIRED: {
+            m_logger->info("HandoverRequired from RRC for UE[%d] targetPCI=%d", w.ueId, w.hoTargetPci);
+            sendHandoverRequired(w.ueId, w.hoTargetPci, w.hoCause);
             break;
         }
         }

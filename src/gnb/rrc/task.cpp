@@ -69,6 +69,14 @@ void GnbRrcTask::onLoop()
         case NmGnbNgapToRrc::PAGING:
             handlePaging(w.uePagingTmsi, w.taiListForPaging);
             break;
+        case NmGnbNgapToRrc::HANDOVER_COMMAND_DELIVERY: {
+            handleNgapHandoverCommand(w.ueId, w.rrcContainer);
+            break;
+        }
+        case NmGnbNgapToRrc::PATH_SWITCH_REQUEST_ACK: {
+            m_logger->info("PathSwitchRequestAck received for UE[%d], handover fully complete", w.ueId);
+            break;
+        }
         }
         break;
     }

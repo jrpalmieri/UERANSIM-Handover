@@ -47,6 +47,174 @@ logger = logging.getLogger(__name__)
 
 
 # ======================================================================
+#  CHO binary protocol helper – v2 (condition groups)
+# ======================================================================
+
+# Event type constants for the v2 binary protocol
+CHO_EVENT_T1 = 0
+CHO_EVENT_A2 = 1
+CHO_EVENT_A3 = 2
+CHO_EVENT_A5 = 3
+CHO_EVENT_D1 = 4
+CHO_EVENT_D1_SIB19 = 5
+
+_EVENT_TYPE_MAP = {
+    "T1": CHO_EVENT_T1,
+    "A2": CHO_EVENT_A2,
+    "A3": CHO_EVENT_A3,
+    "A5": CHO_EVENT_A5,
+    "D1": CHO_EVENT_D1,
+    "D1_SIB19": CHO_EVENT_D1_SIB19,
+}
+
+# Condition size = 56 bytes:
+#   6 × int32 (24 bytes) + 4 × double (32 bytes)
+CONDITION_SIZE = 56
+
+# Candidate header = 24 bytes:
+#   candidateId + targetPci + newCRNTI + t304Ms + executionPriority + numConditions
+CANDIDATE_HEADER_SIZE = 24
+
+
+def _build_condition(cond: Dict) -> bytes:
+    """Encode a single condition into 56 bytes.
+
+    Condition wire format (little-endian, 56 bytes):
+      [0..3]   eventType      (int32)  0=T1, 1=A2, 2=A3, 3=A5, 4=D1, 5=D1_SIB19
+      [4..7]   intParam1      (int32)
+      [8..11]  intParam2      (int32)
+      [12..15] intParam3      (int32)
+      [16..19] timeToTriggerMs (int32)
+      [20..23] reserved       (int32)
+      [24..31] floatParam1    (double)
+      [32..39] floatParam2    (double)
+      [40..47] floatParam3    (double)
+      [48..55] floatParam4    (double)
+
+    Parameter mapping by event type:
+      T1:       intParam1 = t1DurationMs
+      A2:       intParam1 = threshold, intParam2 = hysteresis
+      A3:       intParam1 = offset, intParam2 = hysteresis
+      A5:       intParam1 = threshold1, intParam2 = threshold2, intParam3 = hysteresis
+      D1:       floatParam1..4 = refX, refY, refZ, thresholdM
+      D1_SIB19: intParam1 = flags (bit0=useNadir), floatParam1 = thresholdM, floatParam2 = elevMinDeg
+    """
+    evt_str = cond.get("event", "T1")
+    evt = _EVENT_TYPE_MAP.get(evt_str, CHO_EVENT_T1)
+    ttt = cond.get("timeToTriggerMs", 0)
+
+    ip1, ip2, ip3 = 0, 0, 0
+    fp1, fp2, fp3, fp4 = 0.0, 0.0, 0.0, 0.0
+
+    if evt == CHO_EVENT_T1:
+        ip1 = cond.get("t1DurationMs", 1000)
+    elif evt == CHO_EVENT_A2:
+        ip1 = cond.get("threshold", -110)
+        ip2 = cond.get("hysteresis", 2)
+    elif evt == CHO_EVENT_A3:
+        ip1 = cond.get("offset", 6)
+        ip2 = cond.get("hysteresis", 2)
+    elif evt == CHO_EVENT_A5:
+        ip1 = cond.get("threshold1", -110)
+        ip2 = cond.get("threshold2", -100)
+        ip3 = cond.get("hysteresis", 2)
+    elif evt == CHO_EVENT_D1:
+        fp1 = cond.get("refX", 0.0)
+        fp2 = cond.get("refY", 0.0)
+        fp3 = cond.get("refZ", 0.0)
+        fp4 = cond.get("thresholdM", 1000.0)
+    elif evt == CHO_EVENT_D1_SIB19:
+        # flags: bit0 = useNadir (default true)
+        flags = 0
+        if cond.get("useNadir", True):
+            flags |= 0x01
+        ip1 = flags
+        fp1 = cond.get("thresholdM", -1.0)           # <0 = use SIB19's distanceThresh
+        fp2 = cond.get("elevationMinDeg", -1.0)       # <0 = disabled
+
+    return struct.pack("<iiiiii", evt, ip1, ip2, ip3, ttt, 0) + \
+           struct.pack("<dddd", fp1, fp2, fp3, fp4)
+
+
+def _build_cho_binary(candidates: List[Dict]) -> bytes:
+    """Build a v2 binary CHO configuration PDU for the DL_CHO channel.
+
+    V2 wire format (little-endian):
+      [0..3]   numCandidates (uint32)
+      Per candidate (variable size):
+        [0..3]   candidateId        (int32)
+        [4..7]   targetPci          (int32)
+        [8..11]  newCRNTI           (int32)
+        [12..15] t304Ms             (int32)
+        [16..19] executionPriority  (int32)  -1 = unset
+        [20..23] numConditions      (uint32)
+        Per condition (56 bytes each):
+          (see _build_condition)
+
+    Each candidate dict can use the LEGACY keys for single-condition
+    shorthand:
+      - conditionType: "T1_ONLY" | "T1_AND_A3" | "D1_ONLY"  →  mapped to
+        conditions list automatically.
+      - t1DurationMs, a3Offset, a3Hysteresis, a3TimeToTriggerMs,
+        d1RefX, d1RefY, d1RefZ, d1ThresholdM  →  used for the single cond.
+
+    Or the NEW key for arbitrary condition groups:
+      - conditions: list of dicts, each with:
+          event: "T1"|"A2"|"A3"|"A5"|"D1"
+          (plus event-specific params)
+    """
+    buf = struct.pack("<I", len(candidates))
+    for c in candidates:
+        cid = c.get("candidateId", 1)
+        tpci = c.get("targetPci", 2)
+        crnti = c.get("newCRNTI", 0x1234)
+        t304 = c.get("t304Ms", 1000)
+        prio = c.get("executionPriority", -1)
+
+        # Build condition list
+        if "conditions" in c:
+            # New-style: explicit condition list
+            cond_list = c["conditions"]
+        else:
+            # Legacy-style: single conditionType → map to condition list
+            cond_str = c.get("conditionType", "T1_ONLY")
+            cond_list = _legacy_to_conditions(c, cond_str)
+
+        buf += struct.pack("<iiiiiI", cid, tpci, crnti, t304, prio, len(cond_list))
+        for cond in cond_list:
+            buf += _build_condition(cond)
+
+    return buf
+
+
+def _legacy_to_conditions(c: Dict, cond_str: str) -> List[Dict]:
+    """Convert legacy single-conditionType to a list of condition dicts."""
+    if cond_str == "T1_ONLY":
+        return [{"event": "T1", "t1DurationMs": c.get("t1DurationMs", 1000)}]
+    elif cond_str == "T1_AND_A3":
+        return [
+            {"event": "T1", "t1DurationMs": c.get("t1DurationMs", 1000)},
+            {"event": "A3",
+             "offset": c.get("a3Offset", 6),
+             "hysteresis": c.get("a3Hysteresis", 2),
+             "timeToTriggerMs": c.get("a3TimeToTriggerMs", 0)},
+        ]
+    elif cond_str == "D1_ONLY":
+        return [{"event": "D1",
+                 "refX": c.get("d1RefX", 0.0),
+                 "refY": c.get("d1RefY", 0.0),
+                 "refZ": c.get("d1RefZ", 0.0),
+                 "thresholdM": c.get("d1ThresholdM", 1000.0)}]
+    elif cond_str == "D1_SIB19_ONLY":
+        return [{"event": "D1_SIB19",
+                 "useNadir": c.get("d1sib19UseNadir", True),
+                 "thresholdM": c.get("d1sib19ThresholdM", -1.0),
+                 "elevationMinDeg": c.get("d1sib19ElevationMinDeg", -1.0)}]
+    else:
+        return [{"event": "T1", "t1DurationMs": c.get("t1DurationMs", 1000)}]
+
+
+# ======================================================================
 #  Data types
 # ======================================================================
 
@@ -345,6 +513,51 @@ class FakeGnb:
         release = self._rrc.build_rrc_release(transaction_id)
         self.send_dl_dcch(release)
         logger.info("Sent RRCRelease")
+
+    def send_cho_configuration(
+        self,
+        candidates: List[Dict],
+    ):
+        """Send CHO configuration via the DL_CHO custom channel (v2 protocol).
+
+        Each candidate dict supports LEGACY keys (single condition shorthand):
+          - candidateId, targetPci, newCRNTI, t304Ms
+          - conditionType: "T1_ONLY" | "T1_AND_A3" | "D1_ONLY"
+          - t1DurationMs, a3Offset, a3Hysteresis, a3TimeToTriggerMs
+          - d1RefX, d1RefY, d1RefZ, d1ThresholdM
+
+        Or NEW keys for arbitrary condition groups:
+          - candidateId, targetPci, newCRNTI, t304Ms
+          - executionPriority (int, lower = higher priority, -1 = unset)
+          - conditions: list of dicts, each with:
+              event: "T1"|"A2"|"A3"|"A5"|"D1"
+              (plus event-specific params, see _build_condition)
+        """
+        pdu = _build_cho_binary(candidates)
+        self.send_rrc(RrcChannel.DL_CHO, pdu)
+        logger.info(
+            "Sent CHO configuration: %d candidate(s)", len(candidates)
+        )
+
+    def send_sib19(self, **kwargs):
+        """Send a SIB19 NTN configuration via the DL_SIB19 custom channel.
+
+        All keyword arguments are forwarded to ``RrcCodec.build_sib19()``.
+        Common parameters:
+
+        - position_x/y/z : float — satellite ECEF position in meters.
+        - velocity_vx/vy/vz : float — satellite velocity in m/s.
+        - epoch_time : int — reference time in 10-ms steps.
+        - k_offset : int — scheduling offset in ms.
+        - distance_thresh : float — CHO D1 threshold in meters (< 0 = absent).
+        - ta_common : int — common Timing Advance in T_c units.
+        - ta_common_drift : int — TA drift rate (T_c/s).
+        - ul_sync_validity : int — seconds (-1 = absent).
+        - ntn_polarization : int — 0=RHCP, 1=LHCP, 2=LINEAR, -1=absent.
+        """
+        pdu = RrcCodec.build_sib19(**kwargs)
+        self.send_rrc(RrcChannel.DL_SIB19, pdu)
+        logger.info("Sent SIB19 (%d bytes)", len(pdu))
 
     def wait_for_measurement_report(self, timeout_s: float = 15.0) -> Optional[CapturedMessage]:
         """Wait for a MeasurementReport on UL-DCCH."""

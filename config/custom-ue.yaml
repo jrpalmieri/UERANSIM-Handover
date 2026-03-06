@@ -77,6 +77,13 @@ ciphering:
   EA2: true
   EA3: true
 
+# UE position (optional, for D1 distance-based CHO events)
+# Specified in WGS-84 geographic coordinates; automatically converted to ECEF.
+position:
+  latitude: 33.7490    # degrees North
+  longitude: -84.3880  # degrees East
+  altitude: 320.0      # meters above WGS-84 ellipsoid
+
 # Integrity protection maximum data rate for user plane
 integrityMaxRate:
   uplink: 'full'

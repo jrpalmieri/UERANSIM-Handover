@@ -130,6 +130,9 @@ void GnbRrcTask::receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplet
     w->sTmsi = ue->sTmsi;
 
     m_base->ngapTask->push(std::move(w));
+
+    // Send measurement configuration to UE for handover support
+    sendMeasConfig(ueId);
 }
 
 } // namespace nr::gnb

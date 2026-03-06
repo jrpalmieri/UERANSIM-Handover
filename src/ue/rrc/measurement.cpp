@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/encode.hpp>
@@ -100,6 +101,101 @@ Json ToJson(const UeMeasConfig &v)
         {"reportConfigs", std::move(arr)},
         {"numMeasObjects", static_cast<int32_t>(v.measObjects.size())},
         {"numMeasIds", static_cast<int32_t>(v.measIds.size())},
+    });
+}
+
+Json ToJson(const EChoEventType &v)
+{
+    switch (v)
+    {
+    case EChoEventType::T1: return "T1";
+    case EChoEventType::A2: return "A2";
+    case EChoEventType::A3: return "A3";
+    case EChoEventType::A5: return "A5";
+    case EChoEventType::D1: return "D1";
+    case EChoEventType::D1_SIB19: return "D1_SIB19";
+    default: return "?";
+    }
+}
+
+Json ToJson(const ChoCondition &v)
+{
+    auto j = Json::Obj({
+        {"eventType", ToJson(v.eventType)},
+        {"timeToTriggerMs", v.timeToTriggerMs},
+        {"satisfied", v.satisfied},
+    });
+    switch (v.eventType)
+    {
+    case EChoEventType::T1:
+        j.put("t1DurationMs", v.t1DurationMs);
+        break;
+    case EChoEventType::A2:
+        j.put("a2Threshold", v.a2Threshold);
+        j.put("hysteresis", v.hysteresis);
+        break;
+    case EChoEventType::A3:
+        j.put("a3Offset", v.a3Offset);
+        j.put("a3Hysteresis", v.a3Hysteresis);
+        break;
+    case EChoEventType::A5:
+        j.put("a5Threshold1", v.a5Threshold1);
+        j.put("a5Threshold2", v.a5Threshold2);
+        j.put("a5Hysteresis", v.a5Hysteresis);
+        break;
+    case EChoEventType::D1:
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.3f", v.d1RefX);
+        j.put("d1RefX", std::string(buf));
+        snprintf(buf, sizeof(buf), "%.3f", v.d1RefY);
+        j.put("d1RefY", std::string(buf));
+        snprintf(buf, sizeof(buf), "%.3f", v.d1RefZ);
+        j.put("d1RefZ", std::string(buf));
+        snprintf(buf, sizeof(buf), "%.3f", v.d1ThresholdM);
+        j.put("d1ThresholdM", std::string(buf));
+        break;
+    }
+    case EChoEventType::D1_SIB19:
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.3f", v.d1sib19ThresholdM);
+        j.put("d1sib19ThresholdM", std::string(buf));
+        snprintf(buf, sizeof(buf), "%.3f", v.d1sib19ElevationMinDeg);
+        j.put("d1sib19ElevationMinDeg", std::string(buf));
+        j.put("d1sib19UseNadir", v.d1sib19UseNadir);
+        snprintf(buf, sizeof(buf), "%.3f", v.d1sib19ResolvedThreshM);
+        j.put("d1sib19ResolvedThreshM", std::string(buf));
+        break;
+    }
+    }
+    return j;
+}
+
+Json ToJson(const ChoCandidate &v)
+{
+    // Serialize condition list
+    auto condArr = Json::Arr({});
+    for (auto &c : v.conditions)
+        condArr.push(ToJson(c));
+
+    // Build a summary string for the condition group
+    std::string condSummary;
+    for (size_t i = 0; i < v.conditions.size(); i++)
+    {
+        if (i > 0) condSummary += " AND ";
+        condSummary += ToJson(v.conditions[i].eventType).str();
+    }
+
+    return Json::Obj({
+        {"candidateId", v.candidateId},
+        {"targetPci", v.targetPci},
+        {"newCRNTI", v.newCRNTI},
+        {"t304Ms", v.t304Ms},
+        {"executionPriority", v.executionPriority},
+        {"conditionGroup", condSummary},
+        {"conditions", std::move(condArr)},
+        {"executed", v.executed},
     });
 }
 

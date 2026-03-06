@@ -82,6 +82,17 @@ void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const Oct
     case rrc::RrcChannel::UL_CCCH1:
     case rrc::RrcChannel::UL_DCCH:
         break;
+    case rrc::RrcChannel::DL_CHO: {
+        if (isActiveCell(cellId))
+        {
+            handleChoConfiguration(rrcPdu);
+        }
+        break;
+    }
+    case rrc::RrcChannel::DL_SIB19: {
+        receiveSib19(cellId, rrcPdu);
+        break;
+    }
     }
 }
 

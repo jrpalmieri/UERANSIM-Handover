@@ -42,6 +42,7 @@ extern "C"
     struct ASN_RRC_MIB;
     struct ASN_RRC_SIB1;
     struct ASN_RRC_RRCReconfiguration;
+    struct ASN_RRC_ConditionalReconfiguration;
 }
 
 namespace nr::ue
@@ -84,6 +85,9 @@ class UeRrcTask : public NtsTask
     long m_hoTxId{};             // RRC transaction ID of the pending handover
     int  m_hoTargetPci{};        // Target cell PCI from ReconfigurationWithSync
     bool m_measurementsSuspended{};  // Phase 3: measurements paused during handover
+
+    /* Conditional Handover (CHO) state */
+    std::vector<ChoCandidate> m_choCandidates{};  // Active CHO candidates
 
     /* Establishment procedure related */
     int m_establishmentCause{};
@@ -142,6 +146,7 @@ class UeRrcTask : public NtsTask
     /* System Information and Broadcast */
     void receiveMib(int cellId, const ASN_RRC_MIB &msg);
     void receiveSib1(int cellId, const ASN_RRC_SIB1 &msg);
+    void receiveSib19(int cellId, const OctetString &pdu);
 
     /* NAS Transport */
     void deliverUplinkNas(uint32_t pduId, OctetString &&nasPdu);
@@ -181,6 +186,16 @@ class UeRrcTask : public NtsTask
     void suspendMeasurements();
     void resumeMeasurements();
     void refreshSecurityKeys();
+
+    /* Conditional Handover (CHO) */
+    void handleChoConfiguration(const OctetString &pdu);
+    void parseConditionalReconfiguration(const ASN_RRC_ConditionalReconfiguration *condReconfig);
+    void evaluateChoCandidates();
+    void executeChoCandidate(ChoCandidate &candidate);
+    void cancelAllChoCandidates();
+
+    /* UE Position (for D1 distance-based events) */
+    UePosition getUePosition() const;
 };
 
 } // namespace nr::ue

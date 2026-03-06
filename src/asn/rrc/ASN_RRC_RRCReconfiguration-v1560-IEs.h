@@ -22,17 +22,14 @@ extern "C" {
 
 /* Forward declarations */
 struct ASN_RRC_SetupRelease_MRDC_SecondaryCellGroupConfig;
+struct ASN_RRC_RRCReconfiguration_v1610_IEs;
 
 /* ASN_RRC_RRCReconfiguration-v1560-IEs */
 typedef struct ASN_RRC_RRCReconfiguration_v1560_IEs {
 	struct ASN_RRC_SetupRelease_MRDC_SecondaryCellGroupConfig	*mrdc_SecondaryCellGroupConfig;	/* OPTIONAL */
 	OCTET_STRING_t	*radioBearerConfig2;	/* OPTIONAL */
 	ASN_RRC_SK_Counter_t	*sk_Counter;	/* OPTIONAL */
-	struct ASN_RRC_RRCReconfiguration_v1560_IEs__nonCriticalExtension {
-		
-		/* Context for parsing across buffer boundaries */
-		asn_struct_ctx_t _asn_ctx;
-	} *nonCriticalExtension;
+	struct ASN_RRC_RRCReconfiguration_v1610_IEs	*nonCriticalExtension;	/* OPTIONAL */
 	
 	/* Context for parsing across buffer boundaries */
 	asn_struct_ctx_t _asn_ctx;

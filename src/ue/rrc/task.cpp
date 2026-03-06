@@ -42,6 +42,16 @@ void UeRrcTask::onStart()
 
     setTimer(TIMER_ID_MACHINE_CYCLE, TIMER_PERIOD_MACHINE_CYCLE);
 
+    // Log initial UE position if configured (for D1 distance-based events)
+    if (m_base->config->initialPosition.has_value())
+    {
+        auto &pos = *m_base->config->initialPosition;
+        m_logger->info("UE position configured: lat=%.6f lon=%.6f alt=%.1fm "
+                       "ECEF=(%.1f, %.1f, %.1f)",
+                       pos.geo.latitude, pos.geo.longitude, pos.geo.altitude,
+                       pos.ecef.x, pos.ecef.y, pos.ecef.z);
+    }
+
     // Start OOB measurement provider if configured
     if (m_base->config->measSourceConfig.type != EMeasSourceType::NONE)
     {

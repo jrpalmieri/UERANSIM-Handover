@@ -14,6 +14,8 @@
 #include <atomic>
 
 #include <ue/rrc/measurement.hpp>
+#include <ue/rrc/position.hpp>
+#include <ue/rrc/sib19.hpp>
 #include <deque>
 #include <memory>
 #include <queue>
@@ -59,6 +61,8 @@ struct UeCellDesc
         Plmn plmn;
         UacAiBarringSet aiBarringSet;
     } sib1{};
+
+    Sib19Info sib19{};
 };
 
 struct SupportedAlgs
@@ -109,6 +113,7 @@ struct UeConfig
     SupportedAlgs supportedAlgs{};
     std::vector<std::string> gnbSearchList{};
     MeasSourceConfig measSourceConfig{};
+    std::optional<UePosition> initialPosition{};  // UE position from config (for D1 events)
     std::vector<SessionConfig> defaultSessions{};
     IntegrityMaxDataRateConfig integrityMaxRate{};
     NetworkSlice defaultConfiguredNssai{};

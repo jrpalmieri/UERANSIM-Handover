@@ -433,3 +433,62 @@ class UeProcess:
                 info["rlf_triggered"] = True
 
         return info
+
+    # ------------------------------------------------------------------
+    #  CHO-specific helpers
+    # ------------------------------------------------------------------
+
+    def wait_for_cho_candidate_added(self, timeout_s: float = 15.0) -> Optional[str]:
+        """Wait until the UE logs a CHO candidate being added."""
+        return self.wait_for_log(r"CHO candidate \d+ added|DL_CHO candidate \d+", timeout_s)
+
+    def wait_for_cho_t1_expired(self, timeout_s: float = 15.0) -> Optional[str]:
+        """Wait until the UE logs T1 timer expiry for any CHO candidate."""
+        return self.wait_for_log(r"CHO candidate \d+: T1 expired", timeout_s)
+
+    def wait_for_cho_execution(self, timeout_s: float = 15.0) -> Optional[str]:
+        """Wait until the UE logs execution of a CHO candidate."""
+        return self.wait_for_log(r"Executing CHO candidate \d+", timeout_s)
+
+    def wait_for_cho_condition_met(self, timeout_s: float = 15.0) -> Optional[str]:
+        """Wait until a CHO condition group is met."""
+        return self.wait_for_log(r"condition.*met.*executing handover", timeout_s)
+
+    def parse_cho_info(self) -> dict:
+        """Extract CHO-related info from log lines.
+
+        Returns a dict with keys:
+          - candidates_configured (int): number of CHO candidates configured
+          - t1_expired_ids (list[int]): candidate IDs with expired T1
+          - executed_id (int or None): ID of executed candidate
+          - cancelled (bool): whether candidates were cancelled
+        """
+        self.collect_output(timeout_s=0.3)
+        info: dict = {
+            "candidates_configured": 0,
+            "t1_expired_ids": [],
+            "executed_id": None,
+            "cancelled": False,
+        }
+
+        for line in self._log_lines:
+            # "CHO candidate X added: ..." or "DL_CHO candidate X: ..."
+            m = re.search(r"(?:CHO candidate|DL_CHO candidate) (\d+)", line)
+            if m and ("added" in line or "DL_CHO candidate" in line):
+                info["candidates_configured"] += 1
+
+            # "CHO candidate X: T1 expired"
+            m = re.search(r"CHO candidate (\d+): T1 expired", line)
+            if m:
+                info["t1_expired_ids"].append(int(m.group(1)))
+
+            # "Executing CHO candidate X"
+            m = re.search(r"Executing CHO candidate (\d+)", line)
+            if m:
+                info["executed_id"] = int(m.group(1))
+
+            # "Cancelling X CHO candidate(s)"
+            if "Cancelling" in line and "CHO candidate" in line:
+                info["cancelled"] = True
+
+        return info

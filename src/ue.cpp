@@ -19,6 +19,7 @@
 #include <lib/app/proc_table.hpp>
 #include <lib/app/ue_ctl.hpp>
 #include <ue/ue.hpp>
+#include <ue/rrc/position.hpp>
 #include <utils/common.hpp>
 #include <utils/concurrent_map.hpp>
 #include <utils/constants.hpp>
@@ -280,6 +281,22 @@ static nr::ue::UeConfig *ReadConfigYaml()
         }
     }
 
+    // --- UE position (optional, for D1 distance-based CHO events) ---
+    if (yaml::HasField(config, "position"))
+    {
+        auto posNode = config["position"];
+        nr::ue::GeoPosition geo{};
+        geo.latitude  = posNode["latitude"].as<double>(0.0);
+        geo.longitude = posNode["longitude"].as<double>(0.0);
+        geo.altitude  = posNode["altitude"].as<double>(0.0);
+
+        nr::ue::UePosition pos{};
+        pos.geo = geo;
+        pos.ecef = nr::ue::geoToEcef(geo);
+
+        result->initialPosition = pos;
+    }
+
     return result;
 }
 
@@ -407,6 +424,7 @@ static nr::ue::UeConfig *GetConfigByUe(int ueIndex)
     c->uacAic = g_refConfig->uacAic;
     c->uacAcc = g_refConfig->uacAcc;
     c->measSourceConfig = g_refConfig->measSourceConfig;
+    c->initialPosition = g_refConfig->initialPosition;
 
     if (c->supi.has_value())
         IncrementNumber(c->supi->value, ueIndex);

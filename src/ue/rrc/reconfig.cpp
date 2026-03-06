@@ -12,6 +12,11 @@
 #include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-v1530-IEs.h>
+#include <asn/rrc/ASN_RRC_RRCReconfiguration-v1540-IEs.h>
+#include <asn/rrc/ASN_RRC_RRCReconfiguration-v1560-IEs.h>
+#include <asn/rrc/ASN_RRC_RRCReconfiguration-v1610-IEs.h>
+#include <asn/rrc/ASN_RRC_ConditionalReconfiguration.h>
+#include <asn/rrc/ASN_RRC_CondReconfigToAddMod.h>
 #include <asn/rrc/ASN_RRC_RRCReconfigurationComplete.h>
 #include <asn/rrc/ASN_RRC_RRCReconfigurationComplete-IEs.h>
 #include <asn/rrc/ASN_RRC_CellGroupConfig.h>
@@ -234,6 +239,8 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
     int hoNewCRNTI = 0;
     int hoT304Ms = 0;
     bool hoHasRachConfig = false;
+    bool hasConditionalReconfig = false;
+    (void)hasConditionalReconfig; // May be used in future for CHO-specific response
 
     if (ies->nonCriticalExtension)
     {
@@ -287,6 +294,18 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
             {
                 m_logger->err("Failed to UPER-decode masterCellGroup as CellGroupConfig");
             }
+        }
+
+        // --- Walk extension chain: v1530 → v1540 → v1560 → v1610 for CHO ---
+        auto *v1540 = v1530->nonCriticalExtension;
+        auto *v1560 = v1540 ? v1540->nonCriticalExtension : nullptr;
+        auto *v1610 = v1560 ? v1560->nonCriticalExtension : nullptr;
+
+        if (v1610 && v1610->conditionalReconfiguration)
+        {
+            hasConditionalReconfig = true;
+            auto *condReconfig = v1610->conditionalReconfiguration;
+            parseConditionalReconfiguration(condReconfig);
         }
     }
 

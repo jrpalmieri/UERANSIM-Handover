@@ -30,35 +30,43 @@ namespace nr::gnb
 int32_t extractSliceInfoAndModifyPdu(OctetString &nasPdu) {
     nas::RegistrationRequest *regRequest = nullptr;
     int32_t requestedSliceType = -1;
-    const uint8_t *m_data = nasPdu.data();
-    size_t m_dataLength = nasPdu.length(); 
-    OctetView octetView(m_data, m_dataLength);
-    auto nasMessage = nas::DecodeNasMessage(octetView);  
-    if (nasMessage->epd == nas::EExtendedProtocolDiscriminator::MOBILITY_MANAGEMENT_MESSAGES)
-    {
-        nas::MmMessage *mmMessage = dynamic_cast<nas::MmMessage *>(nasMessage.get());
-        if (mmMessage)
+
+    try {
+        const uint8_t *m_data = nasPdu.data();
+        size_t m_dataLength = nasPdu.length();
+        OctetView octetView(m_data, m_dataLength);
+        auto nasMessage = nas::DecodeNasMessage(octetView);
+        if (!nasMessage)
+            return requestedSliceType;
+
+        if (nasMessage->epd == nas::EExtendedProtocolDiscriminator::MOBILITY_MANAGEMENT_MESSAGES)
         {
-            nas::PlainMmMessage *plainMmMessage = dynamic_cast<nas::PlainMmMessage *>(mmMessage);
-            if (plainMmMessage)
+            nas::MmMessage *mmMessage = dynamic_cast<nas::MmMessage *>(nasMessage.get());
+            if (mmMessage)
             {
-                regRequest = dynamic_cast<nas::RegistrationRequest *>(plainMmMessage);
-                if (regRequest)
+                nas::PlainMmMessage *plainMmMessage = dynamic_cast<nas::PlainMmMessage *>(mmMessage);
+                if (plainMmMessage)
                 {
-                    auto sz = regRequest->requestedNSSAI->sNssais.size();
-                    if (sz > 0) {
-                        requestedSliceType = static_cast<uint8_t>(regRequest->requestedNSSAI->sNssais[0].sst);
+                    regRequest = dynamic_cast<nas::RegistrationRequest *>(plainMmMessage);
+                    if (regRequest && regRequest->requestedNSSAI.has_value())
+                    {
+                        auto sz = regRequest->requestedNSSAI->sNssais.size();
+                        if (sz > 0) {
+                            requestedSliceType = static_cast<uint8_t>(regRequest->requestedNSSAI->sNssais[0].sst);
+                        }
                     }
                 }
             }
         }
-    }
-    if (regRequest && regRequest->requestedNSSAI) 
-        regRequest->requestedNSSAI = std::nullopt;  
+        if (regRequest && regRequest->requestedNSSAI)
+            regRequest->requestedNSSAI = std::nullopt;
 
-    OctetString modifiedNasPdu;
-    nas::EncodeNasMessage(*nasMessage, modifiedNasPdu);
-    nasPdu = std::move(modifiedNasPdu);
+        OctetString modifiedNasPdu;
+        nas::EncodeNasMessage(*nasMessage, modifiedNasPdu);
+        nasPdu = std::move(modifiedNasPdu);
+    } catch (const std::exception &) {
+        // NAS decoding/encoding failed — continue with original PDU
+    }
     return requestedSliceType;
 }
 

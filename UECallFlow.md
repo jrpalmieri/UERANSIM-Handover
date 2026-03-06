@@ -6,6 +6,7 @@ This document maps out how methods and functions are called by each NTS (Network
 
 ## Table of Contents
 
+0. [Modifications from Upstream UERANSIM](#0-modifications-from-upstream-ueransim)
 1. [UE Architecture Overview](#1-ue-architecture-overview)
 2. [NTS Tasks and Message Flow](#2-nts-tasks-and-message-flow)
 3. [RRC Task (`UeRrcTask`)](#3-rrc-task-uerectask)
@@ -20,6 +21,9 @@ This document maps out how methods and functions are called by each NTS (Network
    - 3.9 [Radio Link Failure](#39-radio-link-failure)
    - 3.10 [Access Control (UAC)](#310-access-control-uac)
    - 3.11 [System Information (MIB/SIB1)](#311-system-information-mibsib1)
+   - 3.12 [SIB19 Reception (NTN Configuration)](#312-sib19-reception-ntn-configuration)
+   - 3.13 [Position Framework (D1 Events)](#313-position-framework-d1-events)
+   - 3.14 [Conditional Handover (CHO)](#314-conditional-handover-cho)
 4. [NAS Task (`NasTask`)](#4-nas-task-nastask)
    - 4.1 [Message Dispatch (onLoop)](#41-message-dispatch-onloop)
    - 4.2 [NAS MM — Registration](#42-nas-mm--registration)
@@ -36,6 +40,42 @@ This document maps out how methods and functions are called by each NTS (Network
    - 6.1 [Message Dispatch (onLoop)](#61-message-dispatch-onloop)
 7. [Inter-Task Message Type Summary](#7-inter-task-message-type-summary)
 8. [End-to-End Signaling Flows](#8-end-to-end-signaling-flows)
+
+---
+
+## 0. Modifications from Upstream UERANSIM
+
+This fork adds **handover execution**, **measurement reporting**, and **out-of-band (OOB) measurement injection** capabilities to the UE that are not present in the upstream [aligungr/UERANSIM](https://github.com/aligungr/UERANSIM) `master` branch. The upstream RRC task had an empty `RRC_CONNECTED` branch in `performCycle()` and no support for `RRCReconfiguration`, measurement events, or handover.
+
+### New source files
+
+| File | Purpose |
+|------|---------|
+| `src/ue/rrc/measurement.hpp` | Measurement types: `EMeasEvent` (A2/A3/A5), `UeMeasConfig`, `UeReportConfig`, `UeMeasObject`, `UeMeasId`, `MeasIdState`, `CellMeasurement`, `MeasSourceConfig`, `EMeasSourceType`; CHO types: `EChoEventType` (T1/A2/A3/A5/D1/D1_SIB19), `ChoCondition`, `ChoCandidate` |
+| `src/ue/rrc/measurement.cpp` | Measurement evaluation engine: `evaluateMeasurements()`, `collectMeasurements()`, `sendMeasurementReport()`, `applyMeasConfig()`, `resetMeasurements()`, A2/A3/A5 event condition checks, RSRP-to-ASN.1 conversion |
+| `src/ue/rrc/meas_provider.hpp` | `MeasurementProvider` class — OOB measurement injection interface |
+| `src/ue/rrc/meas_provider.cpp` | OOB provider implementation: UDP listener (`runUdp`), Unix datagram socket listener (`runUnixSocket`), file poller (`runFilePoller`), JSON parsing (`parseMeasurements`) |
+| `src/ue/rrc/reconfig.cpp` | `receiveRrcReconfiguration()` — handles incoming RRCReconfiguration: ASN.1 MeasConfig parsing (`parseMeasConfig`), ReconfigurationWithSync detection for handover, dedicated NAS message delivery, RRCReconfigurationComplete for normal reconfiguration |
+| `src/ue/rrc/handover.cpp` | Handover execution (Phase 2+3): `performHandover()`, `findCellByPci()` (3 strategies), `suspendMeasurements()`, `resumeMeasurements()`, `refreshSecurityKeys()`, `handleT304Expiry()` |
+| `src/ue/rrc/cho.cpp` | Conditional Handover (CHO) — Release 16/17: `parseConditionalReconfiguration()` (ASN.1 path), `handleChoConfiguration()` (binary DL_CHO path), `evaluateChoCandidates()`, `evaluateCondition{Raw,WithTTT}()`, `selectBestCandidate()` (priority + margin + RSRP), `executeChoCandidate()`, `cancelAllChoCandidates()`, `getUePosition()` |
+| `src/ue/rrc/sib19.hpp` | SIB19-r17 NTN types: `EEphemerisType`, `SatPositionVelocity`, `SatOrbitalParameters`, `EphemerisInfo`, `TaInfo`, `NtnConfig`, `Sib19Info`, `extrapolateSatellitePosition()`, `isSib19EphemerisValid()` |
+| `src/ue/rrc/sib19.cpp` | SIB19 binary protocol parser: `receiveSib19()` (104-byte little-endian PDU), JSON serialization for all SIB19 types |
+| `src/ue/rrc/position.hpp` | UE position types & coordinate conversions: `GeoPosition`, `EcefPosition`, `UePosition`, WGS-84 constants, `geoToEcef()`, `ecefDistance()`, `elevationAngle()`, `computeNadir()` |
+| `src/ue/rrc/position.cpp` | JSON serialization for `GeoPosition`, `EcefPosition`, `UePosition` |
+
+### Modified source files
+
+| File | Change summary |
+|------|----------------|
+| `src/ue/rrc/task.hpp` | Added measurement members (`m_measConfig`, `m_measProvider`), handover state (`m_handoverInProgress`, `m_hoTxId`, `m_hoTargetPci`, `m_measurementsSuspended`), CHO state (`m_choCandidates`), and method declarations for measurement/handover/reconfiguration/CHO/SIB19/position |
+| `src/ue/rrc/task.cpp` | Added `TIMER_ID_T304` constant, `MeasurementProvider` lifecycle in `onStart()`/`onQuit()`, T304 expiry dispatch in `onLoop()`, explicit destructor |
+| `src/ue/rrc/state.cpp` | Added `evaluateMeasurements()` and `evaluateChoCandidates()` calls inside the previously-empty `RRC_CONNECTED` branch of `performCycle()` |
+| `src/ue/rrc/channel.cpp` | Added `rrcReconfiguration` case in `DL_DCCH` dispatch → `receiveRrcReconfiguration()`; added `DL_CHO` channel → `handleChoConfiguration()`; added `DL_SIB19` channel → `receiveSib19()` |
+| `src/lib/rrc/rrc.hpp` | Added `DL_CHO` and `DL_SIB19` values to `RrcChannel` enum |
+| `src/ue/rrc/sap.cpp` | Added Doxygen comments to `handleRlsSapMessage()` and `handleNasSapMessage()` |
+| `src/ue/rrc/nas.cpp` | Added Doxygen comments to `deliverUplinkNas()` |
+| `src/ue/types.hpp` | Added `MeasSourceConfig measSourceConfig` field to `UeConfig`; added `std::optional<UePosition> initialPosition` to `UeConfig`; added `Sib19Info sib19` to `UeCellDesc`; added `#include <ue/rrc/measurement.hpp>`, `#include <ue/rrc/position.hpp>`, `#include <ue/rrc/sib19.hpp>` |
+| `src/ue.cpp` | Added YAML parsing for optional `measurementSource` config block (type: `udp`/`unix`/`file`/`none`), propagated `measSourceConfig` in `GetConfigByUE()` |
 
 ---
 
@@ -118,6 +158,28 @@ The UE is composed of four NTS tasks that run as independent threads, communicat
 
 **Source:** `src/ue/rrc/task.cpp`, `src/ue/rrc/task.hpp`
 
+### RRC Task Startup & Shutdown
+
+```
+UeRrcTask::onStart()                                  [task.cpp]
+├── triggerCycle()                                     [state.cpp]
+├── setTimer(TIMER_ID_MACHINE_CYCLE, 2500ms)
+├── [if initialPosition configured]
+│   └── Log UE position (lat, lon, alt, ECEF) for D1 events
+└── [if measSourceConfig.type != NONE]
+    ├── Create MeasurementProvider(measSourceConfig)   [meas_provider.cpp]
+    ├── m_measProvider->start()
+    │   └── Spawn background thread:
+    │       ├── [UDP]       → runUdp()       — bind udpAddress:udpPort, recv JSON
+    │       ├── [UNIX_SOCK] → runUnixSocket() — bind unixSocketPath, recv JSON
+    │       └── [FILE]      → runFilePoller() — poll filePath every N ms
+    └── Log "OOB measurement provider started"
+
+UeRrcTask::onQuit()                                   [task.cpp]
+└── [if m_measProvider] → m_measProvider->stop()
+    └── m_running = false; join background thread
+```
+
 ### 3.1 Message Dispatch (onLoop)
 
 The RRC task's `onLoop()` receives messages and dispatches them:
@@ -162,6 +224,7 @@ handleNasSapMessage(NmUeNasToRrc)                      [sap.cpp]
 ```
 performCycle()                                         [state.cpp]
 ├── [RRC_CONNECTED] → evaluateMeasurements()           [measurement.cpp]
+│                   → evaluateChoCandidates()           [cho.cpp]
 ├── [RRC_IDLE]      → performCellSelection()           [idle.cpp]
 └── [RRC_INACTIVE]  → performCellSelection()           [idle.cpp]
 ```
@@ -272,6 +335,10 @@ handleDownlinkRrc(cellId, DL_DCCH, pdu)                [channel.cpp]
 
 ### 3.6 RRC Reconfiguration & MeasConfig
 
+> **Added in this fork.** Upstream UERANSIM did not handle
+> `RRCReconfiguration` on the DL_DCCH channel. The `channel.cpp` dispatch
+> was extended to route `rrcReconfiguration` to `receiveRrcReconfiguration()`.
+
 ```
 handleDownlinkRrc(cellId, DL_DCCH, pdu)                [channel.cpp]
 └── receiveRrcMessage(DL_DCCH_Message)
@@ -299,6 +366,9 @@ handleDownlinkRrc(cellId, DL_DCCH, pdu)                [channel.cpp]
 ---
 
 ### 3.7 Measurement Framework
+
+> **Added in this fork.** Upstream UERANSIM has no measurement evaluation —
+> the `RRC_CONNECTED` branch of `performCycle()` was empty.
 
 **Periodic evaluation (during `performCycle()` in RRC_CONNECTED):**
 
@@ -329,9 +399,22 @@ evaluateMeasurements()                                 [measurement.cpp]
 │           └── push NmUeRrcToRls(RRC_PDU_DELIVERY) → RLS task
 ```
 
+**Measurement config reset (on connection release / radio failure):**
+
+```
+resetMeasurements()                                    [measurement.cpp]
+└── m_measConfig = {}  (clear all objects, reports, measIds, states)
+```
+
+> `resetMeasurements()` is available for use on RRC release or radio link
+> failure to clear stale measurement configuration.
+
 ---
 
 ### 3.8 Handover Execution
+
+> **Added in this fork (Phase 2+3).** Upstream UERANSIM has no handover
+> support — `RRCReconfiguration` messages were not handled.
 
 ```
 performHandover(txId, targetPCI, newCRNTI, t304Ms, hasRachConfig) [handover.cpp]
@@ -426,6 +509,312 @@ handleCellSignalChange(cellId, dbm)                    [cells.cpp]
     ├── [was active + RRC_CONNECTED] → declareRadioLinkFailure()
     ├── [was active + RRC_IDLE] → push NmUeRrcToNas(ACTIVE_CELL_CHANGED)
     └── updateAvailablePlmns()
+```
+
+---
+
+### 3.12 SIB19 Reception (NTN Configuration)
+
+> **Added in this fork.** SIB19 carries Non-Terrestrial Network (NTN)
+> configuration per 3GPP Release 17. Because UERANSIM's ASN.1 library is
+> Release 15 and has no native SIB19 type, this fork uses a custom binary
+> channel (`DL_SIB19`) and a 104-byte little-endian PDU format.
+
+**Channel dispatch:**
+
+```
+handleDownlinkRrc(cellId, DL_SIB19, pdu)               [channel.cpp]
+└── receiveSib19(cellId, pdu)                          [sib19.cpp]
+```
+
+**SIB19 binary PDU layout (104 bytes, little-endian):**
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 1 | `ephemerisType` (0 = POSITION_VELOCITY, 1 = ORBITAL_PARAMETERS) |
+| 4–51 | 48 | Ephemeris block: `SatPositionVelocity` (6 doubles: posX/Y/Z + velX/Y/Z) or `SatOrbitalParameters` (6 doubles: semiMajorAxis, eccentricity, inclination, omega, bigOmega, meanAnomaly) |
+| 52 | 8 | `epochTime` (int64, ms since sim start) |
+| 60 | 8 | `kOffset` (double) |
+| 68 | 8 | `taCommon` (double, TA in ms) |
+| 76 | 8 | `distanceThresh` (double, meters; ≤ 0 = absent) |
+| 84 | 4 | `polarization` (int32: 0=RHCP, 1=LHCP, 2=LINEAR) |
+| 88 | 4 | `ulSyncValidityDuration` (int32, seconds: 5–900) |
+| 92 | 8 | `cellSelectionMinRxLevel` (double, dBm) |
+| 100 | 4 | `deriveSSB` (int32: 0/1) |
+
+**Call flow — `receiveSib19()`:**
+
+```
+receiveSib19(cellId, pdu)                              [sib19.cpp]
+├── Validate length (≥ 104 bytes)
+├── Read ephemerisType → EEphemerisType
+├── [POSITION_VELOCITY] Parse 6 doubles → SatPositionVelocity
+├── [ORBITAL_PARAMETERS] Parse 6 doubles → SatOrbitalParameters
+├── Read common fields: epochTime, kOffset, taCommon, distanceThresh,
+│   polarization, ulSyncValidityDuration, cellSelectionMinRxLevel, deriveSSB
+├── Populate Sib19Info:
+│   ├── hasSib19 = true
+│   ├── ntnConfig = { ephemerisInfo, epochTime, kOffset, taInfo, syncValidity }
+│   ├── distanceThresh = (> 0 ? value : nullopt)
+│   └── receivedTime = current sim time
+└── Store → m_cellDesc[cellId].sib19
+```
+
+**Key SIB19 types** (defined in `sib19.hpp`):
+
+```
+Sib19Info
+├── hasSib19: bool
+├── ntnConfig: NtnConfig
+│   ├── ephemerisInfo: EphemerisInfo
+│   │   ├── type: EEphemerisType {POSITION_VELOCITY, ORBITAL_PARAMETERS}
+│   │   ├── posVel: SatPositionVelocity {posX/Y/Z, velX/Y/Z}   [ECEF meters & m/s]
+│   │   └── orbital: SatOrbitalParameters {semiMajorAxis, e, i, ω, Ω, M}
+│   ├── epochTime: int64_t (ms)
+│   ├── kOffset: double
+│   ├── taInfo: TaInfo {taCommon: double ms}
+│   └── ulSyncValidityDuration: ENtnUlSyncValidityDuration {S5..S900}
+├── distanceThresh: optional<double> (meters, for D1 events)
+└── receivedTime: int64_t (ms, when SIB19 was received)
+```
+
+**Satellite position extrapolation** (inline in `sib19.hpp`):
+
+```
+extrapolateSatellitePosition(posVel, dtSec, &x, &y, &z)
+└── Linear extrapolation: x = posX + velX * dt,  y = posY + velY * dt,  z = posZ + velZ * dt
+```
+
+**SIB19 validity check** (inline in `sib19.hpp`):
+
+```
+isSib19EphemerisValid(sib19, relativeNow)
+└── (relativeNow − receivedTime) / 1000.0 < ulSyncValidityDuration (seconds)
+```
+
+---
+
+### 3.13 Position Framework (D1 Events)
+
+> **Added in this fork.** The position framework provides WGS-84
+> coordinate types and conversions needed by D1 distance-based CHO
+> conditions. All functions are `inline` in `position.hpp`.
+
+**Types:**
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| `GeoPosition` | `latitude`, `longitude`, `altitude` | WGS-84 geodetic (degrees, meters) |
+| `EcefPosition` | `x`, `y`, `z` | Earth-Centered Earth-Fixed (meters) |
+| `UePosition` | `geo`, `ecef` | Combined geodetic + ECEF representation |
+
+**Conversions & computations** (inline, `position.hpp`):
+
+```
+geoToEcef(geo) → EcefPosition
+├── N = A / sqrt(1 − E² sin²φ)
+├── x = (N + alt) cosφ cosλ
+├── y = (N + alt) cosφ sinλ
+└── z = (N(1−E²) + alt) sinφ
+
+ecefDistance(a, b) → double
+└── Euclidean: sqrt( (ax−bx)² + (ay−by)² + (az−bz)² )
+
+elevationAngle(geo, ueEcef, targetEcef) → double (degrees)
+├── Compute local UP vector from geodetic → ECEF normal
+├── Compute direction vector UE → target
+└── elevation = 90° − acos(dot(up, dir))
+
+computeNadir(satX, satY, satZ) → EcefPosition
+├── Compute geodetic (lat, lon) from ECEF
+└── Project back to surface: geoToEcef({lat, lon, alt=0})
+```
+
+**UE position retrieval** (`cho.cpp`):
+
+```
+getUePosition()                                        [cho.cpp]
+├── [initialPosition configured] → return *m_base->config->initialPosition
+└── [else] → return default (0, 0, 0) converted to ECEF
+```
+
+**Configuration** (in UE YAML + `src/ue.cpp`):
+
+```yaml
+position:
+  latitude: 33.7756
+  longitude: -84.3963
+  altitude: 320.0
+```
+
+Parsed in `GetConfigByUE()` → `UeConfig::initialPosition` (`std::optional<UePosition>`).
+ECEF coordinates are computed automatically via `geoToEcef()`.
+
+---
+
+### 3.14 Conditional Handover (CHO)
+
+> **Added in this fork.** Implements Conditional Handover per 3GPP TS 38.331
+> §5.3.5.8 (Release 16/17). The gNB pre-configures one or more CHO
+> candidates, each with a condition group. Conditions within a candidate
+> use AND logic; multiple candidates use OR logic. The first (or
+> highest-priority) fully-satisfied candidate triggers handover execution.
+
+**RrcChannel additions** (`src/lib/rrc/rrc.hpp`):
+
+| Channel | Purpose |
+|---------|---------|
+| `DL_CHO` | Custom channel for injecting CHO candidates via binary protocol |
+| `DL_SIB19` | Custom channel for SIB19 NTN configuration (Rel-17) |
+
+**CHO event types** (`EChoEventType` in `measurement.hpp`):
+
+| Event | Trigger Condition |
+|-------|-------------------|
+| `T1` | Timer expiry: fires after `t1DurationMs` elapsed |
+| `A2` | Serving RSRP < threshold + hysteresis |
+| `A3` | Neighbor RSRP > serving + offset − hysteresis |
+| `A5` | Serving < threshold1 AND neighbor > threshold2 |
+| `D1` | Distance from UE to static ECEF reference > threshold (meters) |
+| `D1_SIB19` | Distance from UE to SIB19-derived satellite reference > threshold |
+
+**CHO type hierarchy** (`measurement.hpp`):
+
+```
+ChoCandidate
+├── candidateId: int               (condReconfigId)
+├── targetPci: int                 (target cell PCI)
+├── newCRNTI: int                  (C-RNTI assigned by target)
+├── t304Ms: int                    (T304 supervision timer)
+├── executionPriority: int         (lower = higher priority; INT_MAX = unset)
+├── conditions: vector<ChoCondition>   ── AND logic within group
+│   ├── eventType: EChoEventType
+│   ├── [T1]  t1DurationMs
+│   ├── [A2]  a2Threshold, hysteresis
+│   ├── [A3]  a3Offset, a3Hysteresis
+│   ├── [A5]  a5Threshold1, a5Threshold2, a5Hysteresis
+│   ├── [D1]  d1RefX/Y/Z (ECEF), d1ThresholdM
+│   ├── [D1_SIB19] d1sib19ThresholdM, d1sib19ElevationMinDeg, d1sib19UseNadir
+│   ├── timeToTriggerMs, hysteresis (common)
+│   └── Runtime: enteringTimestamp, t1StartTime, satisfied, d1sib19ResolvedThreshM
+├── executed: bool
+└── triggerMargin: double
+```
+
+#### 3.14.1 CHO Configuration — ASN.1 Path
+
+```
+receiveRrcReconfiguration(msg)                         [reconfig.cpp]
+└── [ConditionalReconfiguration present]
+    └── parseConditionalReconfiguration(condReconfig)  [cho.cpp]
+        └── For each CondReconfigToAddMod in addModList:
+            ├── Extract candidateId from condReconfigId
+            ├── Parse condExecutionCond → MeasId list (AND logic):
+            │   ├── Look up MeasId → ReportConfig in m_measConfig
+            │   └── Map EMeasEvent → EChoEventType:
+            │       ├── A2 → ChoCondition{A2, threshold, hyst, ttt}
+            │       ├── A3 → ChoCondition{A3, offset, hyst, ttt}
+            │       └── A5 → ChoCondition{A5, thresh1, thresh2, hyst, ttt}
+            ├── [no conditions parsed] → T1 fallback (DEFAULT_T1_DURATION_MS)
+            ├── Decode condRRCReconfig (UPER → RRCReconfiguration)
+            │   └── Extract ReconfigurationWithSync:
+            │       ├── targetPci (physCellId)
+            │       ├── newCRNTI (newUE_Identity)
+            │       └── t304Ms   (t304 enum → ms)
+            └── Append to m_choCandidates
+```
+
+#### 3.14.2 CHO Configuration — Binary DL_CHO Path
+
+> The DL_CHO binary path is used by the test harness to inject CHO
+> candidates with arbitrary condition groups (including D1 and D1_SIB19)
+> that cannot be expressed via the Rel-15 ASN.1 library.
+
+```
+handleDownlinkRrc(cellId, DL_CHO, pdu)                 [channel.cpp]
+└── [isActiveCell] handleChoConfiguration(pdu)         [cho.cpp]
+    ├── Read numCandidates (uint32, offset 0)
+    └── Per candidate (variable size):
+        ├── Read candidateId, targetPci, newCRNTI, t304Ms, executionPriority
+        │   (5 × int32, 24-byte header)
+        ├── Read numConditions (uint32)
+        └── Per condition (56 bytes fixed):
+            ├── Read eventType (int32: 0=T1, 1=A2, 2=A3, 3=A5, 4=D1, 5=D1_SIB19)
+            ├── Read intParam1..3 (3 × int32), timeToTriggerMs, reserved
+            ├── Read floatParam1..4 (4 × double)
+            └── Map to ChoCondition:
+                ├── T1:      t1DurationMs = intParam1
+                ├── A2:      a2Threshold = ip1, hysteresis = ip2
+                ├── A3:      a3Offset = ip1, a3Hysteresis = ip2
+                ├── A5:      a5Threshold1 = ip1, thresh2 = ip2, hyst = ip3
+                ├── D1:      d1Ref{X,Y,Z} = fp1..3, d1ThresholdM = fp4
+                └── D1_SIB19: useNadir = (ip1 & 1), threshold = fp1, elevMin = fp2
+```
+
+#### 3.14.3 CHO Candidate Evaluation (Per-Cycle)
+
+Called from `performCycle()` every machine cycle (2500 ms) when `RRC_CONNECTED`:
+
+```
+evaluateChoCandidates()                                [cho.cpp]
+├── [skip if m_choCandidates empty or m_handoverInProgress]
+├── collectMeasurements()                              [measurement.cpp]
+├── getServingCellRsrp(allMeas)                        [measurement.cpp]
+├── getUePosition()                                    [cho.cpp]
+│
+├── Phase 1: Evaluate conditions for all candidates
+│   └── For each non-executed candidate:
+│       ├── Resolve target cell RSRP from measurements
+│       │   (match by PCI or NCI lower bits)
+│       ├── For each condition in the candidate's group:
+│       │   ├── [D1] Compute ecefDistance(uePos, refPoint)
+│       │   ├── [D1_SIB19] Derive reference from SIB19:
+│       │   │   ├── Get serving cell's Sib19Info
+│       │   │   ├── Check isSib19EphemerisValid()
+│       │   │   ├── extrapolateSatellitePosition(posVel, dt)
+│       │   │   ├── [useNadir] ref = computeNadir(sat)
+│       │   │   ├── [else]     ref = satellite ECEF position
+│       │   │   ├── d1Dist = ecefDistance(uePos, ref)
+│       │   │   └── Resolve threshold: config value, or SIB19 distanceThresh
+│       │   └── evaluateConditionWithTTT(cond, ...)
+│       │       └── evaluateConditionRaw(cond, ...)
+│       │           ├── T1:  elapsed ≥ t1DurationMs → 1.0
+│       │           ├── A2:  (threshold + hyst) − servingRsrp → margin
+│       │           ├── A3:  targetRsrp − (serving + offset − hyst) → margin
+│       │           ├── A5:  min(margin1, margin2) (both > 0 required)
+│       │           ├── D1:  ueDistance − threshold → margin
+│       │           └── D1_SIB19: ueDistance − resolvedThresh → margin
+│       │       Then apply TTT check (except T1 which has built-in timer)
+│       ├── [ALL conditions satisfied] → add to triggered list
+│       └── [else] continue (keeps TTT timers ticking)
+│
+├── Phase 2: Select best candidate (selectBestCandidate)
+│   └── Sort triggered candidates by:
+│       1. executionPriority ASC (lowest value = highest priority)
+│       2. triggerMargin DESC (greatest excess over threshold)
+│       3. targetRsrp DESC (strongest neighbor signal)
+│       4. config order ASC (earliest in list)
+│
+└── Execute winning candidate → executeChoCandidate()
+```
+
+#### 3.14.4 CHO Execution
+
+```
+executeChoCandidate(candidate)                         [cho.cpp]
+├── candidate.executed = true
+├── Cancel all other CHO candidates
+│   └── Mark remaining as executed = true
+│       (per TS 38.331 §5.3.5.8.6)
+└── performHandover(txId=0, targetPci, newCRNTI, t304Ms, hasRachConfig=false)
+    └── (see §3.8 Handover Execution)
+```
+
+**Cancel all candidates:**
+
+```
+cancelAllChoCandidates()                               [cho.cpp]
+└── m_choCandidates.clear()
 ```
 
 ---
@@ -1011,6 +1400,120 @@ UeAppTask::onLoop()
 
 ---
 
+### 8.6 OOB Measurement Injection (Configuration)
+
+The `measurementSource` block in the UE YAML config file configures the
+OOB measurement provider. This is parsed at startup in `src/ue.cpp`:
+
+```
+ReadConfigFile()                                       [src/ue.cpp]
+├── [measurementSource present]
+│   ├── type="udp"  → measSourceConfig.type = UDP
+│   │   ├── address (default "127.0.0.1")
+│   │   └── port    (default 7200)
+│   ├── type="unix" → measSourceConfig.type = UNIX_SOCK
+│   │   └── path
+│   ├── type="file" → measSourceConfig.type = FILE
+│   │   ├── path
+│   │   └── pollInterval (default 1000 ms)
+│   └── type="none" → measSourceConfig.type = NONE
+│
+└── GetConfigByUE(ueIndex)                             [src/ue.cpp]
+    └── c->measSourceConfig = g_refConfig->measSourceConfig
+```
+
+Expected JSON format from UDP/Unix/File sources:
+```json
+{
+  "measurements": [
+    { "cellId": 1, "rsrp": -85, "rsrq": -10, "sinr": 15 },
+    { "cellId": 2, "rsrp": -95 },
+    { "nci": 36,   "rsrp": -78, "rsrq": -8,  "sinr": 20 }
+  ]
+}
+```
+
+Fields: `cellId` (internal UERANSIM cell ID) or `nci` (NR Cell Identity
+from SIB1) for cell matching, `rsrp` (dBm, mandatory), `rsrq`/`sinr`
+(optional).
+
+---
+
+### 8.7 Conditional Handover (End-to-End)
+
+> **Added in this fork.** This shows the complete lifecycle of a
+> Conditional Handover from SIB19 reception through condition evaluation
+> to handover execution.
+
+**Phase A — SIB19 Provisioning (NTN scenarios):**
+
+```
+1. gNB → RLS → RRC: DL_SIB19 (104-byte binary PDU)
+   └── handleDownlinkRrc(cellId, DL_SIB19, pdu)       [channel.cpp]
+   └── receiveSib19(cellId, pdu)                       [sib19.cpp]
+       ├── Parse ephemeris (position/velocity or Keplerian)
+       ├── Parse NTN config (epoch, kOffset, TA, distance threshold, ...)
+       └── Store → m_cellDesc[cellId].sib19
+```
+
+**Phase B — CHO Configuration (via DL_CHO from test harness):**
+
+```
+2. Test harness → gNB → RLS → RRC: DL_CHO (binary PDU)
+   └── handleDownlinkRrc(cellId, DL_CHO, pdu)         [channel.cpp]
+   └── handleChoConfiguration(pdu)                     [cho.cpp]
+       ├── Parse N candidates, each with M conditions
+       │   (T1, A2, A3, A5, D1, or D1_SIB19)
+       └── Append to m_choCandidates
+```
+
+**Phase B' — CHO Configuration (via ASN.1 RRCReconfiguration):**
+
+```
+2'. gNB → RLS → RRC: RRCReconfiguration (with ConditionalReconfiguration)
+    └── receiveRrcReconfiguration()                    [reconfig.cpp]
+    └── parseConditionalReconfiguration()              [cho.cpp]
+        ├── Parse condExecutionCond MeasIds → conditions
+        ├── Decode nested condRRCReconfig → target cell params
+        └── Append to m_choCandidates
+```
+
+**Phase C — Per-Cycle Evaluation (every 2500 ms while RRC_CONNECTED):**
+
+```
+3. performCycle()                                      [state.cpp]
+   └── evaluateChoCandidates()                         [cho.cpp]
+       ├── collectMeasurements() (RSRP from RLS + OOB overlay)
+       ├── getUePosition() (from config or default)
+       ├── For each candidate → evaluate all conditions (AND logic):
+       │   ├── T1:       timer check (built-in, no TTT)
+       │   ├── A2/A3/A5: RSRP comparison with TTT
+       │   ├── D1:       ecefDistance(UE, staticRef) > threshold
+       │   └── D1_SIB19: ecefDistance(UE, satRef) > threshold
+       │       ├── extrapolateSatellitePosition() from SIB19
+       │       ├── [useNadir] computeNadir() → ground projection
+       │       └── Resolve threshold from config or SIB19 distanceThresh
+       ├── Select best candidate (priority → margin → RSRP → order)
+       └── executeChoCandidate()                       [cho.cpp]
+```
+
+**Phase D — Handover Execution:**
+
+```
+4. executeChoCandidate(winner)                         [cho.cpp]
+   ├── Cancel all other CHO candidates
+   └── performHandover(0, targetPci, newCRNTI, t304Ms) [handover.cpp]
+       ├── suspendMeasurements()
+       ├── setTimer(T304)
+       ├── findCellByPci() → resolve target
+       ├── Switch serving cell → NmUeRrcToRls(ASSIGN_CURRENT_CELL) → RLS
+       ├── sendRrcMessage(RRCReconfigurationComplete) → RLS → target gNB
+       ├── resumeMeasurements()
+       └── NmUeRrcToNas(ACTIVE_CELL_CHANGED) ─────────────────────→ NAS
+```
+
+---
+
 ## Source File Index
 
 | File | Content |
@@ -1035,6 +1538,12 @@ UeAppTask::onLoop()
 | `src/ue/rrc/measurement.hpp` | Measurement types: events, configs, objects |
 | `src/ue/rrc/measurement.cpp` | Measurement logic: evaluate A2/A3/A5, send report |
 | `src/ue/rrc/handover.cpp` | Handover execution: cell switch, T304, RACH, complete |
+| `src/ue/rrc/cho.cpp` | Conditional Handover: parse, evaluate, select, execute, cancel |
+| `src/ue/rrc/sib19.hpp` | SIB19-r17 NTN types: ephemeris, NTN config, extrapolation |
+| `src/ue/rrc/sib19.cpp` | SIB19 binary protocol parser, JSON serialization |
+| `src/ue/rrc/position.hpp` | UE position types: GeoPosition, EcefPosition, WGS-84 conversions |
+| `src/ue/rrc/position.cpp` | Position JSON serialization |
+| `src/lib/rrc/rrc.hpp` | RRC channel enum (incl. `DL_CHO`, `DL_SIB19` additions) |
 | `src/ue/rrc/meas_provider.hpp` | OOB measurement provider interface |
 | `src/ue/rrc/meas_provider.cpp` | OOB measurement provider (UDP/Unix/File) |
 | `src/ue/nas/task.cpp` | NAS task: onLoop, timer tick |
@@ -1070,3 +1579,4 @@ UeAppTask::onLoop()
 | `src/ue/app/task.cpp` | APP task: onLoop, TUN setup, status |
 | `src/ue/app/cmd_handler.cpp` | APP CLI command handler |
 | `src/ue/tun/task.hpp` | TUN sub-task per PDU session |
+| `src/ue.cpp` | UE main: YAML config parsing (incl. `measurementSource`, `position`), `GetConfigByUE()` |

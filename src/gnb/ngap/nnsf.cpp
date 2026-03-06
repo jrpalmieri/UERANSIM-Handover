@@ -13,6 +13,7 @@ namespace nr::gnb
 
 NgapAmfContext *NgapTask::selectAmf(int ueId, int32_t &requestedSliceType)
 {
+    // First pass: try to match by requested slice type
     for (auto &amf : m_amfCtx) {
         for (const auto &plmnSupport : amf.second->plmnSupportList) {
             for (const auto &singleSlice : plmnSupport->sliceSupportList.slices) {
@@ -23,6 +24,15 @@ NgapAmfContext *NgapTask::selectAmf(int ueId, int32_t &requestedSliceType)
             }
         }
     }
+
+    // Fallback: if no slice match (e.g. NAS without NSSAI), return first AMF
+    if (!m_amfCtx.empty())
+    {
+        m_logger->warn("No slice-based AMF match for UE[%d] (requestedSST=%d), using first available AMF",
+                       ueId, requestedSliceType);
+        return m_amfCtx.begin()->second;
+    }
+
     return nullptr;
 }
 

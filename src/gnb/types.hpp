@@ -156,9 +156,14 @@ struct RrcUeContext
     int handoverNewCrnti{};
     long handoverTxId{};
 
+    /* Measurement configuration tracking */
+    bool measConfigSent{};
+
     /* Last measurement report data */
     int lastMeasReportPci{-1};
     int lastMeasReportRsrp{-140};
+    int lastServingRsrp{-140};
+    bool handoverDecisionPending{};
 
     explicit RrcUeContext(const int ueId) : ueId(ueId)
     {

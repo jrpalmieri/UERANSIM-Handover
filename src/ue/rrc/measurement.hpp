@@ -172,6 +172,118 @@ struct UeMeasConfig
 };
 
 /* ------------------------------------------------------------------ */
+/*  Conditional Handover (CHO) types – Release 17 condition groups    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Event type for a single atomic CHO execution condition.
+ *
+ * Per 3GPP TS 38.331, each MeasId in condExecutionCond resolves to a
+ * ReportConfig whose event type determines the kind of check the UE
+ * must perform.  We also support a T1 (timer-only) pseudo-event for
+ * UERANSIM-specific timer-based triggers.
+ */
+enum class EChoEventType
+{
+    T1,       // Timer-only: fires after t1DurationMs elapsed
+    A2,       // Serving RSRP < threshold
+    A3,       // Neighbor RSRP > serving RSRP + offset − hysteresis
+    A5,       // Serving < threshold1 AND neighbor > threshold2
+    D1,       // Distance to static ECEF reference point exceeds threshold (3GPP Event D1)
+    D1_SIB19, // Distance to SIB19-derived satellite reference (nadir/satellite) exceeds threshold
+};
+
+/**
+ * @brief A single atomic condition within a CHO condition group.
+ *
+ * Multiple ChoCondition objects within a ChoCandidate's condition list
+ * are evaluated with AND logic – all must be simultaneously satisfied
+ * for the candidate to trigger.  Different ChoCandidate entries are
+ * evaluated with OR logic – the first fully-satisfied candidate wins.
+ */
+struct ChoCondition
+{
+    EChoEventType eventType{EChoEventType::T1};
+
+    /* T1 parameters */
+    int t1DurationMs{1000};
+
+    /* A2 parameters */
+    int a2Threshold{-110};        // dBm
+
+    /* A3 parameters */
+    int a3Offset{6};              // dB
+    int a3Hysteresis{2};          // dB
+
+    /* A5 parameters */
+    int a5Threshold1{-110};       // dBm (serving)
+    int a5Threshold2{-100};       // dBm (neighbor)
+    int a5Hysteresis{2};          // dB
+
+    /* D1 parameters (static ECEF reference point + distance threshold) */
+    double d1RefX{};
+    double d1RefY{};
+    double d1RefZ{};
+    double d1ThresholdM{1000.0};
+
+    /* D1_SIB19 parameters (reference derived from SIB19 ephemeris) */
+    double d1sib19ThresholdM{-1.0};        ///< Threshold in meters; < 0 = use SIB19's distanceThresh
+    double d1sib19ElevationMinDeg{-1.0};   ///< Min elevation angle for logging; < 0 = ignored
+    bool   d1sib19UseNadir{true};          ///< true = distance to nadir, false = slant range to satellite
+
+    /* D1_SIB19 runtime — set by evaluateChoCandidates() each cycle */
+    double d1sib19ResolvedThreshM{0.0};    ///< Resolved threshold (from config or SIB19 distanceThresh)
+
+    /* Common */
+    int hysteresis{2};            // general hysteresis (used where applicable)
+    int timeToTriggerMs{0};       // condition must hold this long (ms)
+
+    /* Runtime state — managed by evaluateChoCandidates() */
+    int64_t enteringTimestamp{};  // When condition first became true (0 = not met)
+    int64_t t1StartTime{};       // When T1 was started (0 = not started)
+    bool satisfied{};             // true once condition has been met for TTT duration
+};
+
+/**
+ * @brief A single Conditional Handover candidate (CondReconfigToAddMod).
+ *
+ * Per 3GPP TS 38.331 §5.3.5.8.6 (Release 16/17), the gNB pre-configures
+ * one or more CHO candidates.  Each candidate carries:
+ *  - Target cell parameters (PCI, C-RNTI, T304).
+ *  - A condition group: one or more ChoCondition entries evaluated with
+ *    AND logic.  All conditions in the group must be simultaneously
+ *    satisfied for the candidate to trigger.
+ *  - An optional execution priority (lower value = higher priority).
+ *
+ * Multiple candidates in the CHO list are treated as OR – the first
+ * (or highest-priority) candidate whose condition group is fully
+ * satisfied triggers handover.
+ *
+ * When multiple candidates trigger in the same evaluation cycle, the
+ * UE selects based on:
+ *   1. condExecutionPriority (lowest value wins)
+ *   2. Greatest trigger margin (how much the conditions are exceeded)
+ *   3. Highest neighbor RSRP
+ *   4. Configuration order (earliest in the list)
+ */
+struct ChoCandidate
+{
+    int candidateId{};          // condReconfigId
+    int targetPci{};            // Target cell PCI
+    int newCRNTI{};             // C-RNTI assigned by target cell
+    int t304Ms{1000};           // T304 supervision timer (ms)
+
+    int executionPriority{0x7FFFFFFF}; // Lower = higher priority; max = unset
+
+    /* Condition group – AND logic: ALL must be satisfied */
+    std::vector<ChoCondition> conditions;
+
+    /* Runtime state */
+    bool executed{};            // Whether this candidate has been executed
+    double triggerMargin{};     // Computed when all conditions met (for tie-breaking)
+};
+
+/* ------------------------------------------------------------------ */
 /*  JSON helpers                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -180,5 +292,8 @@ Json ToJson(const EMeasSourceType &v);
 Json ToJson(const CellMeasurement &v);
 Json ToJson(const UeReportConfig &v);
 Json ToJson(const UeMeasConfig &v);
+Json ToJson(const EChoEventType &v);
+Json ToJson(const ChoCondition &v);
+Json ToJson(const ChoCandidate &v);
 
 } // namespace nr::ue

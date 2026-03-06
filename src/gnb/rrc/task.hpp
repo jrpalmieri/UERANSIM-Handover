@@ -115,6 +115,9 @@ class GnbRrcTask : public NtsTask
     void receiveMeasurementReport(int ueId, const ASN_RRC_MeasurementReport &msg);
     void sendHandoverCommand(int ueId, int targetPci, int newCrnti, int t304Ms);
     void handleHandoverComplete(int ueId);
+    void sendMeasConfig(int ueId);
+    void evaluateHandoverDecision(int ueId);
+    void handleNgapHandoverCommand(int ueId, const OctetString &rrcContainer);
 };
 
 } // namespace nr::gnb

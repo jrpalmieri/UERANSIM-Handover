@@ -64,6 +64,7 @@ void GnbRrcTask::handleUplinkRrc(int ueId, rrc::RrcChannel channel, const OctetS
     case rrc::RrcChannel::BCCH_DL_SCH:
     case rrc::RrcChannel::DL_CCCH:
     case rrc::RrcChannel::DL_DCCH:
+    case rrc::RrcChannel::DL_CHO:
         break;
     }
 }

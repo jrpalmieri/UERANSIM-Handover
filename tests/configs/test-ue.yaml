@@ -51,6 +51,12 @@ integrityMaxRate:
   uplink: 'full'
   downlink: 'full'
 
+# UE position (for D1 distance-based CHO events)
+position:
+  latitude: 33.7490    # Atlanta, GA
+  longitude: -84.3880
+  altitude: 320.0
+
 # Out-of-band measurement source (for test injection)
 measSource:
   type: 'UDP'
