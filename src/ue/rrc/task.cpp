@@ -7,7 +7,8 @@
 //
 
 #include "task.hpp"
-#include "meas_provider.hpp"
+//#include "meas_provider.hpp"
+
 #include <asn/rrc/ASN_RRC_RRCSetupRequest-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCSetupRequest.h>
 #include <asn/rrc/ASN_RRC_ULInformationTransfer-IEs.h>
@@ -52,21 +53,11 @@ void UeRrcTask::onStart()
                        pos.ecef.x, pos.ecef.y, pos.ecef.z);
     }
 
-    // Start OOB measurement provider if configured
-    if (m_base->config->measSourceConfig.type != EMeasSourceType::NONE)
-    {
-        m_measProvider = std::make_unique<MeasurementProvider>(
-            m_base->config->measSourceConfig, m_base->logBase);
-        m_measProvider->start();
-        m_logger->info("OOB measurement provider started (type=%s)",
-                       ToJson(m_base->config->measSourceConfig.type).str().c_str());
-    }
+
 }
 
 void UeRrcTask::onQuit()
 {
-    if (m_measProvider)
-        m_measProvider->stop();
 }
 
 void UeRrcTask::onLoop()
@@ -97,11 +88,13 @@ void UeRrcTask::onLoop()
     }
     case NtsMessageType::TIMER_EXPIRED: {
         auto &w = dynamic_cast<NmTimerExpired &>(*msg);
+        // if the machine cycle timer expires, trigger an RRC cycle
         if (w.timerId == TIMER_ID_MACHINE_CYCLE)
         {
             setTimer(TIMER_ID_MACHINE_CYCLE, TIMER_PERIOD_MACHINE_CYCLE);
             performCycle();
         }
+        // if the T304 timer expires, handle handover failure if handover is in progress
         else if (w.timerId == TIMER_ID_T304)
         {
             handleT304Expiry();

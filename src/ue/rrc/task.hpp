@@ -66,25 +66,25 @@ class UeRrcTask : public NtsTask
     std::unique_ptr<Logger> m_logger;
 
     int64_t m_startedTime;
+    // current RRC state (IDLE, CONNECTED, INACTIVE)
     ERrcState m_state;
     RrcTimers m_timers;
 
-    /* Cell and PLMN related */
+    // Cell information from MIB/SIBs (and measurements for legacy framework), indexed by cellId
     std::unordered_map<int, UeCellDesc> m_cellDesc{};
+
     int64_t m_lastTimePlmnSearchFailureLogged{};
 
     /* Procedure related */
     ERrcLastSetupRequest m_lastSetupReq{};
 
-    /* Measurement framework */
-    UeMeasConfig m_measConfig{};
-    std::unique_ptr<MeasurementProvider> m_measProvider;
-
     /* Handover state */
-    bool m_handoverInProgress{};
+
+    UeMeasConfig m_measConfig{};  // Current list of measurement identities from network
+    bool m_handoverInProgress{};  // flag to indicate a handover is in progress
     long m_hoTxId{};             // RRC transaction ID of the pending handover
     int  m_hoTargetPci{};        // Target cell PCI from ReconfigurationWithSync
-    bool m_measurementsSuspended{};  // Phase 3: measurements paused during handover
+    bool m_measurementEvalSuspended{};  // Phase 3: measurements paused during handover
 
     /* Conditional Handover (CHO) state */
     std::vector<ChoCandidate> m_choCandidates{};  // Active CHO candidates
@@ -170,12 +170,9 @@ class UeRrcTask : public NtsTask
     void evaluateMeasurements();
     void applyMeasConfig(const UeMeasConfig &cfg);
     void resetMeasurements();
-    void sendMeasurementReport(int measId, int servingRsrp,
-                               const std::vector<struct TriggeredNeighbor> &neighbours,
-                               const std::unordered_map<int, CellMeasurement> &allMeas);
-    std::unordered_map<int, CellMeasurement> collectMeasurements();
-    int getServingCellRsrp(const std::unordered_map<int, CellMeasurement> &allMeas) const;
-    int resolveCellId(const CellMeasurement &cm) const;
+    void sendMeasurementReport(int measId, int servingCellId, int servingRsrp,
+                               const std::vector<struct TriggeredNeighbor> &neighbors);
+    int getServingCellRsrp(int servingCellId, const std::map<int, int> &allMeas) const;
     void receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg);
 
     /* Handover execution */

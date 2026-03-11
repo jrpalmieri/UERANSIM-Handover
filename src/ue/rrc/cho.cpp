@@ -602,8 +602,14 @@ void UeRrcTask::evaluateChoCandidates()
         return;
 
     int64_t now = utils::CurrentTimeMillis();
-    auto allMeas = collectMeasurements();
-    int servingRsrp = getServingCellRsrp(allMeas);
+    std::map<int, int> allMeas;
+    {
+        std::shared_lock lock(m_base->cellDbMeasMutex);
+        allMeas = m_base->cellDbMeas;
+    }
+
+    int servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
+    int servingRsrp = getServingCellRsrp(servingCellId, allMeas);
 
     // Pre-compute UE position (needed for D1 conditions)
     UePosition uePos = getUePosition();
@@ -630,7 +636,7 @@ void UeRrcTask::evaluateChoCandidates()
         {
             if (cellId == cand.targetPci)
             {
-                targetRsrp = meas.rsrp;
+                targetRsrp = meas;
                 break;
             }
             if (m_cellDesc.count(cellId))
@@ -638,7 +644,7 @@ void UeRrcTask::evaluateChoCandidates()
                 int nciLow = static_cast<int>(m_cellDesc[cellId].sib1.nci & 0x3FF);
                 if (nciLow == cand.targetPci)
                 {
-                    targetRsrp = meas.rsrp;
+                    targetRsrp = meas;
                     break;
                 }
             }

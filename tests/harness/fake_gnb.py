@@ -256,6 +256,7 @@ class FakeGnb:
         self._mnc = mnc
         self._tac = tac
         self._nci = nci
+        self._cell_id = int(nci & 0x3FF)
         self._supi = ue_supi
         self._ue_key = bytes.fromhex(ue_key)
         self._ue_op = bytes.fromhex(ue_op)
@@ -329,6 +330,8 @@ class FakeGnb:
         msg = encode_pdu_transmission(
             self._gnb_sti, EPduType.RRC, self._next_pdu_id(),
             int(channel), pdu,
+            include_cell_id=True,
+            cell_id=self._cell_id,
         )
         self._send_raw(msg)
         logger.debug("Sent RRC PDU on %s (%d bytes)", channel.name, len(pdu))
@@ -650,13 +653,23 @@ class FakeGnb:
         """Reply with HeartBeatAck and record UE address/STI."""
         self._ue_addr = addr
         self._ue_sti = hb.sti
-        ack = encode_heartbeat_ack(self._gnb_sti, self._cell_dbm)
+        ack = encode_heartbeat_ack(
+            self._gnb_sti,
+            self._cell_dbm,
+            include_cell_id=True,
+            cell_id=self._cell_id,
+        )
         self._send_raw(ack, addr)
 
     def _handle_pdu_transmission(self, pdu_tx: RlsPduTransmission, addr: Tuple[str, int]):
         """Process an uplink PDU_TRANSMISSION: ACK it and capture."""
         # Send ACK
-        ack = encode_pdu_transmission_ack(self._gnb_sti, [pdu_tx.pdu_id])
+        ack = encode_pdu_transmission_ack(
+            self._gnb_sti,
+            [pdu_tx.pdu_id],
+            include_cell_id=True,
+            cell_id=self._cell_id,
+        )
         self._send_raw(ack, addr)
 
         # Determine channel

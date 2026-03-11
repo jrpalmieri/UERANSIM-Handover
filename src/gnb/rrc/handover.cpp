@@ -204,7 +204,7 @@ void GnbRrcTask::receiveMeasurementReport(int ueId,
                     if (ssbCell && ssbCell->rsrp)
                         rsrp = rsrpRangeToDbm(*ssbCell->rsrp);
 
-                    m_logger->debug("  Neighbour PCI=%d RSRP=%ddBm", pci, rsrp);
+                    m_logger->debug("  Neighbor PCI=%d RSRP=%ddBm", pci, rsrp);
 
                     if (rsrp > bestNeighRsrp)
                     {
@@ -218,7 +218,7 @@ void GnbRrcTask::receiveMeasurementReport(int ueId,
                 {
                     ue->lastMeasReportPci = bestNeighPci;
                     ue->lastMeasReportRsrp = bestNeighRsrp;
-                    m_logger->info("Best neighbour: PCI=%d RSRP=%ddBm (serving=%ddBm)",
+                    m_logger->info("Best neighbor: PCI=%d RSRP=%ddBm (serving=%ddBm)",
                                    bestNeighPci, bestNeighRsrp, servingRsrp);
                 }
             }

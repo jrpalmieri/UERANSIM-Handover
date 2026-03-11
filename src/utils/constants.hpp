@@ -14,11 +14,11 @@ struct cons
 {
     // Version information
     static constexpr const uint8_t Major = 3;
-    static constexpr const uint8_t Minor = 2;
+    static constexpr const uint8_t Minor = 3;
     static constexpr const uint8_t Patch = 7;
     static constexpr const char *Project = "UERANSIM";
-    static constexpr const char *Tag = "v3.2.7";
-    static constexpr const char *Name = "UERANSIM v3.2.7";
+    static constexpr const char *Tag = "v3.3.7";
+    static constexpr const char *Name = "UERANSIM v3.3.7";
     static constexpr const char *Owner = "ALİ GÜNGÖR";
 
     // Some port values
@@ -39,4 +39,8 @@ struct cons
     static constexpr const char *PROC_TABLE_DIR = "/tmp/UERANSIM.proc-table/";
     static constexpr const char *PROCESS_DIR = "/proc/";
     static constexpr const char DIR_SEPARATOR = '/';
+
+    // RF related
+    static constexpr const int MIN_RSRP = -140;
+    static constexpr const int MAX_RSRP = -44;
 };

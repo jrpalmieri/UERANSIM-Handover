@@ -82,8 +82,9 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
 
 static void ReadOptions(int argc, char **argv)
 {
+    std::string versionStr = std::string(cons::Tag) + " (gNB " + nr::gnb::GNB_VERSION + ")";
     opt::OptionsDescription desc{cons::Project,
-                                 cons::Tag,
+                                 versionStr,
                                  "5G-SA gNB implementation",
                                  cons::Owner,
                                  "nr-gnb",

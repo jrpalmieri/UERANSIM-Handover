@@ -309,14 +309,15 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
         }
     }
 
-    // --- Execute handover or normal reconfiguration ---
+    // Execute operation based on reconfiguration msg type
     if (isHandover)
     {
+        // handovers require special processing
         performHandover(msg.rrc_TransactionIdentifier, hoPhysCellId, hoNewCRNTI, hoT304Ms, hoHasRachConfig);
     }
     else
     {
-        // Normal reconfiguration: send RRCReconfigurationComplete
+        // Non-handover reconfiguration: just send RRCReconfigurationComplete as ACK
         auto *pdu = asn::New<ASN_RRC_UL_DCCH_Message>();
         pdu->message.present = ASN_RRC_UL_DCCH_MessageType_PR_c1;
         pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
@@ -334,7 +335,7 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
         sendRrcMessage(pdu);
         asn::Free(asn_DEF_ASN_RRC_UL_DCCH_Message, pdu);
 
-        m_logger->info("RRCReconfigurationComplete sent (normal reconfiguration)");
+        m_logger->info("RRCReconfigurationComplete sent (non-handover reconfiguration)");
     }
 }
 

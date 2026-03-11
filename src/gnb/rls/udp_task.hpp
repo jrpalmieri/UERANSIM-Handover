@@ -35,6 +35,7 @@ class RlsUdpTask : public NtsTask
     udp::UdpServer *m_server;
     NtsTask *m_ctlTask;
     uint64_t m_sti;
+    uint32_t m_cellId;
     Vector3 m_phyLocation;
     int64_t m_lastLoop;
     std::unordered_map<uint64_t, int> m_stiToUe;

@@ -29,6 +29,7 @@ struct GnbCliCommand
         UE_LIST,
         UE_COUNT,
         UE_RELEASE_REQ,
+        VERSION,
     } present;
 
     // AMF_INFO
@@ -56,6 +57,7 @@ struct UeCliCommand
         DE_REGISTER,
         RLS_STATE,
         COVERAGE,
+        VERSION,
     } present;
 
     // DE_REGISTER

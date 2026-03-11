@@ -13,10 +13,22 @@
 #include <lib/rrc/encode.hpp>
 #include <ue/nas/task.hpp>
 #include <ue/rls/task.hpp>
+#include <utils/constants.hpp>
+
+const int MIN_RSRP = cons::MIN_RSRP; // minimum RSRP value (in dBm) to use when no measurement is available
+const int MAX_RSRP = cons::MAX_RSRP; // maximum RSRP value (in dBm) to use when no measurement is available
 
 namespace nr::ue
 {
 
+/**
+ * @brief Idle mode cell selection routine. This is triggered in the following cases:
+ * - UE startup (after 1 second, or after 4 seconds if no PLMN is selected yet)
+ * - RRC connection release
+ * - Radio link failure
+ * - Periodic cell selection retry if no suitable cell is found (every 2.5 seconds, starting immediately after startup)
+ *  
+ */
 void UeRrcTask::performCellSelection()
 {
     if (m_state == ERrcState::RRC_CONNECTED)
@@ -98,6 +110,7 @@ void UeRrcTask::performCellSelection()
         m_logger->info("Selected cell plmn[%s] tac[%d] category[%s]", ToJson(cellInfo.plmn).str().c_str(), cellInfo.tac,
                        ToJson(cellInfo.category).str().c_str());
 
+    // if a new cell has been selected, notify RLS and NAS tasks
     if (selectedCell != lastCell.cellId)
     {
         auto w1 = std::make_unique<NmUeRrcToRls>(NmUeRrcToRls::ASSIGN_CURRENT_CELL);
@@ -110,6 +123,17 @@ void UeRrcTask::performCellSelection()
     }
 }
 
+/**
+ * @brief Cell selection routine for suitable cells. This looks for suitable cells in the m_cellDesc map.
+ *   A suitable cell has the required SIB1 and MIB information, the correct PLMNID, is not barred or reserved, and
+ *   has a tracking area code that is not on the forbidden list.
+ *   If multiple suitable cells are found, the one with the strongest dbm is returned in cellInfo.
+ * 
+ * @param cellInfo cell information of thr selected cell (returned)
+ * @param report report on results of cell selection attempt (returned)
+ * @return true - cell found
+ * @return false - cell not found
+ */
 bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionReport &report)
 {
     Plmn selectedPlmn = m_base->shCtx.selectedPlmn.get();
@@ -177,14 +201,46 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
     if (candidates.empty())
         return false;
 
-    // Order candidates by signal strength
-    std::sort(candidates.begin(), candidates.end(), [this](int a, int b) {
-        auto &cellA = m_cellDesc[a];
-        auto &cellB = m_cellDesc[b];
-        return cellB.dbm < cellA.dbm;
-    });
 
-    auto &selectedId = candidates[0];
+
+    // Select best candidate
+
+    int selectedId = 0;
+
+    // If we're using the legacy RLS-based measurement framework, 
+    //  use the signal strength info stored in the cell description
+    //  (updated by RLS measurements in HANDSHAKE_ACK msgs)
+    if (!m_base->config->useHandoverMeasFramework)
+    {
+        // sort the candidate list by signal strength (dbm) in descending order
+        std::sort(candidates.begin(), candidates.end(), [this](int a, int b) {
+            auto &cellA = m_cellDesc[a];
+            auto &cellB = m_cellDesc[b];
+            return cellB.dbm < cellA.dbm;
+        });
+        selectedId = candidates[0];
+    
+    }
+    else
+    // If we're using the advanced measurement framework, 
+    //  use the latest RSRP measurements for sorting
+    {
+
+        // quicker searching by going through the global measurements and finding the 
+        //   first cell that is in the candidate list (likely to be the first entry)
+        {
+            std::shared_lock lock(m_base->g_allCellMeasurements->cellMeasurementsMutex);
+            for (auto const& item : m_base->g_allCellMeasurements->cellMeasurements)
+            {
+                auto it = std::find(candidates.begin(), candidates.end(), item.cellId);
+                if (it != candidates.end()){
+                    selectedId = *it;
+                    break;
+                }
+            }
+        }
+    }
+
     auto &selectedCell = m_cellDesc[selectedId];
 
     cellInfo = {};
@@ -253,30 +309,64 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
     if (candidates.empty())
         return false;
 
-    // Order candidates by signal strength first
-    std::sort(candidates.begin(), candidates.end(), [this](int a, int b) {
-        auto &cellA = m_cellDesc[a];
-        auto &cellB = m_cellDesc[b];
-        return cellB.dbm < cellA.dbm;
-    });
-
-    // Then order candidates by PLMN priority if we have a selected PLMN
+    int selectedId = -1;
     Plmn selectedPlmn = m_base->shCtx.selectedPlmn.get();
-    if (selectedPlmn.hasValue())
-    {
-        // Using stable-sort here
-        std::stable_sort(candidates.begin(), candidates.end(), [this, &selectedPlmn](int a, int b) {
+
+    if (!m_base->config->useHandoverMeasFramework) {
+        // Order candidates by signal strength first
+        std::sort(candidates.begin(), candidates.end(), [this](int a, int b) {
             auto &cellA = m_cellDesc[a];
             auto &cellB = m_cellDesc[b];
-
-            bool matchesA = cellA.sib1.hasSib1 && cellA.sib1.plmn == selectedPlmn;
-            bool matchesB = cellB.sib1.hasSib1 && cellB.sib1.plmn == selectedPlmn;
-
-            return matchesB < matchesA;
+            return cellB.dbm < cellA.dbm;
         });
+    
+        // Then order candidates by PLMN priority if we have a selected PLMN
+        if (selectedPlmn.hasValue())
+        {
+            // Using stable-sort here
+            std::stable_sort(candidates.begin(), candidates.end(), [this, &selectedPlmn](int a, int b) {
+                auto &cellA = m_cellDesc[a];
+                auto &cellB = m_cellDesc[b];
+
+                bool matchesA = cellA.sib1.hasSib1 && cellA.sib1.plmn == selectedPlmn;
+                bool matchesB = cellB.sib1.hasSib1 && cellB.sib1.plmn == selectedPlmn;
+
+                return matchesB < matchesA;
+            });
+        }
+
+        selectedId = candidates[0];
+    }
+    else {
+        // quicker searching by going through the global measurements and finding the 
+        //   first cell that is in the candidate list (likely to be the first entry)
+        int bestIndex = -1;
+        int bestRsrp = MIN_RSRP;
+        {
+            std::shared_lock lock(m_base->g_allCellMeasurements->cellMeasurementsMutex);
+            for (auto &item : m_base->g_allCellMeasurements->cellMeasurements)
+            {
+                auto it = std::find(candidates.begin(), candidates.end(), item.cellId);
+                if (it != candidates.end()){
+                    // check if plmnid matches selectedplmn (if we have a selected plmn)
+                    auto &cell = m_cellDesc[item.cellId];
+                    if (selectedPlmn.hasValue() && cell.sib1.hasSib1 && cell.sib1.plmn == selectedPlmn) {
+                        selectedId = *it;
+                        break;
+                    }
+                    if (item.rsrp > bestRsrp) {
+                        bestRsrp = item.rsrp;
+                        bestIndex = *it;
+                    }
+
+                }
+            }
+            if (selectedId == -1 && bestIndex != -1) {
+                selectedId = bestIndex;
+            }
+        }
     }
 
-    auto &selectedId = candidates[0];
     auto &selectedCell = m_cellDesc[selectedId];
 
     cellInfo = {};

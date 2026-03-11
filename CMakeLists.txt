@@ -4,6 +4,8 @@ project(ueransim)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 
+option(STATIC_BUILD "Build fully static executables for portability across Ubuntu versions" OFF)
+
 include_directories(src)
 
 #################### SUB DIRECTORIES ####################
@@ -30,6 +32,10 @@ target_link_libraries(nr-gnb asn-ngap)
 target_link_libraries(nr-gnb common-lib)
 target_link_libraries(nr-gnb gnb)
 
+if(STATIC_BUILD)
+    target_link_options(nr-gnb PRIVATE -static)
+endif()
+
 #################### UE EXECUTABLE ####################
 
 add_executable(nr-ue src/ue.cpp)
@@ -39,11 +45,18 @@ target_compile_options(nr-ue PRIVATE -Wall -Wextra -pedantic)
 target_link_libraries(nr-ue common-lib)
 target_link_libraries(nr-ue ue)
 
+if(STATIC_BUILD)
+    target_link_options(nr-ue PRIVATE -static)
+endif()
+
 ###################### IF BINDER ######################
 add_library(devbnd SHARED src/binder.cpp)
 target_compile_options(devbnd PRIVATE -D_GNU_SOURCE -Wall -Wextra)
 target_link_options(devbnd PRIVATE -nostartfiles)
 target_link_libraries(devbnd dl)
+if(STATIC_BUILD)
+    target_link_options(devbnd PRIVATE -static-libgcc -static-libstdc++)
+endif()
 
 #################### CLI EXECUTABLE ####################
 add_executable(nr-cli src/cli.cpp)
@@ -51,3 +64,7 @@ target_link_libraries(nr-cli pthread)
 target_compile_options(nr-cli PRIVATE -Wall -Wextra -pedantic)
 
 target_link_libraries(nr-cli common-lib)
+
+if(STATIC_BUILD)
+    target_link_options(nr-cli PRIVATE -static)
+endif()

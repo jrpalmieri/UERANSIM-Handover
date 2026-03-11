@@ -24,7 +24,8 @@ namespace nr::gnb
 {
 
 RlsControlTask::RlsControlTask(TaskBase *base, uint64_t sti)
-    : m_sti{sti}, m_mainTask{}, m_udpTask{}, m_pduMap{}, m_pendingAck{}
+    : m_sti{sti}, m_cellId{static_cast<uint32_t>(base->config->getCellId())}, m_mainTask{}, m_udpTask{}, m_pduMap{},
+      m_pendingAck{}
 {
     m_logger = base->logBase->makeUniqueLogger("rls-ctl");
 }
@@ -190,7 +191,7 @@ void RlsControlTask::handleDownlinkRrcDelivery(int ueId, uint32_t pduId, rrc::Rr
         m_pduMap[pduId].sentTime = utils::CurrentTimeMillis();
     }
 
-    rls::RlsPduTransmission msg{m_sti};
+    rls::RlsPduTransmission msg{m_sti, m_cellId};
     msg.pduType = rls::EPduType::RRC;
     msg.pdu = std::move(data);
     msg.payload = static_cast<uint32_t>(channel);
@@ -201,7 +202,7 @@ void RlsControlTask::handleDownlinkRrcDelivery(int ueId, uint32_t pduId, rrc::Rr
 
 void RlsControlTask::handleDownlinkDataDelivery(int ueId, int psi, OctetString &&data)
 {
-    rls::RlsPduTransmission msg{m_sti};
+    rls::RlsPduTransmission msg{m_sti, m_cellId};
     msg.pduType = rls::EPduType::DATA;
     msg.pdu = std::move(data);
     msg.payload = static_cast<uint32_t>(psi);
@@ -248,7 +249,7 @@ void RlsControlTask::onAckSendTimerExpired()
         if (!item.second.empty())
             continue;
 
-        rls::RlsPduTransmissionAck msg{m_sti};
+        rls::RlsPduTransmissionAck msg{m_sti, m_cellId};
         msg.pduIds = std::move(item.second);
 
         m_udpTask->send(item.first, msg);

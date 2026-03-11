@@ -32,16 +32,27 @@ class RlsUdpTask : public NtsTask
     };
 
   private:
+
+    TaskBase *m_base;
     std::unique_ptr<Logger> m_logger;
+    // UDP Socket server used to send/receive RLS messages
     udp::UdpServer *m_server;
     NtsTask *m_ctlTask;
     RlsSharedContext* m_shCtx;
     std::vector<InetAddress> m_searchSpace;
+    // map of all known gnb cells, indexed by STI value
     std::unordered_map<uint64_t, CellInfo> m_cells;
+    // map of STI values, indexed by cellId (which is UE-local)
     std::unordered_map<int, uint64_t> m_cellIdToSti;
     int64_t m_lastLoop;
+    // simulated location of UE (x,y,z)
     Vector3 m_simPos;
+    // used to generate a unique UE-local cellId for each new cell that sends a heartbeat ACK
     int m_cellIdCounter;
+
+    std::unordered_map<u_int64_t, int> cellIdBySti;  // map of cellId indexed by sti value
+
+    bool handoverEnabled;
 
     friend class UeCmdHandler;
 
@@ -59,6 +70,7 @@ class RlsUdpTask : public NtsTask
     void receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::RlsMessage> &&msg);
     void onSignalChangeOrLost(int cellId);
     void heartbeatCycle(uint64_t time, const Vector3 &simPos);
+    void updateMeasurements(const int dbm, const int cellId);
 
   public:
     void initialize(NtsTask *ctlTask);

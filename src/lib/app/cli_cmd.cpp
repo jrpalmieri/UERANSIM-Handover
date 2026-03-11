@@ -152,6 +152,7 @@ static OrderedMap<std::string, CmdEntry> g_gnbCmdEntries = {
     {"ue-list", {"List all UEs associated with the gNB", "", DefaultDesc, false}},
     {"ue-count", {"Print the total number of UEs connected the this gNB", "", DefaultDesc, false}},
     {"ue-release", {"Request a UE context release for the given UE", "<ue-id>", DefaultDesc, false}},
+    {"version", {"Show gNB version information", "", DefaultDesc, false}},
 };
 
 static OrderedMap<std::string, CmdEntry> g_ueCmdEntries = {
@@ -167,6 +168,7 @@ static OrderedMap<std::string, CmdEntry> g_ueCmdEntries = {
     {"ps-release-all", {"Trigger PDU session release procedures for all active sessions", "", DefaultDesc, false}},
     {"deregister",
      {"Perform a de-registration by the UE", "<normal|disable-5g|switch-off|remove-sim>", DefaultDesc, true}},
+    {"version", {"Show UE version information", "", DefaultDesc, false}},
 };
 
 static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd, const opt::OptionsResult &options,
@@ -215,6 +217,10 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
         if (cmd->ueId <= 0)
             CMD_ERR("Invalid UE ID")
         return cmd;
+    }
+    else if (subCmd == "version")
+    {
+        return std::make_unique<GnbCliCommand>(GnbCliCommand::VERSION);
     }
 
     return nullptr;
@@ -330,6 +336,10 @@ static std::unique_ptr<UeCliCommand> UeCliParseImpl(const std::string &subCmd, c
     else if (subCmd == "coverage")
     {
         return std::make_unique<UeCliCommand>(UeCliCommand::COVERAGE);
+    }
+    else if (subCmd == "version")
+    {
+        return std::make_unique<UeCliCommand>(UeCliCommand::VERSION);
     }
 
     return nullptr;

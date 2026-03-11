@@ -21,8 +21,6 @@
 
 #pragma once
 
-#include "measurement.hpp"
-
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -32,6 +30,7 @@
 
 #include <utils/logger.hpp>
 #include <utils/network.hpp>
+#include <ue/types.hpp>
 
 namespace nr::ue
 {

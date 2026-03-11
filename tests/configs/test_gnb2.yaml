@@ -1,0 +1,31 @@
+mcc: '001'          # Mobile Country Code value
+mnc: '01'           # Mobile Network Code value (2 or 3 digits)
+
+nci: '0x000000020'  # NR Cell Identity (36-bit)
+idLength: 32        # NR gNB ID length in bits [22...32]
+pci: 32             # Physical Cell ID (0...1007) - must be unique among neighbors in view of UEs
+tac: 1              # Tracking Area Code
+
+linkIp: 172.22.0.202   # gNB's local IP address for Radio Link Simulation (Usually same with local IP)
+ngapIp: 172.22.0.202   # gNB's local IP address for N2 Interface (Usually same with local IP)
+gtpIp: 172.22.0.202    # gNB's local IP address for N3 Interface (Usually same with local IP)
+
+# List of AMF address information
+#  (must match with the AMF N2 configuration in the core network)
+#  (for the docker network, the AMF exposes port 38412, 
+#     so we can use the host's loopback address to reach it)
+amfConfigs:
+  - address: 172.22.0.10
+    port: 38412
+
+# List of supported S-NSSAIs by this gNB
+slices:
+  - sst: 1
+
+# Indicates whether or not SCTP stream number errors should be ignored.
+ignoreStreamIds: true
+
+gnbSearchList:
+  - address: 172.22.0.201
+    tac: 1
+

@@ -4,7 +4,6 @@
 
 #include "task.hpp"
 #include "measurement.hpp"
-#include "meas_provider.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -15,6 +14,7 @@
 #include <ue/nas/task.hpp>
 #include <ue/rls/task.hpp>
 #include <utils/common.hpp>
+#include <utils/constants.hpp>
 
 #include <asn/rrc/ASN_RRC_MeasurementReport.h>
 #include <asn/rrc/ASN_RRC_MeasurementReport-IEs.h>
@@ -26,6 +26,11 @@
 #include <asn/rrc/ASN_RRC_MeasQuantityResults.h>
 #include <asn/rrc/ASN_RRC_UL-DCCH-Message.h>
 #include <asn/rrc/ASN_RRC_UL-DCCH-MessageType.h>
+
+#include <ue/meas/meas_provider.hpp>
+
+const int MIN_RSRP = cons::MIN_RSRP; // minimum RSRP value (in dBm) to use when no measurement is available
+const int MAX_RSRP = cons::MAX_RSRP; // maximum RSRP value (in dBm) to use when no measurement is available
 
 namespace nr::ue
 {
@@ -45,28 +50,6 @@ Json ToJson(const EMeasEvent &v)
     }
 }
 
-Json ToJson(const EMeasSourceType &v)
-{
-    switch (v)
-    {
-    case EMeasSourceType::NONE: return "none";
-    case EMeasSourceType::UDP:  return "udp";
-    case EMeasSourceType::UNIX_SOCK: return "unix";
-    case EMeasSourceType::FILE: return "file";
-    default: return "?";
-    }
-}
-
-Json ToJson(const CellMeasurement &v)
-{
-    return Json::Obj({
-        {"cellId", v.cellId},
-        {"nci",    static_cast<int32_t>(v.nci)},
-        {"rsrp",   v.rsrp},
-        {"rsrq",   v.rsrq},
-        {"sinr",   v.sinr},
-    });
-}
 
 Json ToJson(const UeReportConfig &v)
 {
@@ -199,108 +182,30 @@ Json ToJson(const ChoCandidate &v)
     });
 }
 
-/**
- * @brief Determine the internal cellId for a given CellMeasurement.  
- *      If the measurement has a UERANSIM cellId, return it. 
- *      Otherwise, try to match by NR CellId (NCI) against what we have in SIB1.
- * 
- * @param cm  The CellMeasurement to resolve.
- * @return (int) The resolved cellId, or 0 if it cannot be resolved.
- */
-int UeRrcTask::resolveCellId(const CellMeasurement &cm) const
-{
-    // check for UERANSIM cellId first
-    if (cm.cellId != 0)
-        return cm.cellId;
 
-    // If no UERANSIM cellId, then try to resolve by NR CellId (NCI) from SIB1
-    if (cm.nci != 0)
-    {
-        for (auto &[cid, desc] : m_cellDesc)
-        {
-            if (desc.sib1.hasSib1 && desc.sib1.nci == cm.nci)
-                return cid;
-        }
-    }
-
-    return 0; // unresolved
-}
-
-/**
- * @brief Collects effective RSRP per cell.  The default is to use the default
- *    fake RLS measurement values.  If an Out-Of-Band provider is available,
- *    then it overlays/replaces the RLS values with the OOB measurements.
- *
- * @return (std::unordered_map<int, CellMeasurement>) A map of cell measurements
- *      by cellId
- */
-std::unordered_map<int, CellMeasurement> UeRrcTask::collectMeasurements()
-{
-    std::unordered_map<int, CellMeasurement> result;
-
-    // 1. Start with RLS-simulated dBm values
-    for (auto &[cellId, desc] : m_cellDesc)
-    {
-        CellMeasurement cm{};
-        cm.cellId = cellId;
-        cm.rsrp = desc.dbm;
-        // RLS only provides a single dBm, use defaults for rsrq/sinr
-        cm.rsrq = -10;
-        cm.sinr = 0;
-
-        if (desc.sib1.hasSib1)
-            cm.nci = desc.sib1.nci;
-
-        result[cellId] = cm;
-    }
-
-    // 2. Overlay / replace with OOB provider data
-    if (m_measProvider)
-    {
-        auto oobMeas = m_measProvider->getLatestMeasurements();
-        for (auto &cm : oobMeas)
-        {
-            // get cellId of meas
-            int cid = resolveCellId(cm);
-
-            if (cid != 0)
-            // if a valid cellId was found, save/overlay the measurement by cellId
-            {
-                result[cid] = cm;
-                result[cid].cellId = cid; // normalise
-            }
-            else
-            // if cellId is 0 (cellId couldn't be determined)
-            //  save it anyway, but in a way that will not conflict
-            //  with real cellIds (negative synthetic cellId derived from nci)
-            {
-                // Unknown cell from OOB — store by nr cellId-derived synthetic key
-                // (negative to avoid collision with real cellIds)
-                if (cm.nci != 0)
-                {
-                    int syntheticId = -static_cast<int>(cm.nci & 0x7FFFFFFF);
-                    result[syntheticId] = cm;
-                    result[syntheticId].cellId = syntheticId;
-                }
-            }
-        }
-    }
-
-    return result;
-}
 
 /**
  * @brief Gets the RSRP of the serving cell from a map of all measurements.
  * 
  * @param allMeas The map of all cell measurements.
- * @return (int) The RSRP of the serving cell, or -140 if no serving cell is found.
+ * @return (int) The RSRP of the serving cell, or MIN_RSRP if no serving cell is found.
  */
-int UeRrcTask::getServingCellRsrp(const std::unordered_map<int, CellMeasurement> &allMeas) const
+int UeRrcTask::getServingCellRsrp(int servingCellId, const std::map<int, int> &allMeas) const
 {
-    int servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
-    if (servingCellId != 0 && allMeas.count(servingCellId))
-        return allMeas.at(servingCellId).rsrp;
-    return -140; // no serving cell
+    if (servingCellId != 0) {
+        // find serving cell ID in the set
+        auto it = std::find_if(allMeas.begin(), allMeas.end(), [servingCellId](const std::pair<int, int>& p) {
+            return p.first == servingCellId;
+        });
+
+        if (it != allMeas.end())
+            return it->second; // return the RSRP value for the serving cell
+
+        return MIN_RSRP; // no serving cell found
+
+    }
+    
+    return MIN_RSRP; // no serving cell
 }
 
 /**
@@ -336,9 +241,14 @@ static bool evaluateA5_neighbor(int neighborRsrp, int threshold2, int hyst)
     return neighborRsrp > (threshold2 + hyst);
 }
 
+
 /**
  * @brief Evaluate measurement events (A2, A3, A5) based on the current measurements 
- *  and configured thresholds.
+ *  and configured thresholds.  Current measurement are stored in the global task context
+ *  (m_base->cellDbMeas) and protected by a mutex. Configured thresholds are stored in the RRC task's
+ *  measurement configuration (m_measConfig) which is updated by the RRC Reconfiguration procedure. 
+ *  If an event's conditions are satisfied for long enough (time-to-trigger), then a MeasurementReport
+ *  is generated and sent to the gnb.
  * 
  */
 void UeRrcTask::evaluateMeasurements()
@@ -348,19 +258,27 @@ void UeRrcTask::evaluateMeasurements()
     if (m_state != ERrcState::RRC_CONNECTED)
         return;
 
-    // Phase 3: skip evaluation while measurements are suspended (during handover)
-    if (m_measurementsSuspended)
+    // skip evaluation while measurements are suspended (during handover)
+    if (m_measurementEvalSuspended)
         return;
 
+    // if no measIds are configured, skip evaluation
     if (m_measConfig.measIds.empty())
         return;
 
-    // get the current measurements (RLS + OOB) and serving cell RSRP
-    auto allMeas = collectMeasurements();
-    int servingRsrp = getServingCellRsrp(allMeas);
+    std::map<int, int> allMeas;
+    // Get the current measurements to evaluate against
+    //   since this is actively updated by the RLS meas task and read here by RRC, 
+    //   we make a copy from the shared context which is protected by a mutex
+    {
+        std::shared_lock lock(m_base->cellDbMeasMutex);
+        allMeas = m_base->cellDbMeas;
+    }
 
-    // get the current serving cellId for easier reference in loops below
+    // get the serving cell id and RSRP for easier reference in loops below
     int servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
+    int servingRsrp = getServingCellRsrp(servingCellId, allMeas);
+    m_logger->debug("evaluateMeasurements: servingCell=%d servingRsrp=%d dBm, allMeas.size=%zu", servingCellId, servingRsrp, allMeas.size());
 
     // current time for time-to-trigger evaluation
     int64_t now = utils::CurrentTimeMillis();
@@ -387,18 +305,24 @@ void UeRrcTask::evaluateMeasurements()
         {
         case EMeasEvent::A2:
         {
+            // A2 - just compare serving cell rsrp to threshold
             eventSatisfied = evaluateA2(servingRsrp, rc.a2Threshold, rc.hysteresis);
             break;
         }
         case EMeasEvent::A3:
         {
-            for (auto &[cid, cm] : allMeas)
+            // A3 - compare each neighbor cell's RSRP to the serving cell RSRP + offset
+            for (auto cm : allMeas)
             {
-                if (cid == servingCellId)
+                if (cm.first == servingCellId)
                     continue;
-                if (evaluateA3_cell(servingRsrp, cm.rsrp, rc.a3Offset, rc.hysteresis))
+                // log each neighbor check
+                m_logger->debug("A3 check cid=%d rsrp=%d (serving=%d offset=%d hyst=%d)",
+                                cm.first, cm.second, servingRsrp, rc.a3Offset, rc.hysteresis);
+                if (evaluateA3_cell(servingRsrp, cm.second, rc.a3Offset, rc.hysteresis))
                 {
-                    triggered.push_back({cid, cm.rsrp});
+                    m_logger->info("A3 condition satisfied for cid=%d rsrp=%d", cm.first, cm.second);
+                    triggered.push_back({cm.first, cm.second});
                     eventSatisfied = true;
                 }
             }
@@ -409,13 +333,13 @@ void UeRrcTask::evaluateMeasurements()
             bool servCond = evaluateA5_serving(servingRsrp, rc.a5Threshold1, rc.hysteresis);
             if (servCond)
             {
-                for (auto &[cid, cm] : allMeas)
+                for (auto cm : allMeas)
                 {
-                    if (cid == servingCellId)
+                    if (cm.first == servingCellId)
                         continue;
-                    if (evaluateA5_neighbor(cm.rsrp, rc.a5Threshold2, rc.hysteresis))
+                    if (evaluateA5_neighbor(cm.second, rc.a5Threshold2, rc.hysteresis))
                     {
-                        triggered.push_back({cid, cm.rsrp});
+                        triggered.push_back({cm.first, cm.second});
                         eventSatisfied = true;
                     }
                 }
@@ -443,13 +367,13 @@ void UeRrcTask::evaluateMeasurements()
 
                 // Sort triggered neighbors by RSRP descending
                 std::sort(triggered.begin(), triggered.end(),
-                          [](const auto &a, const auto &b) { return a.rsrp > b.rsrp; });
+                         [](const auto &a, const auto &b) { return a.rsrp > b.rsrp; });
 
                 // Limit to maxReportCells
                 if (static_cast<int>(triggered.size()) > rc.maxReportCells)
                     triggered.resize(rc.maxReportCells);
 
-                sendMeasurementReport(measId, servingRsrp, triggered, allMeas);
+                sendMeasurementReport(measId, servingCellId, servingRsrp, triggered);
                 state.reported = true;
             }
         }
@@ -486,13 +410,10 @@ static long rsrpToAsn(int rsrpDbm)
  * @param measId 
  * @param servingRsrp 
  * @param neighbors 
- * @param allMeas 
  */
-void UeRrcTask::sendMeasurementReport(int measId, int servingRsrp,
-                                       const std::vector<TriggeredNeighbor> &neighbors,
-                                       const std::unordered_map<int, CellMeasurement> &allMeas)
+void UeRrcTask::sendMeasurementReport(int measId, int servingCellId, int servingRsrp,
+                                       const std::vector<TriggeredNeighbor> &neighbors)
 {
-    (void)allMeas; // available for future extensions
 
     // the new message to send to gNB
     //  an RRC Uplink DCCH Message with a MeasurementReport payload
@@ -517,7 +438,9 @@ void UeRrcTask::sendMeasurementReport(int measId, int servingRsrp,
         servMo->servCellId = 0; // PCell
 
         // Serving cell measResult
-        servMo->measResultServingCell.physCellId = nullptr; // optional
+        servMo->measResultServingCell.physCellId = asn::New<long>();
+        *servMo->measResultServingCell.physCellId = servingCellId;
+
         auto *servRsrp = asn::New<long>();
         *servRsrp = rsrpToAsn(servingRsrp);
         servMo->measResultServingCell.measResult.cellResults.resultsSSB_Cell =
@@ -541,8 +464,16 @@ void UeRrcTask::sendMeasurementReport(int measId, int servingRsrp,
         {
             auto *measResultNR = asn::New<ASN_RRC_MeasResultNR>();
 
-            // If we know the PCI we could fill physCellId -- for now it's optional
-            // measResultNR->physCellId = ...;
+            // try to compute PCI from the neighbor's cellId (via NCI low bits)
+            int pci = -1;
+            if (m_cellDesc.count(nb.cellId))
+            {
+                int64_t nci = m_cellDesc[nb.cellId].sib1.nci;
+                pci = static_cast<int>(nci & 0x3FF);
+                measResultNR->physCellId = asn::New<long>();
+                *measResultNR->physCellId = pci;
+                m_logger->info("Reporting neighbour cellId=%d PCI=%d", nb.cellId, pci);
+            }
 
             auto *nbRsrp = asn::New<long>();
             *nbRsrp = rsrpToAsn(nb.rsrp);

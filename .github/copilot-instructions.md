@@ -1,0 +1,2 @@
+- All generated code and comments must strictly adhere to a maximum line width of 120 characters.
+- If a line exceeds 120 characters, wrap it according to standard language conventions.

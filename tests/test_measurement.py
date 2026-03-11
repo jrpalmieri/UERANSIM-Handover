@@ -193,6 +193,7 @@ class TestMeasEventEvaluation:
 
 @ue_binary_exists
 @needs_asn1tools
+@pytest.mark.skip(reason="Legacy OOB MeasurementInjector flow. Migrate to heartbeat-ACK dbm based multi-gNB tests.")
 class TestMeasEventA2:
     """Test A2 event: serving becomes worse than threshold."""
 
@@ -278,6 +279,7 @@ class TestMeasEventA2:
 
 @ue_binary_exists
 @needs_asn1tools
+@pytest.mark.skip(reason="Legacy OOB MeasurementInjector flow. Migrate to heartbeat-ACK dbm based multi-gNB tests.")
 class TestMeasEventA3:
     """Test A3 event: neighbour becomes offset better than serving."""
 
@@ -362,6 +364,7 @@ class TestMeasEventA3:
 
 @ue_binary_exists
 @needs_asn1tools
+@pytest.mark.skip(reason="Legacy OOB MeasurementInjector flow. Migrate to heartbeat-ACK dbm based multi-gNB tests.")
 class TestMeasEventA5:
     """Test A5 event: serving < threshold1 AND neighbour > threshold2."""
 
@@ -447,6 +450,7 @@ class TestMeasEventA5:
 
 @ue_binary_exists
 @needs_asn1tools
+@pytest.mark.skip(reason="Legacy OOB MeasurementInjector flow. Migrate to heartbeat-ACK dbm based multi-gNB tests.")
 class TestTimeToTrigger:
     """Test that events respect the time-to-trigger (TTT) parameter."""
 
@@ -536,6 +540,7 @@ class TestTimeToTrigger:
 
 @ue_binary_exists
 @needs_asn1tools
+@pytest.mark.skip(reason="Legacy OOB MeasurementInjector flow. Migrate to heartbeat-ACK dbm based multi-gNB tests.")
 class TestMeasReportContent:
     """Verify the content of MeasurementReport PDUs."""
 

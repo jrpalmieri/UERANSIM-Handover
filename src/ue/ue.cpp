@@ -13,11 +13,13 @@
 #include "rls/task.hpp"
 #include "rrc/task.hpp"
 
+#include <utils/constants.hpp>
+
 namespace nr::ue
 {
 
 UserEquipment::UserEquipment(UeConfig *config, app::IUeController *ueController, app::INodeListener *nodeListener,
-                             NtsTask *cliCallbackTask)
+                             NtsTask *cliCallbackTask, AllCellMeasurements *g_allCellMeasurements)
 {
     auto *base = new TaskBase();
     base->ue = this;
@@ -32,6 +34,8 @@ UserEquipment::UserEquipment(UeConfig *config, app::IUeController *ueController,
     base->appTask = new UeAppTask(base);
     base->rlsTask = new UeRlsTask(base);
 
+    base->g_allCellMeasurements = g_allCellMeasurements;
+    
     taskBase = base;
 }
 
@@ -54,6 +58,9 @@ UserEquipment::~UserEquipment()
 
 void UserEquipment::start()
 {
+    auto logger = taskBase->logBase->makeUniqueLogger(taskBase->config->getLoggerPrefix() + "ue");
+    logger->info("UE version %s (base %s) starting", UE_VERSION, cons::Tag);
+
     taskBase->nasTask->start();
     taskBase->rrcTask->start();
     taskBase->rlsTask->start();

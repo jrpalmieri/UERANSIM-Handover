@@ -42,7 +42,8 @@ namespace nr::gnb
 {
 
 RlsUdpTask::RlsUdpTask(TaskBase *base, uint64_t sti, Vector3 phyLocation)
-    : m_server{}, m_ctlTask{}, m_sti{sti}, m_phyLocation{phyLocation}, m_lastLoop{}, m_stiToUe{}, m_ueMap{}, m_newIdCounter{}
+    : m_server{}, m_ctlTask{}, m_sti{sti}, m_cellId{static_cast<uint32_t>(base->config->getCellId())},
+      m_phyLocation{phyLocation}, m_lastLoop{}, m_stiToUe{}, m_ueMap{}, m_newIdCounter{}
 {
     m_logger = base->logBase->makeUniqueLogger("rls-udp");
 
@@ -77,7 +78,7 @@ void RlsUdpTask::onLoop()
     int size = m_server->Receive(buffer, BUFFER_SIZE, RECEIVE_TIMEOUT, peerAddress);
     if (size > 0)
     {
-        auto rlsMsg = rls::DecodeRlsMessage(OctetView{buffer, static_cast<size_t>(size)});
+        auto rlsMsg = rls::DecodeRlsMessage(OctetView{buffer, static_cast<size_t>(size)}, false);
         if (rlsMsg == nullptr)
             m_logger->err("Unable to decode RLS message");
         else
@@ -101,12 +102,16 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
             return;
         }
 
+        // if the STI is in the the stiToUE Map, update the UE info in the UE Map with the 
+        //  provided address and set its last seen time to now.
         if (m_stiToUe.count(msg->sti))
         {
             int ueId = m_stiToUe[msg->sti];
             m_ueMap[ueId].address = addr;
             m_ueMap[ueId].lastSeen = utils::CurrentTimeMillis();
         }
+        // if the STI is not in the stiToUE Map, add it and assign it a local UE-specific ID.
+        //   push a SIGNAL_DETECTED message to the control task with the new UE ID
         else
         {
             int ueId = ++m_newIdCounter;
@@ -120,7 +125,8 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
             m_ctlTask->push(std::move(w));
         }
 
-        rls::RlsHeartBeatAck ack{m_sti};
+        // send a HEARTBEAT_ACK back to the sender with the simulated signal strength in dBm
+        rls::RlsHeartBeatAck ack{m_sti, m_cellId};
         ack.dbm = dbm;
 
         sendRlsPdu(addr, ack);
@@ -142,7 +148,7 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
 void RlsUdpTask::sendRlsPdu(const InetAddress &addr, const rls::RlsMessage &msg)
 {
     OctetString stream;
-    rls::EncodeRlsMessage(msg, stream);
+    rls::EncodeRlsMessage(msg, stream, true);
 
     m_server->Send(addr, stream.data(), static_cast<size_t>(stream.length()));
 }

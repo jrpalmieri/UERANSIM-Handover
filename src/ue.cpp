@@ -10,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <shared_mutex>
 
 #include <unistd.h>
 
@@ -19,6 +20,7 @@
 #include <lib/app/proc_table.hpp>
 #include <lib/app/ue_ctl.hpp>
 #include <ue/ue.hpp>
+#include <ue/types.hpp>
 #include <ue/rrc/position.hpp>
 #include <utils/common.hpp>
 #include <utils/concurrent_map.hpp>
@@ -31,6 +33,9 @@ static app::CliServer *g_cliServer = nullptr;
 static nr::ue::UeConfig *g_refConfig = nullptr;
 static ConcurrentMap<std::string, nr::ue::UserEquipment *> g_ueMap{};
 static app::CliResponseTask *g_cliRespTask = nullptr;
+
+
+nr::ue::AllCellMeasurements *g_allCellMeasurements{};
 
 static struct Options
 {
@@ -249,36 +254,25 @@ static nr::ue::UeConfig *ReadConfigYaml()
         result->uacAcc.cls15 = yaml::GetBool(config["uacAcc"], "class15");
     }
 
-    // --- Measurement source (optional) ---
-    if (yaml::HasField(config, "measurementSource"))
+    result->measSourceConfig.type = nr::ue::EMeasSourceType::NONE;
+
+    // check if the advanced handover simulation flag is set
+    if (yaml::HasField(config, "enableHandoverSim"))
+        result->useHandoverMeasFramework = yaml::GetBool(config, "enableHandoverSim");
+
+
+    if (yaml::HasField(config, "handoverServer") && result->useHandoverMeasFramework)
     {
-        auto mSrc = config["measurementSource"];
-        std::string srcType = yaml::GetString(mSrc, "type");
-        if (srcType == "udp")
-        {
-            result->measSourceConfig.type = nr::ue::EMeasSourceType::UDP;
-            if (yaml::HasField(mSrc, "address"))
-                result->measSourceConfig.udpAddress = yaml::GetString(mSrc, "address");
-            if (yaml::HasField(mSrc, "port"))
-                result->measSourceConfig.udpPort =
-                    static_cast<uint16_t>(yaml::GetInt32(mSrc, "port", 1, 65535));
-        }
-        else if (srcType == "unix")
-        {
-            result->measSourceConfig.type = nr::ue::EMeasSourceType::UNIX_SOCK;
-            result->measSourceConfig.unixSocketPath = yaml::GetString(mSrc, "path");
-        }
-        else if (srcType == "file")
-        {
-            result->measSourceConfig.type = nr::ue::EMeasSourceType::FILE;
-            result->measSourceConfig.filePath = yaml::GetString(mSrc, "path");
-            if (yaml::HasField(mSrc, "pollInterval"))
-                result->measSourceConfig.filePollIntervalMs = yaml::GetInt32(mSrc, "pollInterval", 100, 60000);
-        }
-        else if (srcType != "none")
-        {
-            throw std::runtime_error("Invalid measurementSource type: " + srcType);
-        }
+        auto hoServer = config["handoverServer"];
+        if (yaml::HasField(hoServer, "address"))
+                result->handoverServerConfig.address = yaml::GetString(hoServer, "address");
+        if (yaml::HasField(hoServer, "transport"))
+                result->handoverServerConfig.transport = yaml::GetString(hoServer, "transport");
+        if (yaml::HasField(hoServer, "port"))
+            result->handoverServerConfig.port =
+                static_cast<uint16_t>(yaml::GetInt32(hoServer, "port", 1, 65535));
+        
+
     }
 
     // --- UE position (optional, for D1 distance-based CHO events) ---
@@ -302,13 +296,14 @@ static nr::ue::UeConfig *ReadConfigYaml()
 
 static void ReadOptions(int argc, char **argv)
 {
+    std::string versionStr = std::string(cons::Tag) + " (UE " + nr::ue::UE_VERSION + ")";
     opt::OptionsDescription desc{
-        cons::Project, cons::Tag, "5G-SA UE implementation", cons::Owner, "nr-ue", {"-c <config-file> [option...]"}, {},
+        cons::Project, versionStr, "5G-SA UE implementation", cons::Owner, "nr-ue", {"-c <config-file> [option...]"}, {},
         true,          false};
 
     opt::OptionItem itemConfigFile = {'c', "config", "Use specified configuration file for UE", "config-file"};
     opt::OptionItem itemImsi = {'i', "imsi", "Use specified IMSI number instead of provided one", "imsi"};
-    opt::OptionItem itemCount = {'n', "num-of-UE", "Generate specified number of UEs starting from the given IMSI",
+    opt::OptionItem itemCount = {'n', "num-of-UE", "Generate specified number of UEs starting from the given IMSI (Max 512)",
                                  "num"};
     opt::OptionItem itemTempo = {'t', "tempo", "Starting delay in milliseconds for each of the UEs", "tempo"};
     opt::OptionItem itemDisableCmd = {'l', "disable-cmd", "Disable command line functionality for this instance",
@@ -423,7 +418,8 @@ static nr::ue::UeConfig *GetConfigByUe(int ueIndex)
     c->integrityMaxRate = g_refConfig->integrityMaxRate;
     c->uacAic = g_refConfig->uacAic;
     c->uacAcc = g_refConfig->uacAcc;
-    c->measSourceConfig = g_refConfig->measSourceConfig;
+    c->useHandoverMeasFramework = g_refConfig->useHandoverMeasFramework;
+    //c->measSourceConfig = g_refConfig->measSourceConfig;
     c->initialPosition = g_refConfig->initialPosition;
 
     if (c->supi.has_value())
@@ -559,10 +555,36 @@ int main(int argc, char **argv)
         g_cliRespTask = new app::CliResponseTask(g_cliServer);
     }
 
+    // initialize the global set of all received cell RF measurements
+    //   This is disabled
+    g_allCellMeasurements = new nr::ue::AllCellMeasurements();
+    g_allCellMeasurements->cellMeasurements =
+        std::set<nr::ue::CellMeasurement, nr::ue::CompareBySignalStrength>();
+
+    // if (g_refConfig->useHandoverMeasFramework)
+    // {
+    //     // launch the handover measurement framework server if enabled in config
+    //     auto &hoConfig = g_refConfig->handoverServerConfig;
+    //     std::cout << "Starting handover measurement server at " << hoConfig.address << ":" << hoConfig.port
+    //               << " using transport " << hoConfig.transport << std::endl;
+    //     if (hoConfig.transport == "UDP")
+    //     {
+    //         g_allCellMeasurements->handoverMeasServer = std::make_unique<HandoverMeasurementServerUDP>(hoConfig.address, hoConfig.port, g_allCellMeasurements);
+    //     }
+    //     else if (hoConfig.transport == "TCP")
+    //     {
+    //         g_allCellMeasurements->handoverMeasServer = std::make_unique<HandoverMeasurementServerTCP>(hoConfig.address, hoConfig.port, g_allCellMeasurements);
+    //     }
+    //     else        {
+    //         std::cerr << "ERROR: Invalid transport for handover measurement framework server: " << hoConfig.transport << std::endl;
+    //         return 1;
+
+    // }
+
     for (int i = 0; i < g_options.count; i++)
     {
         auto *config = GetConfigByUe(i);
-        auto *ue = new nr::ue::UserEquipment(config, &g_ueController, nullptr, g_cliRespTask);
+        auto *ue = new nr::ue::UserEquipment(config, &g_ueController, nullptr, g_cliRespTask, g_allCellMeasurements);
         g_ueMap.put(config->getNodeName(), ue);
     }
 

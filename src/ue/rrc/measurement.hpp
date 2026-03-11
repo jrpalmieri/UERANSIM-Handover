@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <utils/json.hpp>
+#include <ue/types.hpp>
 
 namespace nr::ue
 {
@@ -28,59 +29,6 @@ enum class EMeasEvent
     A2, // Serving cell becomes worse than threshold
     A3, // Neighbor cell becomes offset better than serving cell (SpCell)
     A5, // Serving cell becomes worse than threshold1 AND neighbor cell becomes better than threshold2
-};
-
-
-/**
- * @brief Enum to identify the source of measurements for the UE in the UERANSIM
- *  simulation environment.  Because there are no RF layers, these need to be simulated.
- *  Options:
- * - NONE: use internally simulated values only, no external meas source
- * - UDP: receive measurements as JSON over a UDP socket
- * - UNIX_SOCK: receive measurements as JSON over a Unix datagram socket
- * - FILE: periodically read measurements from a JSON file
- * 
- */
-enum class EMeasSourceType
-{
-    NONE,       // Use internal RLS-simulated dBm values only
-    UDP,        // Receive JSON measurements over UDP
-    UNIX_SOCK,  // Receive JSON measurements over a Unix datagram socket
-    FILE,       // Periodically read a JSON file
-};
-
-/**
- * @brief Struct that configures the measurement source for the UE.  
- *  Includes parameters for each source type, which can be set if that source type 
- *  is selected for use.
- * 
- */
-struct MeasSourceConfig
-{
-    EMeasSourceType type{EMeasSourceType::NONE};  // Identify source type in use
-
-    // UDP
-    std::string udpAddress{"127.0.0.1"};  // UE IP Address
-    uint16_t    udpPort{7200};  // UE's UDP Receive Port
-
-    // UNIX_SOCK
-    std::string unixSocketPath{};  // path to Unix datagram socket to receive measurements
-
-    // FILE
-    std::string filePath{};  // path to JSON file to read measurements from
-    int         filePollIntervalMs{1000};
-};
-
-/**
- *  Struct to represent an individual cell measurement (from OOB provider or RLS)
- */
-struct CellMeasurement
-{
-    int     cellId{};           // Internal UERANSIM cell ID (0 = use nci to resolve)
-    int64_t nci{};              // NR Cell Identity (from SIB1); used to match when cellId==0
-    int     rsrp{-140};         // dBm, range ~ -156 .. -44
-    int     rsrq{-20};          // dB  (optional, default -20)
-    int     sinr{-23};          // dB  (optional, default -23)
 };
 
 /* ------------------------------------------------------------------ */
@@ -288,8 +236,6 @@ struct ChoCandidate
 /* ------------------------------------------------------------------ */
 
 Json ToJson(const EMeasEvent &v);
-Json ToJson(const EMeasSourceType &v);
-Json ToJson(const CellMeasurement &v);
 Json ToJson(const UeReportConfig &v);
 Json ToJson(const UeMeasConfig &v);
 Json ToJson(const EChoEventType &v);

@@ -19,6 +19,24 @@ build: FORCE
 
 	@printf "${GREEN}UERANSIM successfully built.${NC}\n"
 
+# Build fully static executables portable across Ubuntu 20.04 - 25.x
+# Requires: libsctp-dev, libc6-dev (for static libraries)
+build-static: FORCE
+	rm -fr logs
+	mkdir -p build
+	rm -fr build/*
+	
+	cmake -DCMAKE_BUILD_TYPE=Release -DSTATIC_BUILD=ON -G "CodeBlocks - Unix Makefiles" . -B cmake-build-release
+	cmake --build cmake-build-release --target all
+	
+	cp cmake-build-release/nr-gnb build/
+	cp cmake-build-release/nr-ue build/
+	cp cmake-build-release/nr-cli build/
+	cp cmake-build-release/libdevbnd.so build/
+	cp tools/nr-binder build/
+
+	@printf "${GREEN}UERANSIM successfully built (static).${NC}\n"
+
 FORCE:
 
 clean:

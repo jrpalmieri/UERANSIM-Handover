@@ -89,11 +89,11 @@ class TestRlsEncoding:
         assert decoded.pdu_ids == pdu_ids
 
     def test_header_format(self):
-        """First 5 bytes: 0x03, major=3, minor=2, patch=7, msgType."""
+        """First 5 bytes: 0x03, major=3, minor=3, patch=7, msgType."""
         encoded = encode_heartbeat_ack(0, -60)
         assert encoded[0] == 0x03
         assert encoded[1] == 3   # major
-        assert encoded[2] == 2   # minor
+        assert encoded[2] == 3   # minor
         assert encoded[3] == 7   # patch
         assert encoded[4] == int(EMessageType.HEARTBEAT_ACK)
 

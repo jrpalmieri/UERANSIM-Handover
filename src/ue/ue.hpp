@@ -11,11 +11,16 @@
 #include "types.hpp"
 #include <lib/app/cli_cmd.hpp>
 #include <memory>
+#include <string>
 #include <utils/network.hpp>
 #include <utils/nts.hpp>
 
 namespace nr::ue
 {
+
+// UE-specific version tracking (independent of UERANSIM base version).
+// Bump this when adding UE-level features such as handover, measurement, etc.
+static constexpr const char *UE_VERSION = "2.0.1";
 
 class UserEquipment
 {
@@ -24,7 +29,7 @@ class UserEquipment
 
   public:
     UserEquipment(UeConfig *config, app::IUeController *ueController, app::INodeListener *nodeListener,
-                  NtsTask *cliCallbackTask);
+                  NtsTask *cliCallbackTask, AllCellMeasurements *g_allCellMeasurements);
     virtual ~UserEquipment();
 
   public:

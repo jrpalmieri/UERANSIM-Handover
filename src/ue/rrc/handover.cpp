@@ -86,24 +86,24 @@ int UeRrcTask::findCellByPci(int physCellId)
 
 void UeRrcTask::suspendMeasurements()
 {
-    m_measurementsSuspended = true;
-    m_logger->debug("Measurements suspended for handover");
+    m_measurementEvalSuspended = true;
+    m_logger->debug("Handover - Measurement evaluation suspended for handover");
 }
 
 void UeRrcTask::resumeMeasurements()
 {
-    m_measurementsSuspended = false;
+    m_measurementEvalSuspended = false;
     // Reset all entering-condition timestamps so TTT re-evaluates cleanly.
     for (auto &[id, state] : m_measConfig.measIdStates)
     {
         state.enteringTimestamp = 0;
         state.reported = false;
     }
-    m_logger->debug("Measurements resumed after handover");
+    m_logger->debug("Handover - Measurement evaluations resumed after handover");
 }
 
 /* ================================================================== */
-/*  Security key refresh  (Phase 3 placeholder)                       */
+/*  Security key refresh                                              */
 /* ================================================================== */
 
 void UeRrcTask::refreshSecurityKeys()
@@ -112,22 +112,27 @@ void UeRrcTask::refreshSecurityKeys()
     // KgNB* from the current KgNB and the target PCI / DL-ARFCN.
     // In UERANSIM's simplified security model we log the event but
     // do not actually recompute keys (integrity/ciphering are simulated).
-    m_logger->debug("Security key refresh (KgNB* derivation) – simulated");
+    m_logger->debug("Handover - Security key refresh (KgNB* derivation) - not performed in simulated RF environment");
 }
 
-/* ================================================================== */
-/*  Execute the intra-system handover                                 */
-/* ================================================================== */
-
+/**
+ * @brief Perform a handover between the current (serving) gnb and the target gnb.
+ * 
+ * @param txId transaction identifier for the RRCReconfiguration message that triggered the handover
+ * @param targetPhysCellId the PCI of the target cell as indicated in the RRCReconfiguration message
+ * @param newCRNTI the new C-RNTI to be assigned to the UE by the target cell, (not used, but passed in the RRCReconfig msg)
+ * @param t304Ms the duration of the T304 timer (which guards for handover failures)
+ * @param hasRachConfig the RACH config information (not used, but passed in the RRCReconfig msg)
+*/
 void UeRrcTask::performHandover(long txId, int targetPhysCellId, int newCRNTI,
                                  int t304Ms, bool hasRachConfig)
 {
-    m_logger->info("Handover command: targetPCI=%d newC-RNTI=%d t304=%dms",
+    m_logger->info("Handover - received RRCReconfig: targetPCI=%d newC-RNTI=%d t304=%dms",
                    targetPhysCellId, newCRNTI, t304Ms);
 
     if (m_state != ERrcState::RRC_CONNECTED)
     {
-        m_logger->err("Handover ignored – UE not in RRC_CONNECTED (state=%s)",
+        m_logger->err("Handover - command ignored because UE not in RRC_CONNECTED (state=%s)",
                       ToJson(m_state).str().c_str());
         return;
     }
@@ -148,7 +153,7 @@ void UeRrcTask::performHandover(long txId, int targetPhysCellId, int newCRNTI,
     int targetCellId = findCellByPci(targetPhysCellId);
     if (targetCellId == 0)
     {
-        m_logger->err("Handover failure: target PCI %d not found among %d detected cells",
+        m_logger->err("Handover - failure: target PCI %d not found among %d detected cells",
                       targetPhysCellId, static_cast<int>(m_cellDesc.size()));
         m_handoverInProgress = false;
         resumeMeasurements();
@@ -164,7 +169,7 @@ void UeRrcTask::performHandover(long txId, int targetPhysCellId, int newCRNTI,
     // ---- 5. MAC reset indication (TS 38.331 §5.3.5.4) ----
     //  In a real UE the MAC entity is reset here.  UERANSIM does not model
     //  the MAC layer in detail, so we log the event for traceability.
-    m_logger->debug("MAC reset (simulated) for handover to cell[%d]", targetCellId);
+    m_logger->debug("Handover - MAC reset for handover to cell[%d] - not performed in simulated RF environment", targetCellId);
 
     // ---- 6. Switch serving cell ----
     auto &targetDesc = m_cellDesc[targetCellId];
@@ -180,7 +185,7 @@ void UeRrcTask::performHandover(long txId, int targetPhysCellId, int newCRNTI,
     w1->cellId = targetCellId;
     m_base->rlsTask->push(std::move(w1));
 
-    m_logger->info("Serving cell switched: cell[%d] → cell[%d]",
+    m_logger->info("Handover - Serving cell switched: cell[%d] → cell[%d]",
                    previousCell.cellId, targetCellId);
 
     // ---- 7. RACH towards target cell (TS 38.331 §5.3.5.4) ----
@@ -189,9 +194,9 @@ void UeRrcTask::performHandover(long txId, int targetPhysCellId, int newCRNTI,
     //  establishes the link implicitly via ASSIGN_CURRENT_CELL, so we only
     //  log the RACH type for protocol fidelity.
     if (hasRachConfig)
-        m_logger->debug("Contention-free RACH to target cell (dedicated RACH config present)");
+        m_logger->debug("Handover - Contention-free RACH to target cell (dedicated RACH config present) - not performed in simulated RF environment");
     else
-        m_logger->debug("Contention-based RACH to target cell (no dedicated RACH config)");
+        m_logger->debug("Handover - Contention-based RACH to target cell (no dedicated RACH config) - not performed in simulated RF environment");
 
     // ---- 8. Send RRCReconfigurationComplete to the *target* cell ----
     {

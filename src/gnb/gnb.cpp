@@ -15,6 +15,7 @@
 #include "sctp/task.hpp"
 
 #include <lib/app/cli_base.hpp>
+#include <utils/constants.hpp>
 
 namespace nr::gnb
 {
@@ -60,6 +61,9 @@ GNodeB::~GNodeB()
 
 void GNodeB::start()
 {
+    auto logger = taskBase->logBase->makeUniqueLogger(taskBase->config->name + "-gnb");
+    logger->info("gNB version %s (base %s) starting", GNB_VERSION, cons::Tag);
+
     taskBase->appTask->start();
     taskBase->sctpTask->start();
     taskBase->ngapTask->start();

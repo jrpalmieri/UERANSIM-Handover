@@ -275,6 +275,30 @@ Json ToJson(const EPsState &state)
     }
 }
 
+Json ToJson(const CellMeasurement &v)
+{
+    return Json::Obj({
+        {"cellId", v.cellId},
+        {"nci",    static_cast<int32_t>(v.nci)},
+        {"ip",     v.ip},
+        {"rsrp",   v.rsrp},
+        {"rsrq",   v.rsrq},
+        {"sinr",   v.sinr},
+    });
+}
+
+Json ToJson(const EMeasSourceType &v)
+{
+    switch (v)
+    {
+    case EMeasSourceType::NONE: return "none";
+    case EMeasSourceType::UDP:  return "udp";
+    case EMeasSourceType::UNIX_SOCK: return "unix";
+    case EMeasSourceType::FILE: return "file";
+    default: return "?";
+    }
+}
+
 bool ActiveCellInfo::hasValue() const
 {
     return cellId != 0;

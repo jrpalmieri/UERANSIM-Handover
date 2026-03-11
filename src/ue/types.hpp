@@ -21,6 +21,8 @@
 #include <queue>
 #include <set>
 #include <unordered_set>
+#include <map>
+#include <shared_mutex>
 
 #include <lib/app/monitor.hpp>
 #include <lib/app/ue_ctl.hpp>
@@ -95,6 +97,48 @@ struct IntegrityMaxDataRateConfig
     bool downlinkFull{};
 };
 
+/**
+ * @brief Enum to identify the source of measurements for the UE in the UERANSIM
+ *  simulation environment.  Because there are no RF layers, these need to be simulated.
+ *  Options:
+ * - NONE: use internally simulated values only, no external meas source
+ * - UDP: receive measurements as JSON over a UDP socket
+ * - UNIX_SOCK: receive measurements as JSON over a Unix datagram socket
+ * - FILE: periodically read measurements from a JSON file
+ * 
+ */
+enum class EMeasSourceType
+{
+    NONE,       // Use internal RLS-simulated dBm values only
+    UDP,        // Receive JSON measurements over UDP
+    UNIX_SOCK,  // Receive JSON measurements over a Unix datagram socket
+    FILE,       // Periodically read a JSON file
+};
+
+struct MeasSourceConfig
+{
+    EMeasSourceType type{EMeasSourceType::NONE};  // Identify source type in use
+
+    // UDP
+    std::string udpAddress{"127.0.0.1"};  // UE IP Address
+    uint16_t    udpPort{7200};  // UE's UDP Receive Port
+
+    // UNIX_SOCK
+    std::string unixSocketPath{};  // path to Unix datagram socket to receive measurements
+
+    // FILE
+    std::string filePath{};  // path to JSON file to read measurements from
+    int         filePollIntervalMs{1000};
+};
+
+
+struct HandoverServerConfig
+{
+    std::string address{"127.0.0.1"};
+    std::string transport{"UDP"};
+    uint16_t port{7200};
+};
+
 struct UeConfig
 {
     /* Read from config file */
@@ -112,8 +156,6 @@ struct UeConfig
     std::optional<std::string> imeiSv{};
     SupportedAlgs supportedAlgs{};
     std::vector<std::string> gnbSearchList{};
-    MeasSourceConfig measSourceConfig{};
-    std::optional<UePosition> initialPosition{};  // UE position from config (for D1 events)
     std::vector<SessionConfig> defaultSessions{};
     IntegrityMaxDataRateConfig integrityMaxRate{};
     NetworkSlice defaultConfiguredNssai{};
@@ -136,6 +178,19 @@ struct UeConfig
         bool cls14{};
         bool cls15{};
     } uacAcc;
+
+    // Advanced handover measurement framework with external measurement sources
+    //  (default is False to use legacy RLS-simulated measurements)
+    bool useHandoverMeasFramework{false};
+    
+    HandoverServerConfig handoverServerConfig{}; 
+    
+    // If useHandoverMeasFramework is True, then the following measSourceConfig specifies the 
+    //  source of measurements for the UE
+    MeasSourceConfig measSourceConfig{};
+    
+    // UE position from config (for D1 handover events)
+    std::optional<UePosition> initialPosition{};
 
     /* Assigned by program */
     bool configureRouting{};
@@ -175,6 +230,42 @@ struct CellSelectionReport
     int forbiddenTaiCells{};
 };
 
+/**
+ *  Struct to represent an individual cell measurement (from OOB provider)
+ */
+struct CellMeasurement
+{
+    int     cellId{};           // Cell ID
+    int64_t nci{};              // NR Cell Identity (from SIB1)
+    int     rsrp{-140};         // dBm, range ~ -156 .. -44
+    int     rsrq{-20};          // dB  (optional, default -20)
+    int     sinr{-23};          // dB  (optional, default -23)
+    std::string ip{};           // IP address of the cell
+    uint64_t last_report_time{}; // timestamp of when this measurement was reported by the OOB provider (ms)
+};
+
+/**
+ * @brief comparator for the CellMeasurement set, so that it can stay sorted by rsrp in 
+ *  descending order (stronger signals first if rsrp is negative)
+ * 
+ */
+struct CompareBySignalStrength {
+    bool operator()(const CellMeasurement& a, const CellMeasurement b) const {
+        return a.rsrp > b.rsrp;  // sort descending (stronger signals first if rsrp is negative)
+    }
+};
+
+struct AllCellMeasurements
+{
+    // Global set to store the most recent measurement for each cellId, updated by RLS meas task 
+    //   and read by each UE's RRC for measurement reporting
+    std::set<CellMeasurement, CompareBySignalStrength> cellMeasurements;
+    // mutex to protect access to allCellMeasurements set, since it is updated by RLS meas task and 
+    //  read by each UE's RRC for measurement reporting
+    std::shared_mutex cellMeasurementsMutex;
+};
+
+
 struct ActiveCellInfo
 {
     int cellId{};
@@ -184,6 +275,8 @@ struct ActiveCellInfo
 
     [[nodiscard]] bool hasValue() const;
 };
+
+
 
 struct UeSharedContext
 {
@@ -215,6 +308,12 @@ struct TaskBase
     NtsTask *cliCallbackTask{};
 
     UeSharedContext shCtx{};
+
+    AllCellMeasurements *g_allCellMeasurements{};
+
+    // cell RF strength measurements
+    std::map<int, int> cellDbMeas;
+    std::shared_mutex cellDbMeasMutex;
 
     UeAppTask *appTask{};
     NasTask *nasTask{};
@@ -663,5 +762,8 @@ Json ToJson(const ERegUpdateCause &v);
 Json ToJson(const EPsState &v);
 Json ToJson(const EServiceReqCause &v);
 Json ToJson(const ERrcState &v);
+Json ToJson(const CellMeasurement &v);
+Json ToJson(const EMeasSourceType &v);
+
 
 } // namespace nr::ue

@@ -93,8 +93,7 @@ class UeProcess:
         op: str = "E8ED289DEBA952E4283B54E88E6183CA",
         op_type: str = "OP",
         sessions: Optional[list] = None,
-        meas_source_type: str = "UDP",
-        meas_udp_port: int = 7200,
+        enable_handover_sim: bool = True,
     ) -> Path:
         """Create a temporary UE config YAML and return its path."""
         cfg = {
@@ -120,6 +119,7 @@ class UeProcess:
             "integrity": {"IA1": True, "IA2": True, "IA3": True},
             "ciphering": {"EA1": True, "EA2": True, "EA3": True},
             "integrityMaxRate": {"uplink": "full", "downlink": "full"},
+            "enableHandoverSim": enable_handover_sim,
         }
 
         # Sessions — empty by default to avoid TUN creation
@@ -129,13 +129,6 @@ class UeProcess:
         # NSSAI
         cfg["configured-nssai"] = [{"sst": 1, "sd": 1}]
         cfg["default-nssai"] = [{"sst": 1, "sd": 1}]
-
-        # OOB measurement source
-        if meas_source_type.upper() != "NONE":
-            cfg["measurementSource"] = {
-                "type": meas_source_type.lower(),
-                "port": meas_udp_port,
-            }
 
         self._tmp_dir = tempfile.mkdtemp(prefix="ueransim_test_")
         config_path = Path(self._tmp_dir) / "test-ue.yaml"

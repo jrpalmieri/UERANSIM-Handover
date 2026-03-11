@@ -13,7 +13,9 @@
 #include <ue/rls/task.hpp>
 #include <ue/rrc/task.hpp>
 #include <ue/tun/task.hpp>
+#include <ue/ue.hpp>
 #include <utils/common.hpp>
+#include <utils/constants.hpp>
 #include <utils/printer.hpp>
 
 #define PAUSE_CONFIRM_TIMEOUT 3000
@@ -264,6 +266,14 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
         if (cells.empty())
             json = "No cell available";
 
+        sendResult(msg.address, json.dumpYaml());
+        break;
+    }
+    case app::UeCliCommand::VERSION: {
+        Json json = Json::Obj({
+            {"ue-version", std::string(UE_VERSION)},
+            {"base-version", std::string(cons::Tag)},
+        });
         sendResult(msg.address, json.dumpYaml());
         break;
     }

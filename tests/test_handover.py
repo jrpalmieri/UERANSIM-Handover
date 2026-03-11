@@ -689,8 +689,6 @@ class TestMeasTriggeredHandover:
         two_cell_ue: UeProcess,
     ):
         """Full A3-event → handover flow."""
-        from harness.meas_injector import MeasurementInjector
-
         # 1. Attach and register on source
         source_gnb.perform_cell_attach()
         assert source_gnb.perform_rrc_setup()
@@ -710,12 +708,11 @@ class TestMeasTriggeredHandover:
         )
         time.sleep(1)
 
-        # 3. Make target cell significantly stronger
-        target_gnb.cell_dbm = -50   # source is -60
-        inj = MeasurementInjector()
-        inj.set_cell(cell_id=1, rsrp=-58)   # serving
-        inj.set_cell(cell_id=2, rsrp=-48)   # neighbour (much stronger)
-        inj.send_repeatedly(interval_s=0.5, duration_s=6.0)
+        # 3. Make target cell significantly stronger. UE measurements now come
+        # from per-gNB HEARTBEAT_ACK dbm updates instead of OOB injection.
+        source_gnb.cell_dbm = -65
+        target_gnb.cell_dbm = -50
+        time.sleep(6)
 
         # 4. Wait for measurement report
         report = source_gnb.wait_for_measurement_report(timeout_s=15)
@@ -732,5 +729,4 @@ class TestMeasTriggeredHandover:
                 info = two_cell_ue.parse_handover_info()
                 assert info["completed"] is True
 
-        inj.close()
         two_cell_ue.cleanup()

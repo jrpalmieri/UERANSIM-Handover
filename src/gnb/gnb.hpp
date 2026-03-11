@@ -12,12 +12,17 @@
 
 #include <lib/app/cli_cmd.hpp>
 #include <lib/app/monitor.hpp>
+#include <string>
 #include <utils/logger.hpp>
 #include <utils/network.hpp>
 #include <utils/nts.hpp>
 
 namespace nr::gnb
 {
+
+// gNB-specific version tracking (independent of UERANSIM base version).
+// Bump this when adding gNB-level features such as handover, measurement, etc.
+static constexpr const char *GNB_VERSION = "2.0.1";
 
 class GNodeB
 {

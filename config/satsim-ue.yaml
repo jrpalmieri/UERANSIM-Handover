@@ -77,6 +77,25 @@ ciphering:
   EA2: true
   EA3: true
 
+# Integrity protection maximum data rate for user plane
+integrityMaxRate:
+  uplink: 'full'
+  downlink: 'full'
+  
+# Handover Simulation Configuration (optional)  
+# If enableHandoverSim is true, the UE will connect to a handover simulator server 
+#  to receive information associated with handover connection simulations (e.g., Rf measurements).
+# If enabled, the configs below are no longer optional; they must be provided for the simulation to
+#   operate correctly.
+enableHandoverSim: true
+
+# IP address of the handover simulator server to connect to for receiving 
+#   simulation information
+handoverServer:
+  ip: '127.0.0.1'
+  transport: 'UDP'
+  port: 7300
+
 # Measurement Source Configuration (optional)
 # If not specified, the UE will use its internal RLS-simulated measurements by default
 measSource:
@@ -92,7 +111,4 @@ position:
   longitude: -84.3880  # degrees East
   altitude: 320.0      # meters above WGS-84 ellipsoid
 
-# Integrity protection maximum data rate for user plane
-integrityMaxRate:
-  uplink: 'full'
-  downlink: 'full'
+

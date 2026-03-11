@@ -27,6 +27,7 @@ void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const Oct
 
     switch (channel)
     {
+    // MIB Broadcast
     case rrc::RrcChannel::BCCH_BCH: {
         auto *pdu = rrc::encode::Decode<ASN_RRC_BCCH_BCH_Message>(asn_DEF_ASN_RRC_BCCH_BCH_Message, rrcPdu);
         if (pdu == nullptr)
@@ -36,6 +37,7 @@ void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const Oct
         asn::Free(asn_DEF_ASN_RRC_BCCH_BCH_Message, pdu);
         break;
     }
+    // SIB1 Broadcast
     case rrc::RrcChannel::BCCH_DL_SCH: {
         auto *pdu = rrc::encode::Decode<ASN_RRC_BCCH_DL_SCH_Message>(asn_DEF_ASN_RRC_BCCH_DL_SCH_Message, rrcPdu);
         if (pdu == nullptr)
@@ -45,6 +47,7 @@ void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const Oct
         asn::Free(asn_DEF_ASN_RRC_BCCH_DL_SCH_Message, pdu);
         break;
     }
+    // RRCSetup, RRCReject
     case rrc::RrcChannel::DL_CCCH: {
         auto *pdu = rrc::encode::Decode<ASN_RRC_DL_CCCH_Message>(asn_DEF_ASN_RRC_DL_CCCH_Message, rrcPdu);
         if (pdu == nullptr)
@@ -54,6 +57,7 @@ void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const Oct
         asn::Free(asn_DEF_ASN_RRC_DL_CCCH_Message, pdu);
         break;
     }
+    // RRCRelease, RRCReconfiguration, DLInformationTransfer
     case rrc::RrcChannel::DL_DCCH: {
         if (isActiveCell(cellId))
         {
@@ -66,6 +70,7 @@ void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const Oct
         }
         break;
     };
+    // Paging
     case rrc::RrcChannel::PCCH: {
         if (isActiveCell(cellId))
         {
@@ -96,6 +101,7 @@ void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const Oct
     }
 }
 
+// RRCSetupRequest
 void UeRrcTask::sendRrcMessage(int cellId, ASN_RRC_UL_CCCH_Message *msg)
 {
     OctetString pdu = rrc::encode::EncodeS(asn_DEF_ASN_RRC_UL_CCCH_Message, msg);
@@ -128,6 +134,7 @@ void UeRrcTask::sendRrcMessage(int cellId, ASN_RRC_UL_CCCH1_Message *msg)
     m_base->rlsTask->push(std::move(m));
 }
 
+// RRCSetupComplete, MeasurementReport, RRCReconfigurationComplete, UplinkInformationTransfer
 void UeRrcTask::sendRrcMessage(ASN_RRC_UL_DCCH_Message *msg)
 {
     OctetString pdu = rrc::encode::EncodeS(asn_DEF_ASN_RRC_UL_DCCH_Message, msg);

@@ -9,12 +9,14 @@
 #include "cmd_handler.hpp"
 
 #include <gnb/app/task.hpp>
+#include <gnb/gnb.hpp>
 #include <gnb/gtp/task.hpp>
 #include <gnb/ngap/task.hpp>
 #include <gnb/rls/task.hpp>
 #include <gnb/rrc/task.hpp>
 #include <gnb/sctp/task.hpp>
 #include <utils/common.hpp>
+#include <utils/constants.hpp>
 #include <utils/printer.hpp>
 
 #define PAUSE_CONFIRM_TIMEOUT 3000
@@ -152,6 +154,14 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
             m_base->ngapTask->sendContextRelease(ue->ctxId, NgapCause::RadioNetwork_unspecified);
             sendResult(msg.address, "Requesting UE context release");
         }
+        break;
+    }
+    case app::GnbCliCommand::VERSION: {
+        Json json = Json::Obj({
+            {"gnb-version", std::string(GNB_VERSION)},
+            {"base-version", std::string(cons::Tag)},
+        });
+        sendResult(msg.address, json.dumpYaml());
         break;
     }
     }

@@ -26,6 +26,7 @@ MeasurementProvider::MeasurementProvider(const MeasSourceConfig &config, LogBase
     : m_config{config}
 {
     m_logger = logBase->makeUniqueLogger("meas-prov");
+    
 }
 
 MeasurementProvider::~MeasurementProvider()
@@ -66,6 +67,7 @@ void MeasurementProvider::stop()
 std::vector<CellMeasurement> MeasurementProvider::getLatestMeasurements()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
+    m_logger->info("getLatestMeasurements returning %zu items", m_latestMeasurements.size());
     return m_latestMeasurements;
 }
 
@@ -77,6 +79,8 @@ void MeasurementProvider::parseMeasurements(const std::string &jsonStr)
 {
     try
     {
+        m_logger->info("Received OOB measurement data: %s", jsonStr.c_str());
+
         YAML::Node root = YAML::Load(jsonStr);
 
         YAML::Node measArray;
@@ -108,13 +112,22 @@ void MeasurementProvider::parseMeasurements(const std::string &jsonStr)
                 cm.rsrq = entry["rsrq"].as<int>();
             if (entry["sinr"])
                 cm.sinr = entry["sinr"].as<int>();
+            if (entry["ip"])
+                cm.ip = entry["ip"].as<std::string>();
+
+            cm.last_report_time = utils::CurrentTimeMillis();
 
             result.push_back(cm);
         }
 
+        m_logger->debug("Parsed %zu OOB measurements, updating latest measurements", result.size());
+
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            m_latestMeasurements = std::move(result);
+            m_latestMeasurements.reserve(m_latestMeasurements.size() + result.size());
+            m_latestMeasurements.insert(m_latestMeasurements.end(), result.begin(), result.end());
+
+            m_logger->debug("Measurements awaiting processing: %zu", m_latestMeasurements.size());
         }
     }
     catch (const std::exception &e)
@@ -227,8 +240,6 @@ void MeasurementProvider::runFilePoller()
 {
     m_logger->info("Starting OOB measurement file poller: %s (interval %d ms)",
                    m_config.filePath.c_str(), m_config.filePollIntervalMs);
-
-    int64_t lastModTime = 0;
 
     while (m_running)
     {
