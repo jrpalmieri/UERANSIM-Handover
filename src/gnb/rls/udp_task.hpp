@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -25,25 +26,39 @@ class RlsUdpTask : public NtsTask
   private:
     struct UeInfo
     {
-        uint64_t sti{};
-        InetAddress address;
-        int64_t lastSeen{};
+      uint64_t sti{};
+      int cRnti{};
+      InetAddress address;
+      int64_t lastSeen{};
     };
 
   private:
     std::unique_ptr<Logger> m_logger;
+    TaskBase *m_base;
     udp::UdpServer *m_server;
     NtsTask *m_ctlTask;
     uint64_t m_sti;
     uint32_t m_cellId;
     Vector3 m_phyLocation;
     int64_t m_lastLoop;
+    std::mutex m_ueMutex;
     std::unordered_map<uint64_t, int> m_stiToUe;
     std::unordered_map<int, UeInfo> m_ueMap;
+
+    // map from C-RNTI to UE ID, used for quickly finding UE context by C-RNTI 
+    //  when receiving RRC messages from UEs
+    //std::unordered_map<int, int> m_crntiToUeId;
+
+    // map from UE ID to C-RNTI, used for quickly finding UE context by UE ID
+    //  when receiving messages from other tasks (e.g. RLS) that only include UE ID but not C-RNTI
+    //std::unordered_map<int, int> m_ueIdToCrnti;
+
     int m_newIdCounter;
+    int m_fixedRsrp;
 
   public:
-    explicit RlsUdpTask(TaskBase *base, uint64_t sti, Vector3 phyLocation);
+    explicit RlsUdpTask(TaskBase *base, uint64_t sti,
+                        Vector3 phyLocation);
     ~RlsUdpTask() override = default;
 
   protected:
@@ -52,9 +67,14 @@ class RlsUdpTask : public NtsTask
     void onQuit() override;
 
   private:
-    void receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::RlsMessage> &&msg);
-    void sendRlsPdu(const InetAddress &addr, const rls::RlsMessage &msg);
+    void receiveRlsPdu(const InetAddress &addr,
+                       std::unique_ptr<rls::RlsMessage> &&msg);
+    void sendRlsPdu(const InetAddress &addr,
+                    const rls::RlsMessage &msg);
     void heartbeatCycle(int64_t time);
+    int computeDbm(const GeoPosition &uePos);
+    void handleSatPositionUpdate(const rls::RlsMessage &msg);
+    void handleRsrpUpdate(const rls::RlsMessage &msg);
 
   public:
     void initialize(NtsTask *ctlTask);

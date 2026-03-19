@@ -44,6 +44,9 @@ class UeRlsTask : public NtsTask
     explicit UeRlsTask(TaskBase *base);
     ~UeRlsTask() override = default;
 
+    void setCurrentCrnti(uint32_t cRnti);
+    [[nodiscard]] uint32_t getCurrentCrnti() const;
+
   protected:
     void onStart() override;
     void onLoop() override;

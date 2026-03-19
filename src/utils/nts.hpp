@@ -44,6 +44,10 @@ enum class NtsMessageType
     GNB_NGAP_TO_RRC,
     GNB_RRC_TO_NGAP,
     GNB_NGAP_TO_GTP,
+    GNB_RRC_TO_XN,
+    GNB_XN_TO_RRC,
+    GNB_XN_TO_NGAP,
+    GNB_NGAP_TO_XN,
     GNB_SCTP,
 
     UE_APP_TO_TUN,

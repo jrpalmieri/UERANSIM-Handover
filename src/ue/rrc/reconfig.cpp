@@ -24,11 +24,14 @@
 #include <asn/rrc/ASN_RRC_ReconfigurationWithSync.h>
 #include <asn/rrc/ASN_RRC_ServingCellConfigCommon.h>
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
+#include <asn/rrc/ASN_RRC_MeasObjectToRemoveList.h>
 #include <asn/rrc/ASN_RRC_MeasIdToAddModList.h>
+#include <asn/rrc/ASN_RRC_MeasIdToRemoveList.h>
 #include <asn/rrc/ASN_RRC_MeasIdToAddMod.h>
 #include <asn/rrc/ASN_RRC_MeasObjectToAddModList.h>
 #include <asn/rrc/ASN_RRC_MeasObjectToAddMod.h>
 #include <asn/rrc/ASN_RRC_MeasObjectNR.h>
+#include <asn/rrc/ASN_RRC_ReportConfigToRemoveList.h>
 #include <asn/rrc/ASN_RRC_ReportConfigToAddModList.h>
 #include <asn/rrc/ASN_RRC_ReportConfigToAddMod.h>
 #include <asn/rrc/ASN_RRC_ReportConfigNR.h>
@@ -91,6 +94,40 @@ static int triggerQuantityOffsetToDb(const ASN_RRC_MeasTriggerQuantityOffset &tq
 static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
 {
     UeMeasConfig cfg{};
+
+    // --- Remove lists (delta signaling) ---
+    if (mc.measObjectToRemoveList)
+    {
+        auto &list = mc.measObjectToRemoveList->list;
+        cfg.measObjectsToRemove.reserve(list.count);
+        for (int i = 0; i < list.count; i++)
+        {
+            if (list.array[i])
+                cfg.measObjectsToRemove.push_back(static_cast<int>(*list.array[i]));
+        }
+    }
+
+    if (mc.reportConfigToRemoveList)
+    {
+        auto &list = mc.reportConfigToRemoveList->list;
+        cfg.reportConfigsToRemove.reserve(list.count);
+        for (int i = 0; i < list.count; i++)
+        {
+            if (list.array[i])
+                cfg.reportConfigsToRemove.push_back(static_cast<int>(*list.array[i]));
+        }
+    }
+
+    if (mc.measIdToRemoveList)
+    {
+        auto &list = mc.measIdToRemoveList->list;
+        cfg.measIdsToRemove.reserve(list.count);
+        for (int i = 0; i < list.count; i++)
+        {
+            if (list.array[i])
+                cfg.measIdsToRemove.push_back(static_cast<int>(*list.array[i]));
+        }
+    }
 
     // --- MeasObjects ---
     if (mc.measObjectToAddModList)
@@ -226,11 +263,21 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
 
     m_logger->info("RRCReconfiguration received (txId=%ld)", msg.rrc_TransactionIdentifier);
 
+    bool fullConfig = false;
+    if (ies->nonCriticalExtension && ies->nonCriticalExtension->fullConfig)
+        fullConfig = true;
+
     // --- Apply MeasConfig if present ---
     if (ies->measConfig)
     {
         auto cfg = parseMeasConfig(*ies->measConfig);
+        cfg.fullConfig = fullConfig;
         applyMeasConfig(cfg);
+    }
+    else if (fullConfig)
+    {
+        m_logger->info("RRCReconfiguration fullConfig=true without MeasConfig: clearing measurement state");
+        resetMeasurements();
     }
 
     // --- Check v1530-IEs for masterCellGroup (handover) & dedicated NAS ---

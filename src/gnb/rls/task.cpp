@@ -10,6 +10,7 @@
 
 #include <gnb/gtp/task.hpp>
 #include <gnb/rrc/task.hpp>
+#include <gnb/rls/satellite_state.hpp>
 #include <utils/common.hpp>
 #include <utils/random.hpp>
 
@@ -21,8 +22,16 @@ GnbRlsTask::GnbRlsTask(TaskBase *base) : m_base{base}
     m_logger = m_base->logBase->makeUniqueLogger("rls");
     m_sti = Random::Mixed(base->config->name).nextUL();
 
-    m_udpTask = new RlsUdpTask(base, m_sti, base->config->phyLocation);
+    m_udpTask = new RlsUdpTask(base, m_sti,
+                                base->config->phyLocation);
     m_ctlTask = new RlsControlTask(base, m_sti);
+
+    m_satPosTask = nullptr;
+    if (base->config->satSim && base->satState)
+    {
+        m_satPosTask = new SatPositionTask(
+            base->logBase, base->satState);
+    }
 
     m_udpTask->initialize(m_ctlTask);
     m_ctlTask->initialize(this, m_udpTask);
@@ -32,6 +41,8 @@ void GnbRlsTask::onStart()
 {
     m_udpTask->start();
     m_ctlTask->start();
+    if (m_satPosTask)
+        m_satPosTask->start();
 }
 
 void GnbRlsTask::onLoop()
@@ -46,9 +57,12 @@ void GnbRlsTask::onLoop()
         auto &w = dynamic_cast<NmGnbRlsToRls &>(*msg);
         switch (w.present)
         {
+        // Signal detected is triggered by the RLS UDP task when it receives a heartbeat from a new UE.
+        //   This is used to trigger the sending of the MIB and SIB1.
         case NmGnbRlsToRls::SIGNAL_DETECTED: {
             auto m = std::make_unique<NmGnbRlsToRrc>(NmGnbRlsToRrc::SIGNAL_DETECTED);
             m->ueId = w.ueId;
+            m->cRnti = w.cRnti;
             m_base->rrcTask->push(std::move(m));
             break;
         }
@@ -59,6 +73,7 @@ void GnbRlsTask::onLoop()
         case NmGnbRlsToRls::UPLINK_DATA: {
             auto m = std::make_unique<NmGnbRlsToGtp>(NmGnbRlsToGtp::DATA_PDU_DELIVERY);
             m->ueId = w.ueId;
+            m->cRnti = w.cRnti;
             m->psi = w.psi;
             m->pdu = std::move(w.data);
             m_base->gtpTask->push(std::move(m));
@@ -67,6 +82,7 @@ void GnbRlsTask::onLoop()
         case NmGnbRlsToRls::UPLINK_RRC: {
             auto m = std::make_unique<NmGnbRlsToRrc>(NmGnbRlsToRrc::UPLINK_RRC);
             m->ueId = w.ueId;
+            m->cRnti = w.cRnti;
             m->rrcChannel = w.rrcChannel;
             m->data = std::move(w.data);
             m_base->rrcTask->push(std::move(m));
@@ -94,6 +110,7 @@ void GnbRlsTask::onLoop()
         case NmGnbRrcToRls::RRC_PDU_DELIVERY: {
             auto m = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::DOWNLINK_RRC);
             m->ueId = w.ueId;
+            m->cRnti = w.cRnti;
             m->rrcChannel = w.channel;
             m->pduId = 0;
             m->data = std::move(w.pdu);
@@ -110,6 +127,7 @@ void GnbRlsTask::onLoop()
         case NmGnbGtpToRls::DATA_PDU_DELIVERY: {
             auto m = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::DOWNLINK_DATA);
             m->ueId = w.ueId;
+            m->cRnti = w.cRnti;
             m->psi = w.psi;
             m->data = std::move(w.pdu);
             m_ctlTask->push(std::move(m));
@@ -128,6 +146,11 @@ void GnbRlsTask::onQuit()
 {
     m_udpTask->quit();
     m_ctlTask->quit();
+    if (m_satPosTask)
+    {
+        m_satPosTask->quit();
+        delete m_satPosTask;
+    }
     delete m_udpTask;
     delete m_ctlTask;
 }

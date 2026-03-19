@@ -131,6 +131,7 @@ void RlsControlTask::handleRlsMessage(int ueId, rls::RlsMessage &msg)
         {
             auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_DATA);
             w->ueId = ueId;
+            w->cRnti = static_cast<int>(m.senderId2);
             w->psi = static_cast<int>(m.payload);
             w->data = std::move(m.pdu);
             m_mainTask->push(std::move(w));
@@ -139,6 +140,7 @@ void RlsControlTask::handleRlsMessage(int ueId, rls::RlsMessage &msg)
         {
             auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_RRC);
             w->ueId = ueId;
+            w->cRnti = static_cast<int>(m.senderId2);
             w->rrcChannel = static_cast<rrc::RrcChannel>(m.payload);
             w->data = std::move(m.pdu);
             m_mainTask->push(std::move(w));

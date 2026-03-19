@@ -66,9 +66,16 @@ void GnbRrcTask::onLoop()
             releaseConnection(w.ueId);
             break;
         }
-        case NmGnbNgapToRrc::PAGING:
+        case NmGnbNgapToRrc::PAGING: {
             handlePaging(w.uePagingTmsi, w.taiListForPaging);
             break;
+        }
+        // UE context release after handover completion.
+        case NmGnbNgapToRrc::UE_CONTEXT_RELEASE: {
+            handoverContextRelease(w.ueId);
+            break;
+        }
+        // AMF approval of handover command (sent to source gNB). Forward to RRC to complete the handover.
         case NmGnbNgapToRrc::HANDOVER_COMMAND_DELIVERY: {
             handleNgapHandoverCommand(w.ueId, w.rrcContainer);
             break;
@@ -77,6 +84,22 @@ void GnbRrcTask::onLoop()
             m_logger->info("PathSwitchRequestAck received for UE[%d], handover fully complete", w.ueId);
             break;
         }
+        }
+        break;
+    }
+    case NtsMessageType::GNB_XN_TO_RRC: {
+        auto &w = dynamic_cast<NmGnbXnToRrc &>(*msg);
+        switch (w.present)
+        {
+        case NmGnbXnToRrc::HANDOVER_COMMAND_READY:
+            m_logger->debug("Xn handover command ready for UE[%d]", w.ueId);
+            break;
+        case NmGnbXnToRrc::HANDOVER_PREP_FAILURE:
+            m_logger->warn("Xn handover preparation failed for UE[%d] cause=%d", w.ueId, w.causeCode);
+            break;
+        case NmGnbXnToRrc::SOURCE_CONTEXT_RELEASE:
+            m_logger->debug("Xn source context release requested for UE[%d]", w.ueId);
+            break;
         }
         break;
     }

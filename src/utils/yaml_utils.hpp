@@ -45,6 +45,11 @@ std::string GetIpAddress(const YAML::Node &node, const std::string &name);
 
 bool GetBool(const YAML::Node &node, const std::string &name);
 
+double GetDouble(const YAML::Node &node, const std::string &name);
+double GetDouble(const YAML::Node &node, const std::string &name,
+                 std::optional<double> minValue,
+                 std::optional<double> maxValue);
+
 std::vector<YAML::Node> GetSequence(const YAML::Node &node, const std::string &name);
 
 } // namespace yaml

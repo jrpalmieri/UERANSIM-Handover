@@ -49,6 +49,7 @@ class CapturedNgapMessage:
 
 
 _PROC_NAMES = {
+    ngap.PROC_ERROR_INDICATION: "ErrorIndication",
     ngap.PROC_HANDOVER_PREPARATION: "HandoverRequired/Command",
     ngap.PROC_DOWNLINK_NAS_TRANSPORT: "DownlinkNASTransport",
     ngap.PROC_HANDOVER_NOTIFICATION: "HandoverNotify",
@@ -200,6 +201,12 @@ class FakeAmf:
         self.send_ngap(data, stream=ctx.get("stream", 1))
         logger.info("Sent HandoverCommand for RAN-UE=%d", ran_ue_id)
 
+    def send_handover_request(self, amf_ue_ngap_id: int, stream: int = 1):
+        """Send HandoverRequest (initiatingMessage) to target gNB."""
+        data = ngap.build_handover_request(amf_ue_ngap_id=amf_ue_ngap_id)
+        self.send_ngap(data, stream=stream)
+        logger.info("Sent HandoverRequest for AMF-UE=%d", amf_ue_ngap_id)
+
     def send_path_switch_request_ack(self, ran_ue_id: int):
         """Send PathSwitchRequestAcknowledge to the gNB."""
         ctx = self._ue_contexts.get(ran_ue_id)
@@ -250,6 +257,21 @@ class FakeAmf:
 
     def wait_for_handover_required(self, timeout_s: float = 15.0) -> Optional[CapturedNgapMessage]:
         return self.wait_for_message(ngap.PROC_HANDOVER_PREPARATION, timeout_s,
+                                     pdu_type=ngap.PDU_INITIATING_MESSAGE)
+
+    def wait_for_handover_request_ack(self, timeout_s: float = 15.0) -> Optional[CapturedNgapMessage]:
+        """Wait for HandoverRequestAcknowledge from target gNB."""
+        return self.wait_for_message(ngap.PROC_HANDOVER_PREPARATION, timeout_s,
+                                     pdu_type=ngap.PDU_SUCCESSFUL_OUTCOME)
+
+    def wait_for_handover_failure(self, timeout_s: float = 15.0) -> Optional[CapturedNgapMessage]:
+        """Wait for HandoverFailure from target gNB."""
+        return self.wait_for_message(ngap.PROC_HANDOVER_PREPARATION, timeout_s,
+                                     pdu_type=ngap.PDU_UNSUCCESSFUL_OUTCOME)
+
+    def wait_for_error_indication(self, timeout_s: float = 15.0) -> Optional[CapturedNgapMessage]:
+        """Wait for ErrorIndication from gNB."""
+        return self.wait_for_message(ngap.PROC_ERROR_INDICATION, timeout_s,
                                      pdu_type=ngap.PDU_INITIATING_MESSAGE)
 
     def wait_for_handover_notify(self, timeout_s: float = 15.0) -> Optional[CapturedNgapMessage]:

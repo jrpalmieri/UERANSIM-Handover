@@ -45,8 +45,8 @@ class RlsUdpTask : public NtsTask
     // map of STI values, indexed by cellId (which is UE-local)
     std::unordered_map<int, uint64_t> m_cellIdToSti;
     int64_t m_lastLoop;
-    // simulated location of UE (x,y,z)
-    Vector3 m_simPos;
+    // simulated location of UE (lat, lon, alt)
+    GeoPosition m_simPos;
     // used to generate a unique UE-local cellId for each new cell that sends a heartbeat ACK
     int m_cellIdCounter;
 
@@ -69,7 +69,7 @@ class RlsUdpTask : public NtsTask
     void sendRlsPdu(const InetAddress &addr, const rls::RlsMessage &msg);
     void receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::RlsMessage> &&msg);
     void onSignalChangeOrLost(int cellId);
-    void heartbeatCycle(uint64_t time, const Vector3 &simPos);
+    void heartbeatCycle(uint64_t time, const GeoPosition &simPos);
     void updateMeasurements(const int dbm, const int cellId);
 
   public:

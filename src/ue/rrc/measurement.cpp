@@ -321,7 +321,7 @@ void UeRrcTask::evaluateMeasurements()
                                 cm.first, cm.second, servingRsrp, rc.a3Offset, rc.hysteresis);
                 if (evaluateA3_cell(servingRsrp, cm.second, rc.a3Offset, rc.hysteresis))
                 {
-                    m_logger->info("A3 condition satisfied for cid=%d rsrp=%d", cm.first, cm.second);
+                    m_logger->debug("A3 condition satisfied for cid=%d rsrp=%d", cm.first, cm.second);
                     triggered.push_back({cm.first, cm.second});
                     eventSatisfied = true;
                 }
@@ -376,6 +376,12 @@ void UeRrcTask::evaluateMeasurements()
                 sendMeasurementReport(measId, servingCellId, servingRsrp, triggered);
                 state.reported = true;
             }
+            else
+            {
+                m_logger->debug("Measurement event %s measId %d not triggered, awaiting TTT (elapsed=%d, TTT=%d)",
+                    ToJson(rc.event).str().c_str(), measId, elapsed, rc.timeToTriggerMs);
+
+            }            
         }
         else
         // the condition is not satisfied, reset time-to-trigger tracking
@@ -503,29 +509,135 @@ void UeRrcTask::sendMeasurementReport(int measId, int servingCellId, int serving
  */
 void UeRrcTask::applyMeasConfig(const UeMeasConfig &cfg)
 {
+    auto formatIdList = [](const std::vector<int> &ids) {
+        if (ids.empty())
+            return std::string("-");
+
+        std::string out;
+        out.reserve(ids.size() * 6);
+        for (size_t i = 0; i < ids.size(); i++)
+        {
+            if (i != 0)
+                out += ",";
+            out += std::to_string(ids[i]);
+        }
+        return out;
+    };
+
+    if (cfg.fullConfig)
+    {
+        m_logger->info("MeasConfig fullConfig=true: replacing existing measurement configuration");
+        resetMeasurements();
+    }
+
+    std::vector<int> removedMeasIds{};
+    std::vector<int> removedReportConfigs{};
+    std::vector<int> removedMeasObjects{};
+    std::vector<int> removedDanglingMeasIds{};
+
+    std::vector<int> addedMeasObjects{};
+    std::vector<int> modifiedMeasObjects{};
+    std::vector<int> addedReportConfigs{};
+    std::vector<int> modifiedReportConfigs{};
+    std::vector<int> addedMeasIds{};
+    std::vector<int> modifiedMeasIds{};
+
+    m_logger->info("MeasConfig delta request: remove objects=%zu reports=%zu measIds=%zu add/mod objects=%zu "
+                   "reports=%zu measIds=%zu",
+                   cfg.measObjectsToRemove.size(), cfg.reportConfigsToRemove.size(), cfg.measIdsToRemove.size(),
+                   cfg.measObjects.size(), cfg.reportConfigs.size(), cfg.measIds.size());
+
+    // 3GPP delta signaling remove lists.
+    for (int measId : cfg.measIdsToRemove)
+    {
+        if (m_measConfig.measIds.erase(measId) > 0)
+            removedMeasIds.push_back(measId);
+        m_measConfig.measIdStates.erase(measId);
+    }
+
+    for (int reportConfigId : cfg.reportConfigsToRemove)
+    {
+        if (m_measConfig.reportConfigs.erase(reportConfigId) > 0)
+            removedReportConfigs.push_back(reportConfigId);
+    }
+
+    for (int measObjectId : cfg.measObjectsToRemove)
+    {
+        if (m_measConfig.measObjects.erase(measObjectId) > 0)
+            removedMeasObjects.push_back(measObjectId);
+    }
+
+    // Drop measIds that reference removed/non-existent objects or reports.
+    for (auto it = m_measConfig.measIds.begin(); it != m_measConfig.measIds.end();)
+    {
+        const auto &mid = it->second;
+        bool missingObject = m_measConfig.measObjects.count(mid.measObjectId) == 0;
+        bool missingReport = m_measConfig.reportConfigs.count(mid.reportConfigId) == 0;
+
+        if (missingObject || missingReport)
+        {
+            m_measConfig.measIdStates.erase(it->first);
+            removedDanglingMeasIds.push_back(it->first);
+            it = m_measConfig.measIds.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
     // Merge incoming config into current config
     for (auto &[id, obj] : cfg.measObjects)
+    {
+        if (m_measConfig.measObjects.count(id) > 0)
+            modifiedMeasObjects.push_back(id);
+        else
+            addedMeasObjects.push_back(id);
         m_measConfig.measObjects[id] = obj;
+    }
 
     for (auto &[id, rc] : cfg.reportConfigs)
+    {
+        if (m_measConfig.reportConfigs.count(id) > 0)
+            modifiedReportConfigs.push_back(id);
+        else
+            addedReportConfigs.push_back(id);
         m_measConfig.reportConfigs[id] = rc;
+        m_logger->info("Applied MeasConfig reportConfigId=%d event=%s", id, ToJson(rc.event).str().c_str());
+    }
 
     for (auto &[id, mid] : cfg.measIds)
     {
+        if (m_measConfig.measIds.count(id) > 0)
+            modifiedMeasIds.push_back(id);
+        else
+            addedMeasIds.push_back(id);
         m_measConfig.measIds[id] = mid;
         // Reset state for new/updated measIds
         m_measConfig.measIdStates[id] = {};
     }
 
-    m_logger->info("Applied measurement config: %d objects, %d reports, %d measIds",
+    m_logger->info("MeasConfig delta applied: removed objects=[%s] reports=[%s] measIds=[%s] danglingMeasIds=[%s]",
+                   formatIdList(removedMeasObjects).c_str(), formatIdList(removedReportConfigs).c_str(),
+                   formatIdList(removedMeasIds).c_str(), formatIdList(removedDanglingMeasIds).c_str());
+    m_logger->info("MeasConfig delta applied: added objects=[%s] modified objects=[%s] added reports=[%s] "
+                   "modified reports=[%s]",
+                   formatIdList(addedMeasObjects).c_str(), formatIdList(modifiedMeasObjects).c_str(),
+                   formatIdList(addedReportConfigs).c_str(), formatIdList(modifiedReportConfigs).c_str());
+    m_logger->info("MeasConfig delta applied: added measIds=[%s] modified measIds=[%s]",
+                   formatIdList(addedMeasIds).c_str(), formatIdList(modifiedMeasIds).c_str());
+
+
+    m_logger->info("Measurement config state: %d objects, %d reports, %d measIds",
                    static_cast<int>(m_measConfig.measObjects.size()),
                    static_cast<int>(m_measConfig.reportConfigs.size()),
                    static_cast<int>(m_measConfig.measIds.size()));
+
 }
 
 /**
  * @brief Resets the measurement configuration state, 
- *  e.g. on RRC release or radio failure.
+ *  e.g. on Handover, RRC release or radio failure.
  * 
  */
 void UeRrcTask::resetMeasurements()

@@ -107,6 +107,17 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         sendResult(msg.address, ToJson(m_base->appTask->m_statusInfo).dumpYaml());
         break;
     }
+    case app::GnbCliCommand::UI_STATUS: {
+        Json json = Json::Obj({
+            {"nci", m_base->config->nci},
+            {"pci", m_base->config->getCellId()},
+            {"rrc-ue-count", static_cast<int>(m_base->rrcTask->m_ueCtx.size())},
+            {"ngap-ue-count", static_cast<int>(m_base->ngapTask->m_ueCtx.size())},
+            {"ngap-up", m_base->appTask->m_statusInfo.isNgapUp},
+        });
+        sendResult(msg.address, json.dumpYaml());
+        break;
+    }
     case app::GnbCliCommand::INFO: {
         sendResult(msg.address, ToJson(*m_base->config).dumpYaml());
         break;

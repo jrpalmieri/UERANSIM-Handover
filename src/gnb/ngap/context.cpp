@@ -56,18 +56,28 @@
 namespace nr::gnb
 {
 
+/**
+ * @brief Handles the AMF's Initial Context Setup Request message. This message is sent by the AMF in reponse to an INITIAL UE message.
+ * This msg means the UE has been authenticated and the AMF is requesting the setup of the user plane session contexts for the UE.
+ * 
+ * @param amfId 
+ * @param msg 
+ */
 void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetupRequest *msg)
 {
     m_logger->debug("Initial Context Setup Request received");
 
+    // the AMF msg must contain the NGAP IDs of the UE, which we use to find the relevant UE NGAP context
     auto *ue = findUeByNgapIdPair(amfId, ngap_utils::FindNgapIdPair(msg));
     if (ue == nullptr)
         return;
 
+    // User plane - Initial context setup
     auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_UPDATE);
     w->update = std::make_unique<GtpUeContextUpdate>(true, ue->ctxId, ue->ueAmbr);
     m_base->gtpTask->push(std::move(w));
 
+    // Extract User Plane information.
     auto *reqIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UEAggregateMaximumBitRate);
     if (reqIe)
     {
@@ -135,7 +145,9 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
                 resource->qosFlows = asn::WrapUnique(ptr, asn_DEF_ASN_NGAP_QosFlowSetupRequestList);
             }
 
+            // Instructs GTP to setup the UP Tunnel
             auto error = setupPduSessionResource(ue, resource);
+
             if (error.has_value())
             {
                 auto *tr = asn::New<ASN_NGAP_PDUSessionResourceSetupUnsuccessfulTransfer>();
@@ -192,6 +204,7 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
         }
     }
 
+    // Send UE NAS container to UE - Registration Accept
     reqIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_NAS_PDU);
     if (reqIe)
         deliverDownlinkNas(ue->ctxId, asn::GetOctetString(reqIe->NAS_PDU));
@@ -224,6 +237,7 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
         responseIes.push_back(ie);
     }
 
+    // Send response to AMF- InitialContextSetupResponse
     auto *response = asn::ngap::NewMessagePdu<ASN_NGAP_InitialContextSetupResponse>(responseIes);
     sendNgapUeAssociated(ue->ctxId, response);
 }

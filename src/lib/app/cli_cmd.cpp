@@ -147,6 +147,7 @@ namespace app
 static OrderedMap<std::string, CmdEntry> g_gnbCmdEntries = {
     {"info", {"Show some information about the gNB", "", DefaultDesc, false}},
     {"status", {"Show some status information about the gNB", "", DefaultDesc, false}},
+    {"ui-status", {"Show compact status information for UI polling", "", DefaultDesc, false}},
     {"amf-list", {"List all AMFs associated with the gNB", "", DefaultDesc, false}},
     {"amf-info", {"Show some status information about the given AMF", "<amf-id>", DefaultDesc, true}},
     {"ue-list", {"List all UEs associated with the gNB", "", DefaultDesc, false}},
@@ -158,6 +159,7 @@ static OrderedMap<std::string, CmdEntry> g_gnbCmdEntries = {
 static OrderedMap<std::string, CmdEntry> g_ueCmdEntries = {
     {"info", {"Show some information about the UE", "", DefaultDesc, false}},
     {"status", {"Show some status information about the UE", "", DefaultDesc, false}},
+    {"ui-status", {"Show compact status information for UI polling", "", DefaultDesc, false}},
     {"timers", {"Dump current status of the timers in the UE", "", DefaultDesc, false}},
     {"rls-state", {"Show status information about RLS", "", DefaultDesc, false}},
     {"coverage", {"Dump available cells and PLMNs in the coverage", "", DefaultDesc, false}},
@@ -181,6 +183,10 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
     if (subCmd == "status")
     {
         return std::make_unique<GnbCliCommand>(GnbCliCommand::STATUS);
+    }
+    else if (subCmd == "ui-status")
+    {
+        return std::make_unique<GnbCliCommand>(GnbCliCommand::UI_STATUS);
     }
     else if (subCmd == "amf-list")
     {
@@ -236,6 +242,10 @@ static std::unique_ptr<UeCliCommand> UeCliParseImpl(const std::string &subCmd, c
     else if (subCmd == "status")
     {
         return std::make_unique<UeCliCommand>(UeCliCommand::STATUS);
+    }
+    else if (subCmd == "ui-status")
+    {
+        return std::make_unique<UeCliCommand>(UeCliCommand::UI_STATUS);
     }
     else if (subCmd == "timers")
     {

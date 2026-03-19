@@ -20,3 +20,10 @@ slices:
 
 # Indicates whether or not SCTP stream number errors should be ignored.
 ignoreStreamIds: true
+
+# RSRP configuration:
+#   dbValue: initial RSRP value (dBm) used in Fixed mode and as the starting fixed value
+#   updateMode: Calculated (distance/path-loss based) or Fixed (ignore distance)
+rsrp:
+  dbValue: -60
+  updateMode: Fixed

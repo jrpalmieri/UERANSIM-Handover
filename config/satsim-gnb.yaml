@@ -22,3 +22,45 @@ slices:
 
 # Indicates whether or not SCTP stream number errors should be ignored.
 ignoreStreamIds: true
+
+# RSRP configuration:
+#   dbValue: initial RSRP value (dBm) used in Fixed mode and as the starting fixed value
+#   updateMode: Calculated (distance/path-loss based) or Fixed (ignore distance)
+rsrp:
+  dbValue: -60
+  updateMode: Fixed
+
+# Neighbor cells for handover
+neighborList:
+  - nci: '0x000000020'
+    idLength: 32
+    tac: 1
+    ipAddress: 127.0.0.2
+    handoverInterface: N2
+  - nci: '0x000000030'
+    idLength: 32
+    tac: 1
+    ipAddress: 127.0.0.3
+    handoverInterface: N2
+
+# gNB geographic position (lat/lon/alt, WGS-84)
+# Used as the static terrestrial position or as fallback
+# when no TLE has been received in satellite mode
+position:
+  latitude: 33.7490     # degrees North
+  longitude: -84.3880   # degrees East
+#  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
+  altitude: 800.0      # meters above ellipsoid (typical for terrestrial gNB)
+
+
+
+# Satellite simulation: set to true to enable NTN satellite mode
+satSim: true
+
+# Satellite link budget parameters (used when satSim is true)
+satLink:
+  frequencyHz: 10.7e9   # Ku-band carrier frequency (Hz)
+  txPowerDbW: 43.0       # Radiated (transmit) power (dBW)
+  txGainDbi: 35.0        # Transmit antenna gain (dBi)
+  rxGainDbi: 25.0        # Receive antenna gain (dBi)
+

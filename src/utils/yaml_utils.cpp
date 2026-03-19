@@ -182,6 +182,38 @@ bool GetBool(const YAML::Node &node, const std::string &name)
     return node[name].as<bool>();
 }
 
+static void AssertHasDouble(const YAML::Node &node,
+                            const std::string &name)
+{
+    AssertHasField(node, name);
+    try
+    {
+        node[name].as<double>();
+    }
+    catch (const std::runtime_error &e)
+    {
+        FieldError(name, "has invalid type");
+    }
+}
+
+double GetDouble(const YAML::Node &node, const std::string &name)
+{
+    AssertHasDouble(node, name);
+    return node[name].as<double>();
+}
+
+double GetDouble(const YAML::Node &node, const std::string &name,
+                 std::optional<double> minValue,
+                 std::optional<double> maxValue)
+{
+    double value = GetDouble(node, name);
+    if (minValue.has_value() && value < *minValue)
+        FieldError(name, "is too small");
+    if (maxValue.has_value() && value > *maxValue)
+        FieldError(name, "is too big");
+    return value;
+}
+
 void AssertHasSequence(const YAML::Node &node, const std::string &name)
 {
     AssertHasField(node, name);

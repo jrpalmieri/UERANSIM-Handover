@@ -41,7 +41,9 @@ namespace nr::gnb
 
 void GnbRrcTask::receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest &msg)
 {
-    auto *ue = tryFindUe(ueId);
+    // see if UeID is already in the RRC UE context map
+    // Why: - failed registration, failed handover
+    auto *ue = tryFindUeByUeId(ueId);
     if (ue)
     {
         // TODO: handle this more properly
@@ -55,7 +57,17 @@ void GnbRrcTask::receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest 
         return;
     }
 
-    ue = createUe(ueId);
+    // Create UE RRC context keyed by UE ID while keeping C-RNTI in context payload.
+    int newCrnti = allocateCrnti();
+    ue = createUe(ueId, newCrnti);
+    if (!ue)
+    {
+        m_logger->err("Failed to create UE context for UE ID %d", ueId);
+        return;
+    }
+    ue->ueId = ueId;
+    ue->rrcState = UE_RRC_CONNECTION_STATE::RRC_CONNECTION_PENDING;
+
 
     if (msg.rrcSetupRequest.ue_Identity.present == ASN_RRC_InitialUE_Identity_PR_ng_5G_S_TMSI_Part1)
     {
@@ -94,10 +106,23 @@ void GnbRrcTask::receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest 
 
 void GnbRrcTask::receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplete &msg)
 {
-    auto *ue = findUe(ueId);
+    auto *ue = tryFindUeByUeId(ueId);
     if (!ue)
-        return;
+    {
+        // Fallback for legacy behavior where ueId may still be equal to C-RNTI in some paths.
+        ue = tryFindUeByCrnti(ueId);
+    }
 
+    if (!ue)
+    {
+        m_logger->err("UE context with UE ID[%d] not found for RRC Setup Complete", ueId);
+        return;
+    }
+
+    m_logger->debug("RRC Setup Complete: ueId=%d cRnti=%d", ue->ueId, ue->cRnti);
+
+    ue->rrcState = UE_RRC_CONNECTION_STATE::RRC_CONNECTED;
+    
     auto setupComplete = msg.criticalExtensions.choice.rrcSetupComplete;
 
     if (msg.criticalExtensions.choice.rrcSetupComplete)
@@ -124,7 +149,8 @@ void GnbRrcTask::receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplet
     }
 
     auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::INITIAL_NAS_DELIVERY);
-    w->ueId = ueId;
+    w->ueId = ue->ueId;
+    w->cRnti = ue->cRnti;
     w->pdu = asn::GetOctetString(setupComplete->dedicatedNAS_Message);
     w->rrcEstablishmentCause = ue->establishmentCause;
     w->sTmsi = ue->sTmsi;
@@ -132,7 +158,7 @@ void GnbRrcTask::receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplet
     m_base->ngapTask->push(std::move(w));
 
     // Send measurement configuration to UE for handover support
-    sendMeasConfig(ueId);
+    sendMeasConfig(ue->ueId);
 }
 
 } // namespace nr::gnb

@@ -111,6 +111,15 @@ struct MeasIdState
  */
 struct UeMeasConfig
 {
+    // RRCReconfiguration-v1530 fullConfig=true indicates full configuration
+    // replacement semantics for measurement-related state.
+    bool fullConfig{};
+
+    // Delta signaling remove lists (if present) from ASN MeasConfig.
+    std::vector<int> measObjectsToRemove;
+    std::vector<int> reportConfigsToRemove;
+    std::vector<int> measIdsToRemove;
+
     std::unordered_map<int, UeMeasObject>    measObjects;   // key = measObjectId
     std::unordered_map<int, UeReportConfig>  reportConfigs; // key = reportConfigId
     std::unordered_map<int, UeMeasId>        measIds;       // key = measId

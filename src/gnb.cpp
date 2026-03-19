@@ -8,6 +8,9 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <algorithm>
+#include <cctype>
+#include <unordered_set>
 #include <unordered_map>
 
 #include <unistd.h>
@@ -34,6 +37,76 @@ static struct Options
     bool disableCmd{};
 } g_options{};
 
+static nr::gnb::EGnbRsrpMode ReadRsrpMode(const YAML::Node &rsrpNode)
+{
+    auto mode = yaml::GetString(rsrpNode, "updateMode");
+    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+
+    if (mode == "calculated")
+        return nr::gnb::EGnbRsrpMode::Calculated;
+    if (mode == "fixed")
+        return nr::gnb::EGnbRsrpMode::Fixed;
+
+    throw std::runtime_error(
+        "Field rsrp.updateMode has invalid value, expected 'Calculated' or 'Fixed'");
+}
+
+static std::string ReadHandoverEventType(const YAML::Node &node)
+{
+    auto value = node.as<std::string>();
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
+    });
+
+    if (value == "A2" || value == "A3" || value == "A5")
+        return value;
+
+    throw std::runtime_error(
+        "Field handover.eventType has invalid value, expected A2, A3 or A5");
+}
+
+static std::vector<std::string> ReadHandoverEventTypes(const YAML::Node &handoverNode)
+{
+    std::vector<std::string> eventTypes{};
+    auto eventTypeNode = handoverNode["eventType"];
+    if (!eventTypeNode)
+        return eventTypes;
+
+    if (eventTypeNode.IsSequence())
+    {
+        for (const auto &entry : eventTypeNode)
+        {
+            eventTypes.push_back(ReadHandoverEventType(entry));
+        }
+    }
+    else
+    {
+        eventTypes.push_back(ReadHandoverEventType(eventTypeNode));
+    }
+
+    std::sort(eventTypes.begin(), eventTypes.end());
+    eventTypes.erase(std::unique(eventTypes.begin(), eventTypes.end()), eventTypes.end());
+    return eventTypes;
+}
+
+static nr::gnb::EHandoverInterface ReadHandoverInterface(const YAML::Node &node)
+{
+    auto value = node.as<std::string>();
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
+    });
+
+    if (value == "N2")
+        return nr::gnb::EHandoverInterface::N2;
+    if (value == "XN")
+        return nr::gnb::EHandoverInterface::Xn;
+
+    throw std::runtime_error(
+        "Field neighborList[].handoverInterface has invalid value, expected N2 or Xn");
+}
+
 static nr::gnb::GnbConfig *ReadConfigYaml()
 {
     auto *result = new nr::gnb::GnbConfig();
@@ -56,6 +129,91 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
         result->gtpAdvertiseIp = yaml::GetIpAddress(config, "gtpAdvertiseIp");
 
     result->ignoreStreamIds = yaml::GetBool(config, "ignoreStreamIds");
+
+    if (yaml::HasField(config, "rsrp"))
+    {
+        auto rsrp = config["rsrp"];
+        result->rsrp.dbValue = yaml::GetInt32(rsrp, "dbValue", cons::MIN_RSRP, cons::MAX_RSRP);
+        result->rsrp.updateMode = ReadRsrpMode(rsrp);
+    }
+
+    if (yaml::HasField(config, "handover"))
+    {
+        auto handover = config["handover"];
+
+        auto eventTypes = ReadHandoverEventTypes(handover);
+        if (!eventTypes.empty())
+            result->handover.eventTypes = std::move(eventTypes);
+
+        if (yaml::HasField(handover, "a2ThresholdDbm"))
+            result->handover.a2ThresholdDbm = yaml::GetInt32(handover, "a2ThresholdDbm", -156, -31);
+        if (yaml::HasField(handover, "a3OffsetDb"))
+            result->handover.a3OffsetDb = yaml::GetInt32(handover, "a3OffsetDb", -15, 15);
+        if (yaml::HasField(handover, "a5Threshold1Dbm"))
+            result->handover.a5Threshold1Dbm = yaml::GetInt32(handover, "a5Threshold1Dbm", -156, -31);
+        if (yaml::HasField(handover, "a5Threshold2Dbm"))
+            result->handover.a5Threshold2Dbm = yaml::GetInt32(handover, "a5Threshold2Dbm", -156, -31);
+        if (yaml::HasField(handover, "hysteresisDb"))
+            result->handover.hysteresisDb = yaml::GetInt32(handover, "hysteresisDb", 0, 30);
+
+        if (yaml::HasField(handover, "xn"))
+        {
+            auto xn = handover["xn"];
+
+            if (yaml::HasField(xn, "enabled"))
+                result->handover.xn.enabled = yaml::GetBool(xn, "enabled");
+
+            if (yaml::HasField(xn, "bindAddress"))
+                result->handover.xn.bindAddress = yaml::GetIpAddress(xn, "bindAddress");
+
+            if (yaml::HasField(xn, "bindPort"))
+                result->handover.xn.bindPort = static_cast<uint16_t>(yaml::GetInt32(xn, "bindPort", 1, 65535));
+
+            if (yaml::HasField(xn, "requestTimeoutMs"))
+                result->handover.xn.requestTimeoutMs =
+                    yaml::GetInt32(xn, "requestTimeoutMs", 100, 60 * 1000);
+
+            if (yaml::HasField(xn, "contextTtlMs"))
+                result->handover.xn.contextTtlMs =
+                    yaml::GetInt32(xn, "contextTtlMs", 500, 5 * 60 * 1000);
+
+            if (yaml::HasField(xn, "fallbackToN2"))
+                result->handover.xn.fallbackToN2 = yaml::GetBool(xn, "fallbackToN2");
+        }
+    }
+
+    if (yaml::HasField(config, "neighborList"))
+    {
+        std::unordered_set<int> seenNeighborPci{};
+
+        for (const auto &neighborNode : yaml::GetSequence(config, "neighborList"))
+        {
+            nr::gnb::GnbNeighborConfig neighbor{};
+            neighbor.nci = yaml::GetInt64(neighborNode, "nci", 0, 0xFFFFFFFFFll);
+            neighbor.idLength = yaml::GetInt32(neighborNode, "idLength", 22, 32);
+            neighbor.tac = yaml::GetInt32(neighborNode, "tac", 0, 0xFFFFFF);
+            neighbor.ipAddress = yaml::GetIpAddress(neighborNode, "ipAddress");
+
+            if (yaml::HasField(neighborNode, "handoverInterface"))
+                neighbor.handoverInterface = ReadHandoverInterface(neighborNode["handoverInterface"]);
+
+            if (yaml::HasField(neighborNode, "xnAddress"))
+                neighbor.xnAddress = yaml::GetIpAddress(neighborNode, "xnAddress");
+
+            if (yaml::HasField(neighborNode, "xnPort"))
+                neighbor.xnPort = static_cast<uint16_t>(yaml::GetInt32(neighborNode, "xnPort", 1, 65535));
+
+            auto pci = neighbor.getPci();
+            if (seenNeighborPci.count(pci) != 0)
+                throw std::runtime_error(
+                    "neighborList contains duplicate PCI=" + std::to_string(pci));
+
+            seenNeighborPci.insert(pci);
+
+            result->neighborList.push_back(neighbor);
+        }
+    }
+
     result->pagingDrx = EPagingDrx::V128;
     result->name = "UERANSIM-gnb-" + std::to_string(result->plmn.mcc) + "-" + std::to_string(result->plmn.mnc) + "-" +
                    std::to_string(result->getGnbId()); // NOTE: Avoid using "/" dir separator character.
@@ -75,6 +233,40 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
         if (yaml::HasField(nssai, "sd"))
             s.sd = octet3{yaml::GetInt32(nssai, "sd", 0, 0xFFFFFF)};
         result->nssai.slices.push_back(s);
+    }
+
+    /* Satellite simulation config */
+    if (yaml::HasField(config, "satSim"))
+        result->satSim = yaml::GetBool(config, "satSim");
+
+    if (result->satSim && yaml::HasField(config, "satLink"))
+    {
+        auto sl = config["satLink"];
+        if (yaml::HasField(sl, "frequencyHz"))
+            result->satLink.frequencyHz =
+                yaml::GetDouble(sl, "frequencyHz");
+        if (yaml::HasField(sl, "txPowerDbW"))
+            result->satLink.txPowerDbW =
+                yaml::GetDouble(sl, "txPowerDbW");
+        if (yaml::HasField(sl, "txGainDbi"))
+            result->satLink.txGainDbi =
+                yaml::GetDouble(sl, "txGainDbi");
+        if (yaml::HasField(sl, "rxGainDbi"))
+            result->satLink.rxGainDbi =
+                yaml::GetDouble(sl, "rxGainDbi");
+    }
+
+    /* gNB geographic location (lat/lon/alt) */
+    if (yaml::HasField(config, "position"))
+    {
+        auto pos = config["position"];
+        result->geoLocation.latitude =
+            yaml::GetDouble(pos, "latitude", -90.0, 90.0);
+        result->geoLocation.longitude =
+            yaml::GetDouble(pos, "longitude", -180.0, 180.0);
+        result->geoLocation.altitude =
+            yaml::GetDouble(pos, "altitude",
+                            std::nullopt, std::nullopt);
     }
 
     return result;

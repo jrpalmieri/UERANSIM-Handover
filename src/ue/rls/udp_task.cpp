@@ -17,9 +17,10 @@
 #include <utils/constants.hpp>
 
 static constexpr const int BUFFER_SIZE = 16384;
-static constexpr const int LOOP_PERIOD = 1000;
-static constexpr const int RECEIVE_TIMEOUT = 200;
-static constexpr const int HEARTBEAT_THRESHOLD = 2000; // (LOOP_PERIOD + RECEIVE_TIMEOUT)'dan büyük olmalı
+static constexpr const int LOOP_PERIOD = 200;
+static constexpr const int RECEIVE_TIMEOUT = 100;
+// Use a relaxed threshold to avoid transient scheduler/network jitter causing false cell churn.
+static constexpr const int HEARTBEAT_THRESHOLD = 2000;
 
 namespace nr::ue
 {
@@ -36,7 +37,7 @@ RlsUdpTask::RlsUdpTask(TaskBase *base, RlsSharedContext *shCtx, const std::vecto
     for (auto &ip : searchSpace)
         m_searchSpace.emplace_back(ip, cons::RadioLinkPort);
 
-    m_simPos = Vector3{};
+    m_simPos = GeoPosition{};
 
     handoverEnabled = m_base->config->useHandoverMeasFramework;
 
@@ -66,7 +67,7 @@ void RlsUdpTask::onLoop()
     int size = m_server->Receive(buffer, BUFFER_SIZE, RECEIVE_TIMEOUT, peerAddress);
     if (size > 0)
     {
-        auto rlsMsg = rls::DecodeRlsMessage(OctetView{buffer, static_cast<size_t>(size)}, true);
+        auto rlsMsg = rls::DecodeRlsMessage(OctetView{buffer, static_cast<size_t>(size)});
         if (rlsMsg == nullptr)
             m_logger->err("Unable to decode RLS message");
         else
@@ -82,7 +83,7 @@ void RlsUdpTask::onQuit()
 void RlsUdpTask::sendRlsPdu(const InetAddress &addr, const rls::RlsMessage &msg)
 {
     OctetString stream;
-    rls::EncodeRlsMessage(msg, stream, false);
+    rls::EncodeRlsMessage(msg, stream);
 
     m_server->Send(addr, stream.data(), static_cast<size_t>(stream.length()));
 }
@@ -107,14 +108,17 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
     //    - the dbm signal strength being simulated for this UE as estimated by the gnb
     if (msg->msgType == rls::EMessageType::HEARTBEAT_ACK)
     {
-        int reportedCellId = static_cast<int>(msg->cellId);
+        int reportedCellId = static_cast<int>(msg->senderId);
+        bool newCellFound = false;
 
         // if the STI is not in the cell map, this is a new gnb.  Add it.
         if (!m_cells.count(msg->sti))
         {
-            m_cells[msg->sti].cellId = reportedCellId != 0 ? reportedCellId : ++m_cellIdCounter;  // this ternary is to handle the case where the gnb doesn't support cellId in the header; 
-                                                                                                  //   in that case we generate a UE-local cellId for it
+            // If gNB does not include a cell ID, generate a UE-local fallback ID.
+            m_cells[msg->sti].cellId =
+                reportedCellId != 0 ? reportedCellId : ++m_cellIdCounter;
             m_cellIdToSti[m_cells[msg->sti].cellId] = msg->sti;
+            newCellFound = true;
         }
         // if the STI is in the cell map, but the cellId in the message is different from the cellId in the map, 
         //  then update the cellId in the map with the new value from the message (this shouldn't happen)
@@ -138,14 +142,25 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
         // dbm update
         int newDbm = ((const rls::RlsHeartBeatAck &)*msg).dbm;
         updateMeasurements(newDbm, reportedCellId);
+        bool radioLinkFailure = newDbm < cons::RLF_RSRP;
 
-        // Legacy process used m_cells to track dbm
-        // m_cells[msg->sti].dbm = newDbm;
+        m_logger->debug("RLS heartbeat ACK received: sti=%lu cellId=%d dbm=%d",
+                msg->sti, m_cells[msg->sti].cellId, newDbm);
 
-        // // if the signal strength has changed, push a SIGNAL_CHANGED message 
-        // //  to the control task with the cellId
-        // if (oldDbm != newDbm)
-        //     onSignalChangeOrLost(m_cells[msg->sti].cellId);
+        // Notify the RLS control task ising SIGNAL_CHANGED when there is a new cell 
+        // or if the cell is now below the signal threshold for comms.
+        // This will trigger addition/removal of cell in the cellDesc table used by RRC
+        // for MIB/SIB data tracking
+        if (newCellFound || radioLinkFailure)
+        {
+            auto signalChange = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::SIGNAL_CHANGED);
+            signalChange->cellId = m_cells[msg->sti].cellId;
+            signalChange->dbm = newDbm;
+            m_ctlTask->push(std::move(signalChange));
+            m_logger->debug("RLS heartbeat ACK - new cell found %d, adding to RRC cell map",
+                m_cells[msg->sti].cellId);
+
+        }
         return;
     }
 
@@ -154,15 +169,18 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
     //  then ignore the message (could be a prior failed simulation)
     if (!m_cells.count(msg->sti))
     {
-        m_logger->warn("Received RLS message with unknown STI %lu, but handover measurement framework is enabled, so ignoring STI and processing message anyway", msg->sti);
+        m_logger->warn(
+            "Received RLS message with unknown STI %lu, but handover measurement framework is enabled, "
+            "so ignoring STI and processing message anyway",
+            msg->sti);
 
         return;
     }
 
     // for PDU_TRANSMISSION and other messages, forward to control task with cellId info
     auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::RECEIVE_RLS_MESSAGE);
-    if (msg->cellId != 0)
-        w->cellId = static_cast<int>(msg->cellId);
+    if (msg->senderId != 0)
+        w->cellId = static_cast<int>(msg->senderId);
     else if (m_cells.count(msg->sti))
         w->cellId = m_cells[msg->sti].cellId;
     else
@@ -187,7 +205,8 @@ void RlsUdpTask::onSignalChangeOrLost(int cellId)
     m_ctlTask->push(std::move(w));
 }
 
-void RlsUdpTask::heartbeatCycle(uint64_t time, const Vector3 &simPos)
+void RlsUdpTask::heartbeatCycle(uint64_t time,
+                                const GeoPosition &simPos)
 {
     std::set<std::pair<uint64_t, int>> toRemove;
 
@@ -221,8 +240,10 @@ void RlsUdpTask::heartbeatCycle(uint64_t time, const Vector3 &simPos)
     //   with the simulated position of the UE
     for (auto &addr : m_searchSpace)
     {
-        rls::RlsHeartBeat msg{m_shCtx->sti};
-        msg.simPos = simPos;
+           rls::RlsHeartBeat msg{m_shCtx->sti, m_shCtx->senderId, m_shCtx->cRnti.load()};
+        msg.simPos.latitude = simPos.latitude;
+        msg.simPos.longitude = simPos.longitude;
+        msg.simPos.altitude = simPos.altitude;
         sendRlsPdu(addr, msg);
     }
 }

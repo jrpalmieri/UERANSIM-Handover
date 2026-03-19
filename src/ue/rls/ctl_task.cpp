@@ -216,7 +216,7 @@ void RlsControlTask::handleUplinkRrcDelivery(int cellId, uint32_t pduId, rrc::Rr
 
     // create a new RlsPduTransmission message with the provided RRC payload and 
     //  send it to the UDP task to be forwarded to the gnb
-    rls::RlsPduTransmission msg{m_shCtx->sti};
+    rls::RlsPduTransmission msg{m_shCtx->sti, m_shCtx->senderId, m_shCtx->cRnti.load()};
     msg.pduType = rls::EPduType::RRC;
     msg.pdu = std::move(data);
     msg.payload = static_cast<uint32_t>(channel);
@@ -237,7 +237,7 @@ void RlsControlTask::handleUplinkDataDelivery(int psi, OctetString &&data)
     
     // create a new RlsPduTransmission message with the provided data payload and
     //  send it to the UDP task to be forwarded to the gnb
-    rls::RlsPduTransmission msg{m_shCtx->sti};
+    rls::RlsPduTransmission msg{m_shCtx->sti, m_shCtx->senderId, m_shCtx->cRnti.load()};
     msg.pduType = rls::EPduType::DATA;
     msg.pdu = std::move(data);
     msg.payload = static_cast<uint32_t>(psi);
@@ -304,7 +304,7 @@ void RlsControlTask::onAckSendTimerExpired()
         if (!item.second.empty())
             continue;
 
-        rls::RlsPduTransmissionAck msg{m_shCtx->sti};
+        rls::RlsPduTransmissionAck msg{m_shCtx->sti, m_shCtx->senderId, m_shCtx->cRnti.load()};
         msg.pduIds = std::move(item.second);
 
         m_udpTask->send(item.first, msg);

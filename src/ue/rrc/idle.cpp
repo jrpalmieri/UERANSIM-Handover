@@ -140,6 +140,9 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
     if (!selectedPlmn.hasValue())
         return false;
 
+    // vector of cellIds that are suitable candidates for selection, 
+    //   i.e. they have the required SIB1 and MIB information, correct PLMNID, not barred or reserved, 
+    //   and not in forbidden TAI list    
     std::vector<int> candidates;
 
     for (auto &item : m_cellDesc)
@@ -202,45 +205,19 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
         return false;
 
 
-
-    // Select best candidate
-
-    int selectedId = 0;
-
-    // If we're using the legacy RLS-based measurement framework, 
-    //  use the signal strength info stored in the cell description
-    //  (updated by RLS measurements in HANDSHAKE_ACK msgs)
-    if (!m_base->config->useHandoverMeasFramework)
+    // sort the candidate list by signal strength (dbm) in descending order
+    // signal strength is from global celldbmeas map
     {
-        // sort the candidate list by signal strength (dbm) in descending order
+        std::shared_lock lock(m_base->cellDbMeasMutex);
+
         std::sort(candidates.begin(), candidates.end(), [this](int a, int b) {
-            auto &cellA = m_cellDesc[a];
-            auto &cellB = m_cellDesc[b];
-            return cellB.dbm < cellA.dbm;
+            auto &cellA = m_base->cellDbMeas[a];
+            auto &cellB = m_base->cellDbMeas[b];
+            return cellB < cellA;
         });
-        selectedId = candidates[0];
-    
-    }
-    else
-    // If we're using the advanced measurement framework, 
-    //  use the latest RSRP measurements for sorting
-    {
-
-        // quicker searching by going through the global measurements and finding the 
-        //   first cell that is in the candidate list (likely to be the first entry)
-        {
-            std::shared_lock lock(m_base->g_allCellMeasurements->cellMeasurementsMutex);
-            for (auto const& item : m_base->g_allCellMeasurements->cellMeasurements)
-            {
-                auto it = std::find(candidates.begin(), candidates.end(), item.cellId);
-                if (it != candidates.end()){
-                    selectedId = *it;
-                    break;
-                }
-            }
-        }
     }
 
+    int selectedId = candidates[0];
     auto &selectedCell = m_cellDesc[selectedId];
 
     cellInfo = {};
@@ -309,64 +286,37 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
     if (candidates.empty())
         return false;
 
-    int selectedId = -1;
+
     Plmn selectedPlmn = m_base->shCtx.selectedPlmn.get();
 
-    if (!m_base->config->useHandoverMeasFramework) {
-        // Order candidates by signal strength first
+    // sort the candidate list by signal strength (dbm) in descending order
+    // signal strength is from global celldbmeas map
+    {
+        std::shared_lock lock(m_base->cellDbMeasMutex);
+
         std::sort(candidates.begin(), candidates.end(), [this](int a, int b) {
+            auto &cellA = m_base->cellDbMeas[a];
+            auto &cellB = m_base->cellDbMeas[b];
+            return cellB < cellA;
+        });
+    }
+
+    // Then order candidates by PLMN priority if we have a selected PLMN
+    if (selectedPlmn.hasValue())
+    {
+        // Using stable-sort here
+        std::stable_sort(candidates.begin(), candidates.end(), [this, &selectedPlmn](int a, int b) {
             auto &cellA = m_cellDesc[a];
             auto &cellB = m_cellDesc[b];
-            return cellB.dbm < cellA.dbm;
+
+            bool matchesA = cellA.sib1.hasSib1 && cellA.sib1.plmn == selectedPlmn;
+            bool matchesB = cellB.sib1.hasSib1 && cellB.sib1.plmn == selectedPlmn;
+
+            return matchesB < matchesA;
         });
-    
-        // Then order candidates by PLMN priority if we have a selected PLMN
-        if (selectedPlmn.hasValue())
-        {
-            // Using stable-sort here
-            std::stable_sort(candidates.begin(), candidates.end(), [this, &selectedPlmn](int a, int b) {
-                auto &cellA = m_cellDesc[a];
-                auto &cellB = m_cellDesc[b];
-
-                bool matchesA = cellA.sib1.hasSib1 && cellA.sib1.plmn == selectedPlmn;
-                bool matchesB = cellB.sib1.hasSib1 && cellB.sib1.plmn == selectedPlmn;
-
-                return matchesB < matchesA;
-            });
-        }
-
-        selectedId = candidates[0];
-    }
-    else {
-        // quicker searching by going through the global measurements and finding the 
-        //   first cell that is in the candidate list (likely to be the first entry)
-        int bestIndex = -1;
-        int bestRsrp = MIN_RSRP;
-        {
-            std::shared_lock lock(m_base->g_allCellMeasurements->cellMeasurementsMutex);
-            for (auto &item : m_base->g_allCellMeasurements->cellMeasurements)
-            {
-                auto it = std::find(candidates.begin(), candidates.end(), item.cellId);
-                if (it != candidates.end()){
-                    // check if plmnid matches selectedplmn (if we have a selected plmn)
-                    auto &cell = m_cellDesc[item.cellId];
-                    if (selectedPlmn.hasValue() && cell.sib1.hasSib1 && cell.sib1.plmn == selectedPlmn) {
-                        selectedId = *it;
-                        break;
-                    }
-                    if (item.rsrp > bestRsrp) {
-                        bestRsrp = item.rsrp;
-                        bestIndex = *it;
-                    }
-
-                }
-            }
-            if (selectedId == -1 && bestIndex != -1) {
-                selectedId = bestIndex;
-            }
-        }
     }
 
+    int selectedId = candidates[0];
     auto &selectedCell = m_cellDesc[selectedId];
 
     cellInfo = {};

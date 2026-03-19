@@ -47,7 +47,12 @@ class GnbRrcTask : public NtsTask
     GnbConfig *m_config;
     std::unique_ptr<Logger> m_logger;
 
+    // UE RRC Contexts, indexed by UE ID
     std::unordered_map<int, RrcUeContext *> m_ueCtx;
+
+    // Pending Handover Contexts, indexed by TxId
+    std::unordered_map<long, RRCHandoverPending*> m_handoversPending;
+
     int m_tidCounter;
 
     bool m_isBarred = true;
@@ -61,17 +66,30 @@ class GnbRrcTask : public NtsTask
     explicit GnbRrcTask(TaskBase *base);
     ~GnbRrcTask() override = default;
 
+    std::vector<HandoverMeasurementIdentity> getHandoverMeasurementIdentities(int ueId) const;
+    OctetString getHandoverMeasConfigRrcReconfiguration(int ueId) const;
+    int64_t buildHandoverCommandForTransfer(int ueId, int targetPci, int newCrnti, int t304Ms,
+                        OctetString &rrcContainer);
+    bool addPendingHandover(int ueId, const HandoverPreparationInfo &handoverPrep,
+                OctetString &rrcContainer);
+
   protected:
     void onStart() override;
     void onLoop() override;
     void onQuit() override;
 
   private:
-    /* Management */
-    int getNextTid();
+    
+  /* Management - management.cpp */
 
-    /* Handlers */
-    void handleUplinkRrc(int ueId, rrc::RrcChannel channel, const OctetString &rrcPdu);
+    int getNextTid();
+    int allocateCrnti() const;
+    RrcUeContext* findCtxByCrnti(int cRnti);
+    RrcUeContext* findCtxByUeId(int ueId);
+
+    /* Handlers for RRC-NAS - handlers.cpp */
+
+    void handleUplinkRrc(int ueId, int cRnti, rrc::RrcChannel channel, const OctetString &rrcPdu);
     void handleDownlinkNasDelivery(int ueId, const OctetString &nasPdu);
     void deliverUplinkNas(int ueId, OctetString &&nasPdu);
     void releaseConnection(int ueId);
@@ -81,43 +99,52 @@ class GnbRrcTask : public NtsTask
 
     void receiveUplinkInformationTransfer(int ueId, const ASN_RRC_ULInformationTransfer &msg);
 
-    /* RRC channel send message */
+    /* RRC channel send message to UE - channel.cpp */
+
     void sendRrcMessage(ASN_RRC_BCCH_BCH_Message *msg);
     void sendRrcMessage(ASN_RRC_BCCH_DL_SCH_Message *msg);
     void sendRrcMessage(int ueId, ASN_RRC_DL_CCCH_Message *msg);
     void sendRrcMessage(int ueId, ASN_RRC_DL_DCCH_Message *msg);
     void sendRrcMessage(ASN_RRC_PCCH_Message *msg);
 
-    /* RRC channel receive message */
+    /* RRC channel receive message from UE - channel.cpp */
+
     void receiveRrcMessage(int ueId, ASN_RRC_BCCH_BCH_Message *msg);
     void receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH_Message *msg);
     void receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH1_Message *msg);
     void receiveRrcMessage(int ueId, ASN_RRC_UL_DCCH_Message *msg);
 
-    /* System Information Broadcast related */
+    /* System Information Broadcast related - broadcast.cpp */
+    
     void onBroadcastTimerExpired();
     void triggerSysInfoBroadcast();
 
-    /* Service Access Point */
+    /* Service Access Point - sap.cpp */
+
     void handleRlsSapMessage(NmGnbRlsToRrc &msg);
 
-    /* UE Management */
-    RrcUeContext *createUe(int id);
-    RrcUeContext *tryFindUe(int id);
-    RrcUeContext *findUe(int id);
+    /* UE Management - ues.cpp */
 
-    /* Connection Control */
+    RrcUeContext *createUe(int ueId, int crnti);
+    RrcUeContext *tryFindUeByCrnti(int crnti);
+    RrcUeContext *tryFindUeByUeId(int ueId);
+
+    /* Connection Control - connection.cpp */
+
     void receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest &msg);
     void receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplete &msg);
 
-    /* Handover (Phase 4) */
+    /* Handover - handover.cpp */
+
     void receiveRrcReconfigurationComplete(int ueId, const ASN_RRC_RRCReconfigurationComplete &msg);
     void receiveMeasurementReport(int ueId, const ASN_RRC_MeasurementReport &msg);
     void sendHandoverCommand(int ueId, int targetPci, int newCrnti, int t304Ms);
     void handleHandoverComplete(int ueId);
-    void sendMeasConfig(int ueId);
-    void evaluateHandoverDecision(int ueId);
+    void sendMeasConfig(int ueId, bool forceResend = false);
+    void evaluateHandoverDecision(int ueId, const std::string &eventType);
     void handleNgapHandoverCommand(int ueId, const OctetString &rrcContainer);
+    void handoverContextRelease(int ueId);
+
 };
 
 } // namespace nr::gnb

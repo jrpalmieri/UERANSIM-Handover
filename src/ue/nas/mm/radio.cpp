@@ -116,18 +116,59 @@ void NasMm::performPlmnSelection()
 
 void NasMm::handleActiveCellChange(const Tai &prevTai)
 {
-    if (m_cmState == ECmState::CM_CONNECTED)
-    {
-        // TODO
-        m_logger->err("Serving cell change in CM-CONNECTED");
-        return;
-    }
+
+    // CHANGE - This failsafe code isn't true in a handover scenario.  We should check for TAU, 
+    //    even if still in state CM_CONNECTED
+    // if (m_cmState == ECmState::CM_CONNECTED)
+    // {
+    //     // TODO
+    //     m_logger->err("Serving cell change in CM-CONNECTED");
+    //     return;
+    // }
 
     auto currentCell = m_base->shCtx.currentCell.get();
     Tai currentTai = Tai{currentCell.plmn, currentCell.tac};
 
     if (currentCell.hasValue() && !m_storage->equivalentPlmnList->contains(currentCell.plmn))
         m_timers->t3346.stop();
+
+    // For handover (CM_CONNECTED): only trigger state changes if TAI/PLMN
+    // actually requires a registration update.
+    if (m_cmState == ECmState::CM_CONNECTED)
+    {
+        // If TAI changed and the new TAI is not in the registered TAI list,
+        // trigger a mobility registration update (TAU) per TS 24.501 §5.5.1.3.1
+        if (currentCell.hasValue() && prevTai != currentTai)
+        {
+            bool taiInList = nas::utils::TaiListContains(
+                m_storage->taiList->get(),
+                nas::VTrackingAreaIdentity{currentTai});
+
+            if (!taiInList && m_rmState == ERmState::RM_REGISTERED)
+            {
+                               
+                mobilityUpdatingRequired(ERegUpdateCause::ENTER_UNLISTED_TRACKING_AREA);
+
+                if (m_mmSubState == EMmSubState::MM_REGISTERED_NORMAL_SERVICE
+                    || m_mmSubState == EMmSubState::MM_REGISTERED_LIMITED_SERVICE
+                    || m_mmSubState == EMmSubState::MM_REGISTERED_NON_ALLOWED_SERVICE)
+                {
+                    switchMmState(
+                        EMmSubState::MM_REGISTERED_UPDATE_NEEDED);
+                }
+            }
+            else
+            {
+                // New TAI is in the registered list — just update the
+                // last-visited registered TAI, no state change
+                m_storage->lastVisitedRegisteredTai->set(currentTai);
+            }
+        }
+
+        // If no TAI/PLMN change: no state change at all — stay in
+        // current sub-state
+        return;
+    }
 
     if (currentCell.hasValue() && prevTai != currentTai)
     {

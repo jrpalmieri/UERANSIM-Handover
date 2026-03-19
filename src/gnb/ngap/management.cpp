@@ -36,8 +36,13 @@ void NgapTask::createAmfContext(const GnbAmfConfig &conf)
 void NgapTask::createUeContext(int ueId, int32_t &requestedSliceType)
 {
     auto *ctx = new NgapUeContext(ueId);
+
+    // AMF UE NGAP ID is assigned by the AMF, so initialize to -1 to indicate not assigned
     ctx->amfUeNgapId = -1;
-    ctx->ranUeNgapId = ++m_ueNgapIdCounter;
+
+    // RAN UE NGAP ID is assigned by the gNB, so assign a new unique ID
+    ctx->ranUeNgapId = generateRanUeNgapId(ueId);
+    m_logger->debug("UE[%d] NGAP context created: ranUeNgapId=%ld", ueId, ctx->ranUeNgapId);
 
     m_ueCtx[ctx->ctxId] = ctx;
 
@@ -70,6 +75,14 @@ NgapUeContext *NgapTask::findUeByRanId(int64_t ranUeNgapId)
     return nullptr;
 }
 
+/**
+ * @brief Finds the UE's NGAP context in `m_ueCtx` based on the AMF UE NGAP ID.
+ *   This can be used when receiving messages from the AMF that only include the AMF UE NGAP ID,
+ *   such as HandoverRequest.  If no matching UE context is found, returns nullptr.
+ * 
+ * @param amfUeNgapId 
+ * @return NgapUeContext* 
+ */
 NgapUeContext *NgapTask::findUeByAmfId(int64_t amfUeNgapId)
 {
     if (amfUeNgapId <= 0)
@@ -124,7 +137,7 @@ NgapUeContext *NgapTask::findUeByNgapIdPair(int amfCtxId, const NgapIdPair &idPa
     }
 
     if (ue->amfUeNgapId == -1)
-        ue->amfUeNgapId = amfId.value();
+        ue->amfUeNgapId = amfId.value();  // TODO: this seems to be a cheat to handle a missing ngapID
     else if (ue->amfUeNgapId != amfId.value())
     {
         sendErrorIndication(amfCtxId, NgapCause::RadioNetwork_inconsistent_remote_UE_NGAP_ID);
@@ -152,6 +165,29 @@ void NgapTask::deleteAmfContext(int amfId)
         delete amf;
         m_amfCtx.erase(amfId);
     }
+}
+
+/**
+ * @brief Generates the RAN UE NGAP ID for a new UE context. The generation logic is a combination of
+ * the physical cell id (PCI) and the UE Id, so that the generated ID is unique across all UEs and gnbs.
+ *  
+ * @param ueId 
+ * @return int64_t 
+ */
+int64_t NgapTask::generateRanUeNgapId(int ueId) 
+{
+
+    int pci = m_base->config->getCellId() & 0x3FF;
+    if (pci < 0)
+        pci = 0;
+
+    // The RAN UE NGAP ID is constructed as follows:
+    // | 10 bits PCI | 22 bits UeId |
+    // NGAP constrains RAN_UE_NGAP_ID to 0..4294967295 (32 bits), so keep it strictly within 32 bits.
+    uint32_t localUeBits = static_cast<uint32_t>(ueId) & ((1u << 22) - 1u);
+    uint32_t ranUeNgapId = (static_cast<uint32_t>(pci) << 22) | localUeBits;
+    return static_cast<int64_t>(ranUeNgapId);
+
 }
 
 } // namespace nr::gnb

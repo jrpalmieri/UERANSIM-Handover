@@ -10,6 +10,7 @@
 #include "common.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
@@ -248,4 +249,37 @@ Tai::Tai(int mcc, int mnc, bool longMnc, int tac) : plmn{mcc, mnc, longMnc}, tac
 bool Tai::hasValue() const
 {
     return plmn.hasValue();
+}
+
+// WGS-84 ellipsoid constants
+static constexpr double WGS84_A = 6378137.0;            // semi-major axis (m)
+static constexpr double WGS84_F = 1.0 / 298.257223563;  // flattening
+static constexpr double WGS84_E2 =
+    2.0 * WGS84_F - WGS84_F * WGS84_F;  // eccentricity squared
+
+EcefPosition GeoToEcef(const GeoPosition &geo)
+{
+    constexpr double DEG2RAD = M_PI / 180.0;
+    double lat = geo.latitude * DEG2RAD;
+    double lon = geo.longitude * DEG2RAD;
+    double sinLat = std::sin(lat);
+    double cosLat = std::cos(lat);
+    double sinLon = std::sin(lon);
+    double cosLon = std::cos(lon);
+
+    // radius of curvature in the prime vertical
+    double N = WGS84_A / std::sqrt(1.0 - WGS84_E2 * sinLat * sinLat);
+
+    double x = (N + geo.altitude) * cosLat * cosLon;
+    double y = (N + geo.altitude) * cosLat * sinLon;
+    double z = (N * (1.0 - WGS84_E2) + geo.altitude) * sinLat;
+    return {x, y, z};
+}
+
+double EcefDistance(const EcefPosition &a, const EcefPosition &b)
+{
+    double dx = a.x - b.x;
+    double dy = a.y - b.y;
+    double dz = a.z - b.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
 }

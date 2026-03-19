@@ -41,6 +41,13 @@ struct cons
     static constexpr const char DIR_SEPARATOR = '/';
 
     // RF related
-    static constexpr const int MIN_RSRP = -140;
+
+    // Min value for RSRP (equivalent to no signal)
+    static constexpr const int MIN_RSRP = -156;
+    // Max value for RSRP (equivalent to strongest possible signal)
     static constexpr const int MAX_RSRP = -44;
+    // Threshold signal level to trigger radio link failure 
+    //   (this is a tunable parameter that can be adjusted based on testing;
+    //   -120 is a commonly used value in practice)
+    static constexpr const int RLF_RSRP = -120;
 };

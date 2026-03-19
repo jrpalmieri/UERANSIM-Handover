@@ -8,18 +8,48 @@
 
 #include "rls_pdu.hpp"
 
+#include <cstring>
+
 #include <utils/constants.hpp>
 
 namespace rls
 {
 
-static bool UsesCellIdHeader(EMessageType msgType)
+static void AppendDouble(OctetString &stream, double v)
 {
-    return msgType == EMessageType::HEARTBEAT_ACK || msgType == EMessageType::PDU_TRANSMISSION ||
-           msgType == EMessageType::PDU_TRANSMISSION_ACK;
+    uint64_t bits;
+    std::memcpy(&bits, &v, sizeof(bits));
+    stream.appendOctet8(bits);
 }
 
-void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream, bool includeCellId)
+static double ReadDouble(const OctetView &stream)
+{
+    uint64_t bits = stream.read8UL();
+    double v;
+    std::memcpy(&v, &bits, sizeof(v));
+    return v;
+}
+
+static void AppendString(OctetString &stream, const std::string &s)
+{
+    stream.appendOctet4(static_cast<uint32_t>(s.size()));
+    for (char c : s)
+        stream.appendOctet(static_cast<uint8_t>(c));
+}
+
+static std::string ReadString(const OctetView &stream)
+{
+    uint32_t len = stream.read4UI();
+    if (len > 4096)
+        return {};
+    std::string s;
+    s.reserve(len);
+    for (uint32_t i = 0; i < len; i++)
+        s.push_back(static_cast<char>(stream.readI()));
+    return s;
+}
+
+void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream)
 {
     stream.appendOctet(0x03); // (Just for old RLS compatibility)
 
@@ -28,15 +58,15 @@ void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream, bool includeCe
     stream.appendOctet(cons::Patch);
     stream.appendOctet(static_cast<uint8_t>(msg.msgType));
     stream.appendOctet8(msg.sti);
-    if (includeCellId && UsesCellIdHeader(msg.msgType))
-        stream.appendOctet4(msg.cellId);
+    stream.appendOctet4(msg.senderId);
+    stream.appendOctet4(msg.senderId2);
 
     if (msg.msgType == EMessageType::HEARTBEAT)
     {
         auto &m = (const RlsHeartBeat &)msg;
-        stream.appendOctet4(m.simPos.x);
-        stream.appendOctet4(m.simPos.y);
-        stream.appendOctet4(m.simPos.z);
+        AppendDouble(stream, m.simPos.latitude);
+        AppendDouble(stream, m.simPos.longitude);
+        AppendDouble(stream, m.simPos.altitude);
     }
     else if (msg.msgType == EMessageType::HEARTBEAT_ACK)
     {
@@ -59,9 +89,16 @@ void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream, bool includeCe
         for (auto pduId : m.pduIds)
             stream.appendOctet4(pduId);
     }
+    else if (msg.msgType == EMessageType::SATELLITE_POSITION_UPDATE)
+    {
+        auto &m = (const RlsSatellitePositionUpdate &)msg;
+        AppendString(stream, m.tleLine1);
+        AppendString(stream, m.tleLine2);
+        stream.appendOctet8(static_cast<uint64_t>(m.epochMs));
+    }
 }
 
-std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream, bool hasCellId)
+std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream)
 {
     auto first = stream.readI(); // (Just for old RLS compatibility)
     if (first != 3)
@@ -79,23 +116,22 @@ std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream, bool hasCe
     auto msgType = static_cast<EMessageType>(stream.readI());
     // sti: simulation temp identifier (randomly generated)
     uint64_t sti = stream.read8UL();
-    uint32_t cellId = 0;
-    if (hasCellId && UsesCellIdHeader(msgType))
-        cellId = stream.read4UI();
+    uint32_t senderId = stream.read4UI();
+    uint32_t senderId2 = stream.read4UI();
 
     // heartbeat messages contain the simulated position of the UE 
     if (msgType == EMessageType::HEARTBEAT)
     {
-        auto res = std::make_unique<RlsHeartBeat>(sti, cellId);
-        res->simPos.x = stream.read4I();
-        res->simPos.y = stream.read4I();
-        res->simPos.z = stream.read4I();
+        auto res = std::make_unique<RlsHeartBeat>(sti, senderId, senderId2);
+        res->simPos.latitude = ReadDouble(stream);
+        res->simPos.longitude = ReadDouble(stream);
+        res->simPos.altitude = ReadDouble(stream);
         return res;
     }
     // heartbeat ack messages contain the signal strength in dBm
     else if (msgType == EMessageType::HEARTBEAT_ACK)
     {
-        auto res = std::make_unique<RlsHeartBeatAck>(sti, cellId);
+        auto res = std::make_unique<RlsHeartBeatAck>(sti, senderId, senderId2);
         res->dbm = stream.read4I();
         return res;
     }
@@ -106,7 +142,7 @@ std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream, bool hasCe
     //  8: RRC Release, 9: RRC Release Complete
     else if (msgType == EMessageType::PDU_TRANSMISSION)
     {
-        auto res = std::make_unique<RlsPduTransmission>(sti, cellId);
+        auto res = std::make_unique<RlsPduTransmission>(sti, senderId, senderId2);
         res->pduType = static_cast<EPduType>((uint8_t)stream.read());
         res->pduId = stream.read4UI();
         res->payload = stream.read4UI();
@@ -121,22 +157,30 @@ std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream, bool hasCe
     // pdu transmission ack messages contain a vector of acknowledged pdu ids
     else if (msgType == EMessageType::PDU_TRANSMISSION_ACK)
     {
-        auto res = std::make_unique<RlsPduTransmissionAck>(sti, cellId);
+        auto res = std::make_unique<RlsPduTransmissionAck>(sti, senderId, senderId2);
         auto count = stream.read4UI();
         res->pduIds.reserve(count);
         for (uint32_t i = 0; i < count; i++)
             res->pduIds.push_back(stream.read4UI());
         return res;
     }
-    // gNB RF data messages contain the PCI, IP address, RSRP, RSRQ and SINR measurements for a cell
+    // gNB RF data messages contain the RSRP measurement (dB) for a cell
     else if (msgType == EMessageType::GNB_RF_DATA)
     {
-        auto res = std::make_unique<RlsGnbRfData>(sti, cellId);
-        res->pci = stream.read4I();
-        res->ip = stream.readOctetString(16); // assuming IP address is 16 bytes
+        auto res = std::make_unique<RlsGnbRfData>(sti, senderId, senderId2);
         res->rsrp = stream.read4I();
-        res->rsrq = stream.read4I();
-        res->sinr = stream.read4I();
+        return res;
+    }
+    // satellite position update messages contain the TLE lines and epoch time of the TLE observation
+    else if (msgType == EMessageType::SATELLITE_POSITION_UPDATE)
+    {
+        auto res =
+            std::make_unique<RlsSatellitePositionUpdate>(
+                sti, senderId, senderId2);
+        res->tleLine1 = ReadString(stream);
+        res->tleLine2 = ReadString(stream);
+        res->epochMs =
+            static_cast<int64_t>(stream.read8UL());
         return res;
     }
 

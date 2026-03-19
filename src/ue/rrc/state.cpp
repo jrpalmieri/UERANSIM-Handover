@@ -40,7 +40,7 @@ void UeRrcTask::performCycle()
     {
         // if the handover measurement framework is disabled, no need to run the measurement evaluations,
         //   so skip
-        if (!m_base->config->useHandoverMeasFramework) return;
+        //if (!m_base->config->useHandoverMeasFramework) return;
 
         evaluateMeasurements();
         

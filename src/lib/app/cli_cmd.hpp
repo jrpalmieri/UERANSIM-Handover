@@ -23,6 +23,7 @@ struct GnbCliCommand
     enum PR
     {
         STATUS,
+        UI_STATUS,
         INFO,
         AMF_LIST,
         AMF_INFO,
@@ -49,6 +50,7 @@ struct UeCliCommand
     {
         INFO,
         STATUS,
+        UI_STATUS,
         TIMERS,
         PS_ESTABLISH,
         PS_RELEASE,

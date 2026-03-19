@@ -100,7 +100,9 @@ class TestRlsEncoding:
     def test_malformed_data_returns_none(self):
         assert decode_rls_message(b"") is None
         assert decode_rls_message(b"\x00\x01\x02") is None
-        assert decode_rls_message(b"\x03\x03\x02\x02\xFF" + b"\x00" * 8) is None
+        # valid marker but wrong version, plus STI + senderId
+        assert decode_rls_message(
+            b"\x03\x03\x02\x02\xFF" + b"\x00" * 12) is None
 
     def test_empty_pdu_transmission(self):
         sti = 12345
@@ -122,7 +124,7 @@ class TestRlsChannelHelpers:
 
     def test_is_ul_ccch(self):
         msg = RlsPduTransmission(
-            sti=0, pdu_type=EPduType.RRC,
+            sti=0, sender_id=0, pdu_type=EPduType.RRC,
             pdu_id=1, payload=int(RrcChannel.UL_CCCH), pdu=b""
         )
         assert is_ul_ccch(msg) is True
@@ -130,7 +132,7 @@ class TestRlsChannelHelpers:
 
     def test_is_ul_dcch(self):
         msg = RlsPduTransmission(
-            sti=0, pdu_type=EPduType.RRC,
+            sti=0, sender_id=0, pdu_type=EPduType.RRC,
             pdu_id=1, payload=int(RrcChannel.UL_DCCH), pdu=b""
         )
         assert is_ul_dcch(msg) is True
@@ -138,7 +140,7 @@ class TestRlsChannelHelpers:
 
     def test_data_pdu_not_rrc(self):
         msg = RlsPduTransmission(
-            sti=0, pdu_type=EPduType.DATA,
+            sti=0, sender_id=0, pdu_type=EPduType.DATA,
             pdu_id=1, payload=0, pdu=b""
         )
         assert is_ul_ccch(msg) is False

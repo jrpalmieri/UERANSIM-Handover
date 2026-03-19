@@ -24,6 +24,24 @@ UeRlsTask::UeRlsTask(TaskBase *base) : m_base{base}
     m_shCtx = new RlsSharedContext();
     m_shCtx->sti = Random::Mixed(base->config->getNodeName()).nextL();
 
+    // Derive senderId from the low-order 4 bytes of the IMEI
+    if (base->config->imei.has_value())
+    {
+        const auto &imei = base->config->imei.value();
+        // IMEI is a 15-digit decimal string; parse the last 8 digits
+        // and truncate to uint32
+        std::string tail = imei.length() > 8
+            ? imei.substr(imei.length() - 8) : imei;
+        m_shCtx->senderId = static_cast<uint32_t>(
+            std::stoul(tail));
+    }
+    else
+    {
+        m_shCtx->senderId = 0;
+    }
+
+    m_shCtx->cRnti = 0;
+
     m_udpTask = new RlsUdpTask(base, m_shCtx, base->config->gnbSearchList);
     m_ctlTask = new RlsControlTask(base, m_shCtx);
 
@@ -141,8 +159,17 @@ void UeRlsTask::onQuit()
 
     delete m_udpTask;
     delete m_ctlTask;
-
     delete m_shCtx;
+}
+
+void UeRlsTask::setCurrentCrnti(uint32_t cRnti)
+{
+    m_shCtx->cRnti = cRnti;
+}
+
+uint32_t UeRlsTask::getCurrentCrnti() const
+{
+    return m_shCtx->cRnti.load();
 }
 
 } // namespace nr::ue

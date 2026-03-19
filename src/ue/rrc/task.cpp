@@ -20,7 +20,7 @@
 #include <utils/common.hpp>
 
 static constexpr const int TIMER_ID_MACHINE_CYCLE = 1;
-static constexpr const int TIMER_PERIOD_MACHINE_CYCLE = 2500;
+static constexpr const int TIMER_PERIOD_MACHINE_CYCLE = 500;
 static constexpr const int TIMER_ID_T304 = 2;
 
 namespace nr::ue

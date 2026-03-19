@@ -55,29 +55,8 @@ int UeRrcTask::findCellByPci(int physCellId)
         }
     }
 
-    // Strategy 3: strongest non-serving detected cell
-    //   (UERANSIM does not store PCI per cell, so we fall back to the
-    //    best-signal neighbour – the one that likely triggered A3/A5.)
-    int bestCellId = 0;
-    int bestDbm = -200;
-    for (auto &[id, desc] : m_cellDesc)
-    {
-        if (id == currentCellId)
-            continue;
-        if (desc.dbm > bestDbm)
-        {
-            bestDbm = desc.dbm;
-            bestCellId = id;
-        }
-    }
-
-    if (bestCellId != 0)
-    {
-        m_logger->info("Handover: PCI %d resolved to best neighbour cell[%d] (dbm=%d)",
-                       physCellId, bestCellId, bestDbm);
-    }
-
-    return bestCellId;
+    m_logger->err("Handover: PCI %d could not be resolved to any detected cell", physCellId);
+    return 0;
 }
 
 /* ================================================================== */
@@ -120,7 +99,7 @@ void UeRrcTask::refreshSecurityKeys()
  * 
  * @param txId transaction identifier for the RRCReconfiguration message that triggered the handover
  * @param targetPhysCellId the PCI of the target cell as indicated in the RRCReconfiguration message
- * @param newCRNTI the new C-RNTI to be assigned to the UE by the target cell, (not used, but passed in the RRCReconfig msg)
+ * @param newCRNTI the new C-RNTI to be assigned to the UE by the target cell
  * @param t304Ms the duration of the T304 timer (which guards for handover failures)
  * @param hasRachConfig the RACH config information (not used, but passed in the RRCReconfig msg)
 */
@@ -129,6 +108,9 @@ void UeRrcTask::performHandover(long txId, int targetPhysCellId, int newCRNTI,
 {
     m_logger->info("Handover - received RRCReconfig: targetPCI=%d newC-RNTI=%d t304=%dms",
                    targetPhysCellId, newCRNTI, t304Ms);
+
+    if (m_base->rlsTask)
+        m_base->rlsTask->setCurrentCrnti(static_cast<uint32_t>(newCRNTI));
 
     if (m_state != ERrcState::RRC_CONNECTED)
     {
@@ -217,6 +199,12 @@ void UeRrcTask::performHandover(long txId, int targetPhysCellId, int newCRNTI,
         sendRrcMessage(pdu); // routed via the newly-assigned serving cell
         asn::Free(asn_DEF_ASN_RRC_UL_DCCH_Message, pdu);
     }
+
+    // In this simulated environment, source and target cells share the same
+    // measurement model. Keep existing MeasConfig so A3/A5 can re-trigger for
+    // subsequent handovers. Per-measId trigger state is reset in
+    // resumeMeasurements().
+    m_logger->debug("Handover - Existing measurement configuration preserved");
 
     // ---- 9. Handover complete – stop supervision ----
     m_handoverInProgress = false;

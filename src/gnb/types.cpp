@@ -14,6 +14,32 @@
 namespace nr::gnb
 {
 
+static std::string ToString(EGnbRsrpMode mode)
+{
+    switch (mode)
+    {
+    case EGnbRsrpMode::Calculated:
+        return "Calculated";
+    case EGnbRsrpMode::Fixed:
+        return "Fixed";
+    default:
+        return "?";
+    }
+}
+
+static std::string ToString(EHandoverInterface intf)
+{
+    switch (intf)
+    {
+    case EHandoverInterface::N2:
+        return "N2";
+    case EHandoverInterface::Xn:
+        return "Xn";
+    default:
+        return "?";
+    }
+}
+
 Json ToJson(const GnbStatusInfo &v)
 {
     return Json::Obj({{"is-ngap-up", v.isNgapUp}});
@@ -21,6 +47,33 @@ Json ToJson(const GnbStatusInfo &v)
 
 Json ToJson(const GnbConfig &v)
 {
+    auto handoverEvents = Json::Arr({});
+    for (const auto &eventType : v.handover.eventTypes)
+        handoverEvents.push(eventType);
+
+    auto neighborEntries = Json::Arr({});
+    for (const auto &neighbor : v.neighborList)
+    {
+        Json neighborEntry = Json::Obj({
+            {"nci", neighbor.nci},
+            {"nr-cell-identity", static_cast<int64_t>(neighbor.getNrCellIdentity())},
+            {"id-length", neighbor.idLength},
+            {"gnb-id", static_cast<int64_t>(neighbor.getGnbId())},
+            {"cell-id", neighbor.getCellId()},
+            {"tac", neighbor.tac},
+            {"ip-address", neighbor.ipAddress},
+            {"handover-interface", ToString(neighbor.handoverInterface)},
+            {"pci", neighbor.getPci()},
+        });
+
+        if (neighbor.xnAddress)
+            neighborEntry.put("xn-address", *neighbor.xnAddress);
+        if (neighbor.xnPort)
+            neighborEntry.put("xn-port", static_cast<int>(*neighbor.xnPort));
+
+        neighborEntries.push(std::move(neighborEntry));
+    }
+
     return Json::Obj({
         {"name", v.name},
         {"nci", v.nci},
@@ -31,6 +84,27 @@ Json ToJson(const GnbConfig &v)
         {"gtp-ip", v.gtpIp},
         {"paging-drx", ToJson(v.pagingDrx)},
         {"ignore-sctp-id", v.ignoreStreamIds},
+        {"rsrp", Json::Obj({
+            {"db-value", v.rsrp.dbValue},
+            {"update-mode", ToString(v.rsrp.updateMode)},
+        })},
+        {"handover", Json::Obj({
+            {"event-type", std::move(handoverEvents)},
+            {"a2-threshold-dbm", v.handover.a2ThresholdDbm},
+            {"a3-offset-db", v.handover.a3OffsetDb},
+            {"a5-threshold1-dbm", v.handover.a5Threshold1Dbm},
+            {"a5-threshold2-dbm", v.handover.a5Threshold2Dbm},
+            {"hysteresis-db", v.handover.hysteresisDb},
+            {"xn", Json::Obj({
+                {"enabled", v.handover.xn.enabled},
+                {"bind-address", v.handover.xn.bindAddress},
+                {"bind-port", static_cast<int>(v.handover.xn.bindPort)},
+                {"request-timeout-ms", v.handover.xn.requestTimeoutMs},
+                {"context-ttl-ms", v.handover.xn.contextTtlMs},
+                {"fallback-to-n2", v.handover.xn.fallbackToN2},
+            })},
+        })},
+        {"neighbor-list", std::move(neighborEntries)},
     });
 }
 

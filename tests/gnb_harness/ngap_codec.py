@@ -49,6 +49,7 @@ CRIT_NOTIFY = 0x80
 # -- Procedure codes (TS 38.413 §9.4) ---------------------------------
 PROC_HANDOVER_PREPARATION    = 12
 PROC_HANDOVER_CANCEL         = 10
+PROC_ERROR_INDICATION        = 9
 PROC_DOWNLINK_NAS_TRANSPORT  = 4
 PROC_HANDOVER_NOTIFICATION   = 11
 PROC_INITIAL_CONTEXT_SETUP   = 14
@@ -478,6 +479,34 @@ def build_handover_command(
     ]
     return encode_ngap_pdu(NgapPdu(
         pdu_type=PDU_SUCCESSFUL_OUTCOME,
+        procedure_code=PROC_HANDOVER_PREPARATION,
+        criticality=CRIT_REJECT,
+        ies=ies,
+    ))
+
+
+def build_handover_request(
+    amf_ue_ngap_id: int,
+    handover_type: int = 0,  # 0 = intra5gs
+    source_to_target_container: bytes = b"\x00",
+) -> bytes:
+    """Build a HandoverRequest (initiatingMessage of HandoverPreparation).
+
+    This minimal variant intentionally omits the
+    PDUSessionResourceSetupListHOReq IE so target gNB can exercise the
+    HandoverFailure path.
+    """
+    # HandoverType: ENUMERATED {intra5gs, ...} — single byte
+    ho_type_enc = bytes([handover_type << 5])
+
+    ies = [
+        NgapIE(IE_AMF_UE_NGAP_ID, CRIT_REJECT, _encode_aper_integer40(amf_ue_ngap_id)),
+        NgapIE(IE_HANDOVER_TYPE, CRIT_REJECT, ho_type_enc),
+        NgapIE(IE_SOURCE_TO_TARGET_CONTAINER, CRIT_REJECT,
+               _encode_octet_string(source_to_target_container)),
+    ]
+    return encode_ngap_pdu(NgapPdu(
+        pdu_type=PDU_INITIATING_MESSAGE,
         procedure_code=PROC_HANDOVER_PREPARATION,
         criticality=CRIT_REJECT,
         ies=ies,

@@ -11,8 +11,10 @@
 #include "gtp/task.hpp"
 #include "ngap/task.hpp"
 #include "rls/task.hpp"
+#include "rls/satellite_state.hpp"
 #include "rrc/task.hpp"
 #include "sctp/task.hpp"
+#include "xn/task.hpp"
 
 #include <lib/app/cli_base.hpp>
 #include <utils/constants.hpp>
@@ -28,12 +30,16 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     base->nodeListener = nodeListener;
     base->cliCallbackTask = cliCallbackTask;
 
+    if (config->satSim)
+        base->satState = new SatelliteState();
+
     base->appTask = new GnbAppTask(base);
     base->sctpTask = new SctpTask(base);
     base->ngapTask = new NgapTask(base);
     base->rrcTask = new GnbRrcTask(base);
     base->gtpTask = new GtpTask(base);
     base->rlsTask = new GnbRlsTask(base);
+    base->xnTask = new XnTask(base);
 
     taskBase = base;
 }
@@ -46,6 +52,8 @@ GNodeB::~GNodeB()
     taskBase->rrcTask->quit();
     taskBase->gtpTask->quit();
     taskBase->rlsTask->quit();
+    if (taskBase->config->handover.xn.enabled)
+        taskBase->xnTask->quit();
 
     delete taskBase->appTask;
     delete taskBase->sctpTask;
@@ -53,6 +61,9 @@ GNodeB::~GNodeB()
     delete taskBase->rrcTask;
     delete taskBase->gtpTask;
     delete taskBase->rlsTask;
+    delete taskBase->xnTask;
+
+    delete taskBase->satState;
 
     delete taskBase->logBase;
 
@@ -70,6 +81,9 @@ void GNodeB::start()
     taskBase->rrcTask->start();
     taskBase->rlsTask->start();
     taskBase->gtpTask->start();
+
+    if (taskBase->config->handover.xn.enabled)
+        taskBase->xnTask->start();
 }
 
 void GNodeB::pushCommand(std::unique_ptr<app::GnbCliCommand> cmd, const InetAddress &address)

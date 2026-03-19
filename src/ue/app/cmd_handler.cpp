@@ -18,6 +18,8 @@
 #include <utils/constants.hpp>
 #include <utils/printer.hpp>
 
+#include <shared_mutex>
+
 #define PAUSE_CONFIRM_TIMEOUT 3000
 #define PAUSE_POLLING 10
 
@@ -134,6 +136,34 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
             {"stored-guti", ToJson(m_base->nasTask->mm->m_storage->storedGuti->get())},
             {"has-emergency", ::ToJson(m_base->nasTask->mm->hasEmergency())},
         });
+        sendResult(msg.address, json.dumpYaml());
+        break;
+    }
+    case app::UeCliCommand::UI_STATUS: {
+        std::optional<int> currentCellId = std::nullopt;
+        auto currentCell = m_base->shCtx.currentCell.get();
+        if (currentCell.hasValue())
+            currentCellId = currentCell.cellId;
+
+        std::string connectedPci = "NONE";
+        std::string connectedDbm = "NONE";
+        if (currentCellId.has_value())
+        {
+            connectedPci = std::to_string(*currentCellId);
+
+            std::shared_lock lock(m_base->cellDbMeasMutex);
+            auto it = m_base->cellDbMeas.find(*currentCellId);
+            if (it != m_base->cellDbMeas.end())
+                connectedDbm = std::to_string(it->second);
+        }
+
+        Json json = Json::Obj({
+            {"rrc-state", ToJson(m_base->rrcTask->m_state)},
+            {"nas-state", ToJson(m_base->nasTask->mm->m_mmSubState)},
+            {"connected-pci", connectedPci},
+            {"connected-dbm", connectedDbm},
+        });
+
         sendResult(msg.address, json.dumpYaml());
         break;
     }

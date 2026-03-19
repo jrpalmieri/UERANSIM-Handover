@@ -175,3 +175,38 @@ class TestPathSwitch:
         # Check that PathSwitchRequest is sent
         ps = fake_amf.wait_for_path_switch_request(timeout_s=10)
         assert ps is not None, "AMF did not receive PathSwitchRequest"
+
+
+# =====================================================================
+#  Target-side HandoverRequest handling
+# =====================================================================
+
+@gnb_binary_exists
+@needs_pysctp
+class TestTargetHandoverRequest:
+    """Verify target-side AMF-originated HandoverRequest handling."""
+
+    def test_handover_request_without_session_list_returns_failure_or_error(
+        self,
+        fake_amf: FakeAmf,
+        started_gnb: GnbProcess,
+    ):
+        """A minimal HandoverRequest lacking HO session list should be rejected.
+
+        The target gNB should answer with HandoverFailure (unsuccessfulOutcome)
+        for procedure HandoverPreparation.
+        """
+        fake_amf.send_handover_request(amf_ue_ngap_id=9001)
+
+        failure = fake_amf.wait_for_handover_failure(timeout_s=10)
+        if failure is not None:
+            assert failure.pdu is not None
+            assert failure.pdu.is_unsuccessful
+            assert failure.procedure_code == ngap.PROC_HANDOVER_PREPARATION
+            return
+
+        # Minimal handcrafted HandoverRequest encoding in test harness may be
+        # rejected earlier by ASN validation on some builds, in which case
+        # gNB responds with ErrorIndication instead of HandoverFailure.
+        err = fake_amf.wait_for_error_indication(timeout_s=3)
+        assert err is not None, "AMF did not receive HandoverFailure or ErrorIndication"

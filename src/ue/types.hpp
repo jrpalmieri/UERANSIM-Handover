@@ -296,6 +296,8 @@ struct UeSharedContext
 struct RlsSharedContext
 {
     std::atomic<uint64_t> sti{};
+    uint32_t senderId{};
+    std::atomic<uint32_t> cRnti{};
 };
 
 struct TaskBase

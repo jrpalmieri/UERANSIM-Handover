@@ -20,8 +20,10 @@
 namespace nr::gnb
 {
 
-void GnbRrcTask::handleUplinkRrc(int ueId, rrc::RrcChannel channel, const OctetString &rrcPdu)
+
+void GnbRrcTask::handleUplinkRrc(int ueId, int cRnti, rrc::RrcChannel channel, const OctetString &rrcPdu)
 {
+
     switch (channel)
     {
     case rrc::RrcChannel::BCCH_BCH: {
@@ -65,10 +67,13 @@ void GnbRrcTask::handleUplinkRrc(int ueId, rrc::RrcChannel channel, const OctetS
     case rrc::RrcChannel::DL_CCCH:
     case rrc::RrcChannel::DL_DCCH:
     case rrc::RrcChannel::DL_CHO:
+    case rrc::RrcChannel::DL_SIB19:
         break;
     }
+
 }
 
+// MIB Message
 void GnbRrcTask::sendRrcMessage(ASN_RRC_BCCH_BCH_Message *msg)
 {
     OctetString pdu = rrc::encode::EncodeS(asn_DEF_ASN_RRC_BCCH_BCH_Message, msg);
@@ -85,6 +90,7 @@ void GnbRrcTask::sendRrcMessage(ASN_RRC_BCCH_BCH_Message *msg)
     m_base->rlsTask->push(std::move(w));
 }
 
+// SIB1 Message
 void GnbRrcTask::sendRrcMessage(ASN_RRC_BCCH_DL_SCH_Message *msg)
 {
     OctetString pdu = rrc::encode::EncodeS(asn_DEF_ASN_RRC_BCCH_DL_SCH_Message, msg);
@@ -149,11 +155,18 @@ void GnbRrcTask::sendRrcMessage(ASN_RRC_PCCH_Message *msg)
     m_base->rlsTask->push(std::move(w));
 }
 
+/************************************************************************
+ * These receiveRrcMessage methods route received RRC messages
+ * based on their ASN.1 type to the appropriate handler functions.
+ **************************************************************************/
+
+
 void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_BCCH_BCH_Message *msg)
 {
     // TODO
 }
 
+// Handles RRCSetupRequest
 void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH_Message *msg)
 {
     if (msg->message.present != ASN_RRC_UL_CCCH_MessageType_PR_c1)
@@ -165,6 +178,7 @@ void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH_Message *msg)
     case ASN_RRC_UL_CCCH_MessageType__c1_PR_NOTHING:
         return;
     case ASN_RRC_UL_CCCH_MessageType__c1_PR_rrcSetupRequest:
+    // Received from UE in RRC idle mode to request RRC connection setup. First message of the RRC connection establishment procedure.
         receiveRrcSetupRequest(ueId, *c1->choice.rrcSetupRequest);
         break;
     case ASN_RRC_UL_CCCH_MessageType__c1_PR_rrcResumeRequest:
@@ -181,6 +195,7 @@ void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH1_Message *msg)
     // TODO
 }
 
+// Handles RRCReconfigurationComplete, MeasurementReport, and ULInformationTransfer
 void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_DCCH_Message *msg)
 {
     if (msg->message.present != ASN_RRC_UL_DCCH_MessageType_PR_c1)
@@ -194,9 +209,11 @@ void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_DCCH_Message *msg)
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_measurementReport:
         receiveMeasurementReport(ueId, *c1->choice.measurementReport);
         break;
+    // Received from UE after RRC Reconfiguration, e.g. handover command or meas config, to indicate completion of the reconfiguration.
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_rrcReconfigurationComplete:
         receiveRrcReconfigurationComplete(ueId, *c1->choice.rrcReconfigurationComplete);
         break;
+    // Received from UE after RRC Setup, to indicate completion of the setup and move the UE to connected mode.
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_rrcSetupComplete:
         receiveRrcSetupComplete(ueId, *c1->choice.rrcSetupComplete);
         break;

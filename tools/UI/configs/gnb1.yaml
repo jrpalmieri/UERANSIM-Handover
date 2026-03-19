@@ -1,0 +1,66 @@
+mcc: '001'          # Mobile Country Code value
+mnc: '01'           # Mobile Network Code value (2 or 3 digits)
+
+nci: '0x000000011'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
+idLength: 32        # portion of NCI that is used for the gNB ID, in bits [22...32]
+                    # Note: The remaining low order bits of NCI (36-idLength) are used for the Cell ID.
+tac: 1              # Tracking Area Code
+
+linkIp: 127.0.0.2   # gNB's local IP address for Radio Link Simulation (must match UE gnbSearchList)
+ngapIp: 172.22.0.201   # gNB's local IP address for N2 Interface (Usually same with local IP)
+gtpIp: 172.22.0.201    # gNB's local IP address for N3 Interface (Usually same with local IP)
+
+# List of AMF address information
+amfConfigs:
+  - address: 172.22.0.10
+    port: 38412
+
+# List of supported S-NSSAIs by this gNB
+slices:
+  - sst: 1
+    #sd: 1
+
+# Indicates whether or not SCTP stream number errors should be ignored.
+ignoreStreamIds: true
+
+# RSRP configuration:
+#   dbValue: initial RSRP value (dBm) used in Fixed mode and as the starting fixed value
+#   updateMode: Calculated (distance/path-loss based) or Fixed (ignore distance)
+rsrp:
+  dbValue: -60
+  updateMode: Fixed
+
+# Neighbor cells for handover
+neighborList:
+  - nci: '0x000000022'
+    idLength: 32
+    tac: 1
+    ipAddress: 127.0.0.3
+    handoverInterface: N2
+  # - nci: '0x000000030'
+  #   idLength: 32
+  #   tac: 1
+  #   ipAddress: 127.0.0.3
+  #   handoverInterface: N2
+
+# gNB geographic position (lat/lon/alt, WGS-84)
+# Used as the static terrestrial position or as fallback
+# when no TLE has been received in satellite mode
+position:
+  latitude: 33.7490     # degrees North
+  longitude: -84.3880   # degrees East
+#  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
+  altitude: 800.0      # meters above ellipsoid (typical for terrestrial gNB)
+
+
+
+# Satellite simulation: set to true to enable NTN satellite mode
+satSim: false
+
+# Satellite link budget parameters (used when satSim is true)
+satLink:
+  frequencyHz: 10.7e9   # Ku-band carrier frequency (Hz)
+  txPowerDbW: 43.0       # Radiated (transmit) power (dBW)
+  txGainDbi: 35.0        # Transmit antenna gain (dBi)
+  rxGainDbi: 25.0        # Receive antenna gain (dBi)
+

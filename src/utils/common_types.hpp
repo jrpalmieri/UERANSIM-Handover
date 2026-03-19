@@ -185,6 +185,42 @@ struct Vector3
     }
 };
 
+/// Geographic position in latitude, longitude, altitude
+struct GeoPosition
+{
+    double latitude{};   // degrees, WGS-84
+    double longitude{};  // degrees, WGS-84
+    double altitude{};   // meters above ellipsoid
+
+    GeoPosition() = default;
+
+    GeoPosition(double lat, double lon, double alt)
+        : latitude(lat), longitude(lon), altitude(alt)
+    {
+    }
+};
+
+/// Earth-Centered Earth-Fixed position in meters
+struct EcefPosition
+{
+    double x{};
+    double y{};
+    double z{};
+
+    EcefPosition() = default;
+
+    EcefPosition(double x, double y, double z)
+        : x(x), y(y), z(z)
+    {
+    }
+};
+
+/// Convert geodetic lat/lon/alt (WGS-84) to ECEF (meters)
+EcefPosition GeoToEcef(const GeoPosition &geo);
+
+/// Compute Euclidean distance (meters) between two ECEF points
+double EcefDistance(const EcefPosition &a, const EcefPosition &b);
+
 struct UacAiBarringSet
 {
     bool ai1 = false;

@@ -34,6 +34,7 @@ extern "C"
     struct ASN_NGAP_OverloadStop;
     struct ASN_NGAP_PDUSessionResourceReleaseCommand;
     struct ASN_NGAP_Paging;
+    struct ASN_NGAP_HandoverRequest;
     struct ASN_NGAP_HandoverCommand;
     struct ASN_NGAP_HandoverPreparationFailure;
     struct ASN_NGAP_PathSwitchRequestAcknowledge;
@@ -56,6 +57,10 @@ class NgapTask : public NtsTask
 
     std::unordered_map<int, NgapAmfContext *> m_amfCtx;
     std::unordered_map<int, NgapUeContext *> m_ueCtx;
+
+    // Handover context tracker, indexed by ueId
+    std::unordered_map<int, NGAPHandoverPending *> m_handoverPending;
+
     int64_t m_ueNgapIdCounter;
     uint32_t m_downlinkTeidCounter;
     bool m_isInitialized;
@@ -72,7 +77,9 @@ class NgapTask : public NtsTask
     void onQuit() override;
 
   private:
-    /* Utility functions */
+
+    /* Utility functions - utils.cpp */
+  
     void createAmfContext(const GnbAmfConfig &config);
     NgapAmfContext *findAmfContext(int ctxId);
     void createUeContext(int ueId, int32_t &requestedSliceType);
@@ -82,6 +89,7 @@ class NgapTask : public NtsTask
     NgapUeContext *findUeByNgapIdPair(int amfCtxId, const NgapIdPair &idPair);
     void deleteUeContext(int ueId);
     void deleteAmfContext(int amfId);
+    int64_t generateRanUeNgapId(int ueId);
 
     /* Interface management */
     void handleAssociationSetup(int amfId, int ascId, int inCount, int outCount);
@@ -116,12 +124,14 @@ class NgapTask : public NtsTask
     std::optional<NgapCause> setupPduSessionResource(NgapUeContext *ue, PduSessionResource *resource);
 
     /* UE context management */
+
     void receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetupRequest *msg);
     void receiveContextRelease(int amfId, ASN_NGAP_UEContextReleaseCommand *msg);
     void receiveContextModification(int amfId, ASN_NGAP_UEContextModificationRequest *msg);
     void sendContextRelease(int ueId, NgapCause cause);
 
-    /* NAS Node Selection */
+    /* NAS Node Selection - nnsf.cpp */
+    
     NgapAmfContext *selectAmf(int ueId, int32_t &requestedSliceType);
     NgapAmfContext *selectNewAmfForReAllocation(int ueId, int initiatedAmfId, int amfSetId);
 
@@ -130,7 +140,9 @@ class NgapTask : public NtsTask
     void receivePaging(int amfId, ASN_NGAP_Paging *msg);
 
     /* Handover (N2-based, AMF-mediated) */
+
     void sendHandoverRequired(int ueId, int targetPci, NgapCause cause);
+    void receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg);
     void receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg);
     void receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPreparationFailure *msg);
     void sendHandoverNotify(int ueId);

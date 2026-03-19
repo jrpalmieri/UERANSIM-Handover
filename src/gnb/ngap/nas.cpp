@@ -79,15 +79,18 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
 
     if (m_ueCtx.count(ueId))
     {
-        m_logger->err("UE context[%d] already exists", ueId);
-        return;
+        m_logger->err("UE context[%d] already exists.  Overwriting.", ueId);
+        //return;
     }
 
     createUeContext(ueId, requestedSliceType);
 
+    // sanity check on ctx creation
     auto *ueCtx = findUeContext(ueId);
     if (ueCtx == nullptr)
         return;
+
+    // sanity check on AMF assignment (happens during ctx creation)
     auto *amfCtx = findAmfContext(ueCtx->associatedAmfId);
     if (amfCtx == nullptr)
         return;
@@ -98,6 +101,7 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
         return;
     }
 
+    // assign SCTP stream index for UE uplink
     amfCtx->nextStream = (amfCtx->nextStream + 1) % amfCtx->association.outStreams;
     if ((amfCtx->nextStream == 0) && (amfCtx->association.outStreams > 1))
         amfCtx->nextStream += 1;
@@ -139,6 +143,9 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
         ies.push_back(ieTmsi);
     }
 
+    ueCtx->connectionState = UE_NGAP_CONNECTION_STATE::NGAP_CONNECTION_PENDING;
+    
+    // send message to AMF - INITIAL_UE msg
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_InitialUEMessage>(ies);
     sendNgapUeAssociated(ueId, pdu);
 }

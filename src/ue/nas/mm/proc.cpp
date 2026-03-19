@@ -64,6 +64,7 @@ void NasMm::mobilityUpdatingRequired(ERegUpdateCause cause)
     if (m_mmState == EMmState::MM_NULL)
         return;
 
+    // this just checks that we aren't triggering the same cause multiple times
     if (m_procCtl.mobilityRegistration == cause)
         return;
 

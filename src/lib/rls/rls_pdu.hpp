@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 #include <utils/common_types.hpp>
 #include <utils/octet_string.hpp>
@@ -30,8 +31,10 @@ enum class EMessageType : uint8_t
     HEARTBEAT_ACK = 5,
     PDU_TRANSMISSION = 6,
     PDU_TRANSMISSION_ACK = 7,
-    GNB_RF_DATA = 21,   // added for advanced measurement framework with external measurement sources; 
+    GNB_RF_DATA = 21,   // added for advanced measurement framework
+                        //   with external measurement sources;
                         //   not used in legacy RLS-simulated measurements
+    SATELLITE_POSITION_UPDATE = 22,  // TLE-based satellite position
 };
 
 enum class EPduType : uint8_t
@@ -45,19 +48,21 @@ struct RlsMessage
 {
     const EMessageType msgType;
     const uint64_t sti{};
-    const uint32_t cellId{};
+    const uint32_t senderId{};
+    const uint32_t senderId2{};
 
-    explicit RlsMessage(EMessageType msgType, uint64_t sti, uint32_t cellId = 0)
-        : msgType(msgType), sti(sti), cellId(cellId)
+    explicit RlsMessage(EMessageType msgType, uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
+        : msgType(msgType), sti(sti), senderId(senderId), senderId2(senderId2)
     {
     }
 };
 
 struct RlsHeartBeat : RlsMessage
 {
-    Vector3 simPos;
+    GeoPosition simPos;
 
-    explicit RlsHeartBeat(uint64_t sti, uint32_t cellId = 0) : RlsMessage(EMessageType::HEARTBEAT, sti, cellId)
+    explicit RlsHeartBeat(uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
+        : RlsMessage(EMessageType::HEARTBEAT, sti, senderId, senderId2)
     {
     }
 };
@@ -66,7 +71,8 @@ struct RlsHeartBeatAck : RlsMessage
 {
     int dbm{};
 
-    explicit RlsHeartBeatAck(uint64_t sti, uint32_t cellId = 0) : RlsMessage(EMessageType::HEARTBEAT_ACK, sti, cellId)
+    explicit RlsHeartBeatAck(uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
+        : RlsMessage(EMessageType::HEARTBEAT_ACK, sti, senderId, senderId2)
     {
     }
 };
@@ -78,8 +84,8 @@ struct RlsPduTransmission : RlsMessage
     uint32_t payload{};
     OctetString pdu{};
 
-    explicit RlsPduTransmission(uint64_t sti, uint32_t cellId = 0)
-        : RlsMessage(EMessageType::PDU_TRANSMISSION, sti, cellId)
+    explicit RlsPduTransmission(uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
+        : RlsMessage(EMessageType::PDU_TRANSMISSION, sti, senderId, senderId2)
     {
     }
 };
@@ -88,26 +94,39 @@ struct RlsPduTransmissionAck : RlsMessage
 {
     std::vector<uint32_t> pduIds;
 
-    explicit RlsPduTransmissionAck(uint64_t sti, uint32_t cellId = 0)
-        : RlsMessage(EMessageType::PDU_TRANSMISSION_ACK, sti, cellId)
+    explicit RlsPduTransmissionAck(uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
+        : RlsMessage(EMessageType::PDU_TRANSMISSION_ACK, sti, senderId, senderId2)
     {
     }
 };
 
 struct RlsGnbRfData : RlsMessage
 {
-    int pci{0};
-    OctetString ip{};
     int rsrp{0};
-    int rsrq{0};
-    int sinr{0};
 
-    explicit RlsGnbRfData(uint64_t sti, uint32_t cellId = 0) : RlsMessage(EMessageType::GNB_RF_DATA, sti, cellId)
+    explicit RlsGnbRfData(uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
+        : RlsMessage(EMessageType::GNB_RF_DATA, sti, senderId, senderId2)
     {
     }
 };
 
-void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream, bool includeCellId = false);
-std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream, bool hasCellId = false);
+/// Satellite position update conveying a TLE and epoch timestamp
+struct RlsSatellitePositionUpdate : RlsMessage
+{
+    std::string tleLine1{};
+    std::string tleLine2{};
+    int64_t epochMs{};  // Unix epoch millis of the TLE observation
+
+    explicit RlsSatellitePositionUpdate(
+          uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
+        : RlsMessage(
+              EMessageType::SATELLITE_POSITION_UPDATE,
+              sti, senderId, senderId2)
+    {
+    }
+};
+
+void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream);
+std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream);
 
 } // namespace rls

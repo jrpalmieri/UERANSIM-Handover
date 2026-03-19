@@ -20,11 +20,11 @@ void GnbRrcTask::handleRlsSapMessage(NmGnbRlsToRrc &msg)
     {
     case NmGnbRlsToRrc::SIGNAL_DETECTED: {
         m_logger->debug("UE[%d] new signal detected", msg.ueId);
-        triggerSysInfoBroadcast();
+        triggerSysInfoBroadcast();  // Send MIB and SIBs
         break;
     }
     case NmGnbRlsToRrc::UPLINK_RRC: {
-        handleUplinkRrc(msg.ueId, msg.rrcChannel, msg.data);
+        handleUplinkRrc(msg.ueId, msg.cRnti, msg.rrcChannel, msg.data);
         break;
     }
     }

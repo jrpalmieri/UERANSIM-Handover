@@ -330,8 +330,7 @@ class FakeGnb:
         msg = encode_pdu_transmission(
             self._gnb_sti, EPduType.RRC, self._next_pdu_id(),
             int(channel), pdu,
-            include_cell_id=True,
-            cell_id=self._cell_id,
+            sender_id=self._cell_id,
         )
         self._send_raw(msg)
         logger.debug("Sent RRC PDU on %s (%d bytes)", channel.name, len(pdu))
@@ -656,8 +655,7 @@ class FakeGnb:
         ack = encode_heartbeat_ack(
             self._gnb_sti,
             self._cell_dbm,
-            include_cell_id=True,
-            cell_id=self._cell_id,
+            sender_id=self._cell_id,
         )
         self._send_raw(ack, addr)
 
@@ -667,8 +665,7 @@ class FakeGnb:
         ack = encode_pdu_transmission_ack(
             self._gnb_sti,
             [pdu_tx.pdu_id],
-            include_cell_id=True,
-            cell_id=self._cell_id,
+            sender_id=self._cell_id,
         )
         self._send_raw(ack, addr)
 

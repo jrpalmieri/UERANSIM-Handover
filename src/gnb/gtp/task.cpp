@@ -257,6 +257,10 @@ void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
             m_logger->err("Uplink data failure, GTP encoding failed");
         return;
     }
+    case gtp::GtpMessage::MT_END_MARKER: {
+        m_logger->debug("Received GTP-U End Marker for TEID %u", gtp->teid);
+        return;
+    }
     default: {
         m_logger->err("Unhandled GTP-U message type: %d", gtp->msgType);
         return;

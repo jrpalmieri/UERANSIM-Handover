@@ -365,7 +365,7 @@ class FakeUe:
             except OSError:
                 break
 
-            parsed = decode_rls_message(data, has_cell_id=True)
+            parsed = decode_rls_message(data)
             if parsed is None:
                 continue
 

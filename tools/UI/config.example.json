@@ -1,0 +1,43 @@
+{
+  "executables": {
+    "nr_cli": "./build/nr-cli",
+    "nr_ue": "./build/nr-ue",
+    "nr_gnb": "./build/nr-gnb"
+  },
+  "amf": {
+    "host": "172.22.0.10",
+    "port": 38412,
+    "protocol": "sctp",
+    "active_probe": false,
+    "connect_timeout_sec": 1.0,
+    "log_file": "/home/joe/repos/GT/cs8903/docker_open5gs/log/amf.log"
+  },
+  "ui": {
+    "poll_interval_sec": 1.0,
+    "max_log_lines": 400,
+    "command_timeout_sec": 3.0,
+    "process_log_dir": "./tools/UI/logs"
+  },
+  "ue": {
+    "node": "UE1",
+    "config": "./tools/UI/configs/ue1.yaml",
+    "auto_setcap": true,
+    "run_with_sudo": true,
+    "sudo_non_interactive": false,
+    "cli_with_sudo": true,
+    "cli_sudo_non_interactive": true,
+    "args": []
+  },
+  "gnbs": [
+    {
+      "node": "GNB1",
+      "config": "./tools/UI/configs/gnb1.yaml",
+      "args": []
+    },
+    {
+      "node": "GNB2",
+      "config": "./tools/UI/configs/gnb2.yaml",
+      "args": []
+    }
+  ]
+}

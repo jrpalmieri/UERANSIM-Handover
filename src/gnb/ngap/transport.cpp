@@ -17,6 +17,7 @@
 #include <lib/asn/utils.hpp>
 
 #include <asn/ngap/ASN_NGAP_AMF-UE-NGAP-ID.h>
+#include <asn/ngap/ASN_NGAP_HandoverRequest.h>
 #include <asn/ngap/ASN_NGAP_HandoverCommand.h>
 #include <asn/ngap/ASN_NGAP_HandoverPreparationFailure.h>
 #include <asn/ngap/ASN_NGAP_InitiatingMessage.h>
@@ -137,9 +138,22 @@ void NgapTask::sendNgapUeAssociated(int ueId, ASN_NGAP_NGAP_PDU *pdu)
 {
     /* Find UE and AMF contexts */
 
-    auto *ue = findUeContext(ueId);
+    NgapUeContext *ue = nullptr;
+
+    auto itActive = m_ueCtx.find(ueId);
+    if (itActive != m_ueCtx.end())
+        ue = itActive->second;
+
     if (ue == nullptr)
     {
+        auto it = m_handoverPending.find(ueId);
+        if (it != m_handoverPending.end() && it->second != nullptr)
+            ue = it->second->ctx;
+    }
+
+    if (ue == nullptr)
+    {
+        m_logger->err("UE context not found with id: %d", ueId);
         asn::Free(asn_DEF_ASN_NGAP_NGAP_PDU, pdu);
         return;
     }
@@ -224,8 +238,16 @@ void NgapTask::sendNgapUeAssociated(int ueId, ASN_NGAP_NGAP_PDU *pdu)
     asn::Free(asn_DEF_ASN_NGAP_NGAP_PDU, pdu);
 }
 
+/**
+ * @brief Handles incoming SCTP messages from AMF over N2.
+ * 
+ * @param amfId ID of AMF that sent the message
+ * @param stream SCTP stream ID of the message (shoudl map to a stream ID in the UE NGAP context)
+ * @param buffer Buffer containing the SCTP message
+ */
 void NgapTask::handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer &buffer)
 {
+    // make sure this AMF is in our list of AMFs
     auto *amf = findAmfContext(amfId);
     if (amf == nullptr)
         return;
@@ -249,12 +271,14 @@ void NgapTask::handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer 
         }
     }
 
+    // Check for valid stream ID
     if (!handleSctpStreamId(amf->ctxId, stream, *pdu))
     {
         asn::Free(asn_DEF_ASN_NGAP_NGAP_PDU, pdu);
         return;
     }
 
+    // Messages from AMF
     if (pdu->present == ASN_NGAP_NGAP_PDU_PR_initiatingMessage)
     {
         auto value = pdu->choice.initiatingMessage->value;
@@ -263,12 +287,14 @@ void NgapTask::handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer 
         case ASN_NGAP_InitiatingMessage__value_PR_ErrorIndication:
             receiveErrorIndication(amf->ctxId, &value.choice.ErrorIndication);
             break;
+        // AMF Response to gNB's Initial UE Message.  Confirms authentication/security and provides Session info
         case ASN_NGAP_InitiatingMessage__value_PR_InitialContextSetupRequest:
             receiveInitialContextSetup(amf->ctxId, &value.choice.InitialContextSetupRequest);
             break;
         case ASN_NGAP_InitiatingMessage__value_PR_RerouteNASRequest:
             receiveRerouteNasRequest(amf->ctxId, &value.choice.RerouteNASRequest);
             break;
+        // AMF sends to source gNB to request UE context release after handover completion in N2 handover. 
         case ASN_NGAP_InitiatingMessage__value_PR_UEContextReleaseCommand:
             receiveContextRelease(amf->ctxId, &value.choice.UEContextReleaseCommand);
             break;
@@ -296,9 +322,9 @@ void NgapTask::handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer 
         case ASN_NGAP_InitiatingMessage__value_PR_Paging:
             receivePaging(amf->ctxId, &value.choice.Paging);
             break;
+        // AMF message HANDOVER_REQUEST, sent to target GNB to prepare for handover.
         case ASN_NGAP_InitiatingMessage__value_PR_HandoverRequest:
-            // This gNB is the target. Not yet implemented for source-only simulation.
-            m_logger->warn("Received HandoverRequest (target gNB role) — not implemented");
+            receiveHandoverRequest(amf->ctxId, &value.choice.HandoverRequest);
             break;
         default:
             m_logger->err("Unhandled NGAP initiating-message received (%d)", value.present);
@@ -313,6 +339,8 @@ void NgapTask::handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer 
         case ASN_NGAP_SuccessfulOutcome__value_PR_NGSetupResponse:
             receiveNgSetupResponse(amf->ctxId, &value.choice.NGSetupResponse);
             break;
+        // AMF response to gNB's Handover Request.  Confirms that target gNB is ready for handover and 
+        //   provides the Handover Command to be sent to the UE.
         case ASN_NGAP_SuccessfulOutcome__value_PR_HandoverCommand:
             receiveHandoverCommand(amf->ctxId, &value.choice.HandoverCommand);
             break;

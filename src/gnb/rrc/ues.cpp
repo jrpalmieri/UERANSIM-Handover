@@ -14,29 +14,42 @@
 namespace nr::gnb
 {
 
-RrcUeContext *GnbRrcTask::createUe(int id)
+// RrcUeContext *GnbRrcTask::createUe(int crnti, int ueId)
+// {
+//     auto *ctx = new RrcUeContext(crnti);
+//     ctx->ueId = ueId;
+//     m_ueCtx[crnti] = ctx;
+//     return ctx;
+// }
+RrcUeContext *GnbRrcTask::createUe(int ueId, int crnti)
 {
-    auto *ctx = new RrcUeContext(id);
-    m_ueCtx[id] = ctx;
+    auto *ctx = new RrcUeContext(crnti);
+    ctx->ueId = ueId;
+    m_ueCtx[ueId] = ctx;
     return ctx;
 }
 
-RrcUeContext *GnbRrcTask::tryFindUe(int id)
+RrcUeContext *GnbRrcTask::tryFindUeByCrnti(int crnti)
 {
-    if (m_ueCtx.count(id))
-        return m_ueCtx[id];
+    for (const auto &entry : m_ueCtx)
+    {
+        auto *ctx = entry.second;
+        if (!ctx)
+            continue;
+
+        if (ctx->cRnti == crnti)
+            return ctx;
+    }
+
     return nullptr;
 }
 
-RrcUeContext *GnbRrcTask::findUe(int id)
+RrcUeContext *GnbRrcTask::tryFindUeByUeId(int ueId)
 {
-    auto *ue = tryFindUe(id);
-    if (ue == nullptr)
-    {
-        m_logger->err("UE context with ID[%d] not found", id);
-        return ue;
-    }
-    return ue;
+    if (m_ueCtx.count(ueId))
+        return m_ueCtx[ueId];
+
+    return nullptr;
 }
 
 } // namespace nr::gnb

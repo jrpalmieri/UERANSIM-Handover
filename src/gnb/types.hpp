@@ -9,6 +9,8 @@
 #pragma once
 
 #include <set>
+#include <string>
+#include <vector>
 
 #include <lib/app/monitor.hpp>
 #include <lib/asn/utils.hpp>
@@ -30,12 +32,47 @@ class NgapTask;
 class GnbRrcTask;
 class GnbRlsTask;
 class SctpTask;
+class XnTask;
+
+struct NgapUeContext;
+struct RrcUeContext;
+
+class SatelliteState;  // fwd decl (satellite_state.hpp)
 
 enum class EAmfState
 {
     NOT_CONNECTED = 0,
     WAITING_NG_SETUP,
     CONNECTED
+};
+
+struct RRCHandoverPending
+{
+    int id{};
+    RrcUeContext* ctx{};
+    uint64_t expireTime{};
+    int64_t txId{};
+};
+
+struct HandoverMeasurementIdentity
+{
+    long measId{};
+    long measObjectId{};
+    long reportConfigId{};
+    std::string eventType{};
+};
+
+struct HandoverPreparationInfo
+{
+    std::vector<HandoverMeasurementIdentity> measIdentities{};
+    OctetString measConfigRrcReconfiguration{};
+};
+
+struct NGAPHandoverPending
+{
+    int id{};
+    NgapUeContext* ctx{};
+    uint64_t expireTime{};
 };
 
 struct SctpAssociation
@@ -124,16 +161,36 @@ struct AggregateMaximumBitRate
     uint64_t ulAmbr{};
 };
 
+enum UE_NGAP_CONNECTION_STATE {
+    NGAP_NOT_CONNECTED = 0,
+    NGAP_CONNECTION_PENDING,
+    NGAP_CONNECTED
+};
+
+// The NGAP context for a UE
 struct NgapUeContext
 {
     const int ctxId{};
 
+    // State tracker for connection state
+    UE_NGAP_CONNECTION_STATE connectionState{UE_NGAP_CONNECTION_STATE::NGAP_NOT_CONNECTED};
+
+    // AMF UE NGAP ID is assigned by the AMF
     int64_t amfUeNgapId = -1; // -1 if not assigned
+
+    // RAN UE NGAP ID is assigned by the gNB
     int64_t ranUeNgapId{};
+
+    // tracks the AMF associated with the UE
     int associatedAmfId{};
+    
+    // Uplink SCTP stream ID for this UE
     int uplinkStream{};
+    // Downlink SCTP stream ID for this UE
     int downlinkStream{};
+    // Aggregate Maximimu Bit Rate
     AggregateMaximumBitRate ueAmbr{};
+    // All PDU Session IDs associated with this UE
     std::set<int> pduSessions{};
 
     explicit NgapUeContext(int ctxId) : ctxId(ctxId)
@@ -141,31 +198,69 @@ struct NgapUeContext
     }
 };
 
+// tracks internal state of the RRC connection process for a UE
+//   NOT the same as the RRC 3GPP states
+enum UE_RRC_CONNECTION_STATE {
+    RRC_NOT_CONNECTED = 0,
+    RRC_CONNECTION_PENDING,
+    RRC_CONNECTED
+};
+
 struct RrcUeContext
 {
-    const int ueId{};
+    struct SentMeasIdentity
+    {
+        long measId{};
+        long measObjectId{};
+        long reportConfigId{};
+        std::string eventType{};
+    };
+
+    // UE's unique identifier, provided by UE in RLS messages
+    int ueId{};
+
+    // Temporary cell-specific ID for this UE, assigned be serving gNB
+    int cRnti{};
 
     int64_t initialId = -1; // 39-bit value, or -1
     bool isInitialIdSTmsi{}; // TMSI-part-1 or a random value
     int64_t establishmentCause{};
+
+    // RRC connection state of the UE
+    UE_RRC_CONNECTION_STATE rrcState{UE_RRC_CONNECTION_STATE::RRC_NOT_CONNECTED};
+
+    // 5G GUTI
     std::optional<GutiMobileIdentity> sTmsi{};
 
-    /* Handover state (Phase 4) */
+    /* Handover state */
+
     bool handoverInProgress{};
     int handoverTargetPci{};
     int handoverNewCrnti{};
+    int observedRadioUeId{};
     long handoverTxId{};
 
-    /* Measurement configuration tracking */
-    bool measConfigSent{};
+    // Active Measurement Identities
+    std::vector<SentMeasIdentity> sentMeasIdentities{};
 
     /* Last measurement report data */
+    
     int lastMeasReportPci{-1};
     int lastMeasReportRsrp{-140};
     int lastServingRsrp{-140};
     bool handoverDecisionPending{};
 
-    explicit RrcUeContext(const int ueId) : ueId(ueId)
+    [[nodiscard]] const SentMeasIdentity *findSentMeasIdentity(long measId) const
+    {
+        for (const auto &entry : sentMeasIdentities)
+        {
+            if (entry.measId == measId)
+                return &entry;
+        }
+        return nullptr;
+    }
+
+    explicit RrcUeContext(const int cRnti) : cRnti(cRnti)
     {
     }
 };
@@ -315,6 +410,89 @@ struct GnbAmfConfig
     uint16_t port{};
 };
 
+struct SatelliteLinkConfig
+{
+    double frequencyHz{10.7e9};  // carrier frequency in Hz
+    double txPowerDbW{43.0};     // radiated power in dBW
+    double txGainDbi{35.0};      // transmit antenna gain in dBi
+    double rxGainDbi{25.0};      // receive antenna gain in dBi
+};
+
+enum class EGnbRsrpMode
+{
+    Calculated,
+    Fixed,
+};
+
+enum class EHandoverInterface
+{
+    N2,
+    Xn,
+};
+
+struct GnbNeighborConfig
+{
+    int64_t nci{};     // 36-bit
+    int idLength{};    // 22..32 bits
+    int tac{};         // 24-bit
+    std::string ipAddress{};
+    EHandoverInterface handoverInterface{EHandoverInterface::N2};
+    std::optional<std::string> xnAddress{};
+    std::optional<uint16_t> xnPort{};
+
+    [[nodiscard]] inline uint32_t getGnbId() const
+    {
+        return static_cast<uint32_t>(
+            (nci & 0xFFFFFFFFFLL) >>
+            (36LL - static_cast<int64_t>(idLength)));
+    }
+
+    [[nodiscard]] inline uint64_t getNrCellIdentity() const
+    {
+        return static_cast<uint64_t>(nci) & 0xFFFFFFFFFULL;
+    }
+
+    [[nodiscard]] inline int getCellId() const
+    {
+        auto bitCount = 36 - idLength;
+        auto mask = (1ULL << bitCount) - 1ULL;
+        return static_cast<int>(getNrCellIdentity() & mask);
+    }
+
+    [[nodiscard]] inline int getPci() const
+    {
+        // In this simulator, PCI is represented by the 10 least significant bits.
+        return static_cast<int>(nci & 0x3FF);
+    }
+};
+
+struct GnbRsrpConfig
+{
+    int dbValue{-120};
+    EGnbRsrpMode updateMode{EGnbRsrpMode::Calculated};
+};
+
+struct GnbHandoverConfig
+{
+    struct GnbXnConfig
+    {
+        bool enabled{false};
+        std::string bindAddress{"127.0.0.1"};
+        uint16_t bindPort{9487};
+        int requestTimeoutMs{1000};
+        int contextTtlMs{5000};
+        bool fallbackToN2{true};
+    };
+
+    std::vector<std::string> eventTypes{"A3"};
+    int a2ThresholdDbm{-110};
+    int a3OffsetDb{3};
+    int a5Threshold1Dbm{-110};
+    int a5Threshold2Dbm{-95};
+    int hysteresisDb{1};
+    GnbXnConfig xn{};
+};
+
 struct GnbConfig
 {
     /* Read from config file */
@@ -329,20 +507,42 @@ struct GnbConfig
     std::string gtpIp{};
     std::optional<std::string> gtpAdvertiseIp{};
     bool ignoreStreamIds{};
+    GnbRsrpConfig rsrp{};
+    GnbHandoverConfig handover{};
+    std::vector<GnbNeighborConfig> neighborList{};
+
+    /* Satellite simulation config */
+    bool satSim{false};
+    SatelliteLinkConfig satLink{};
 
     /* Assigned by program */
     std::string name{};
     EPagingDrx pagingDrx{};
     Vector3 phyLocation{};
+    GeoPosition geoLocation{};  // lat/lon/alt for the gNB
 
     [[nodiscard]] inline uint32_t getGnbId() const
     {
-        return static_cast<uint32_t>((nci & 0xFFFFFFFFFLL) >> (36LL - static_cast<int64_t>(gnbIdLength)));
+        return static_cast<uint32_t>(
+            (nci & 0xFFFFFFFFFLL) >>
+            (36LL - static_cast<int64_t>(gnbIdLength)));
     }
 
     [[nodiscard]] inline int getCellId() const
     {
-        return static_cast<int>(nci & static_cast<uint64_t>((1 << (36 - gnbIdLength)) - 1));
+        return static_cast<int>(
+            nci & static_cast<uint64_t>(
+                      (1 << (36 - gnbIdLength)) - 1));
+    }
+
+    [[nodiscard]] inline const GnbNeighborConfig *findNeighborByPci(int pci) const
+    {
+        for (const auto &neighbor : neighborList)
+        {
+            if (neighbor.getPci() == pci)
+                return &neighbor;
+        }
+        return nullptr;
     }
 };
 
@@ -359,6 +559,9 @@ struct TaskBase
     GnbRrcTask *rrcTask{};
     SctpTask *sctpTask{};
     GnbRlsTask *rlsTask{};
+    XnTask *xnTask{};
+
+    SatelliteState *satState{};  // nullptr when satSim=false
 };
 
 Json ToJson(const GnbStatusInfo &v);

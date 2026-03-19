@@ -213,6 +213,14 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
                       static_cast<int>(successList.size()), static_cast<int>(failedList.size()));
 }
 
+/**
+ * @brief Instructs GTP to setup a UP tunnel for the given PDU session resource. 
+ * Returns an optional NGAP cause in case of failure.
+ * 
+ * @param ue 
+ * @param resource 
+ * @return std::optional<NgapCause> 
+ */
 std::optional<NgapCause> NgapTask::setupPduSessionResource(NgapUeContext *ue, PduSessionResource *resource)
 {
     if (resource->sessionType != PduSessionType::IPv4)
@@ -242,6 +250,7 @@ std::optional<NgapCause> NgapTask::setupPduSessionResource(NgapUeContext *ue, Pd
     w->resource = resource;
     m_base->gtpTask->push(std::move(w));
 
+    // Add the PDUSessionID to the UE's session list
     ue->pduSessions.insert(resource->psi);
 
     return {};
