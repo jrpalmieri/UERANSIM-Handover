@@ -23,10 +23,6 @@
 
 static constexpr const int BUFFER_SIZE = 16384;
 
-static constexpr const int LOOP_PERIOD = 1000;
-static constexpr const int RECEIVE_TIMEOUT = 200;
-static constexpr const int HEARTBEAT_THRESHOLD = 2000; // (LOOP_PERIOD + RECEIVE_TIMEOUT)'dan büyük olmalı
-
 static constexpr const int MIN_ALLOWED_DBM = -120;
 
 namespace nr::gnb
@@ -38,7 +34,10 @@ RlsUdpTask::RlsUdpTask(TaskBase *base, uint64_t sti,
       m_cellId{static_cast<uint32_t>(base->config->getCellId())},
       m_phyLocation{phyLocation}, m_lastLoop{},
     m_stiToUe{}, m_ueMap{}, m_newIdCounter{},
-    m_fixedRsrp{base->config->rsrp.dbValue}
+        m_fixedRsrp{base->config->rsrp.dbValue},
+        m_loopCounter{base->config->rls.loopCounter},
+        m_receiveTimeout{base->config->rls.receiveTimeout},
+        m_heartbeatThreshold{base->config->rls.getHeartbeatThreshold()}
 {
     m_logger = base->logBase->makeUniqueLogger("rls-udp");
 
@@ -61,7 +60,7 @@ void RlsUdpTask::onStart()
 void RlsUdpTask::onLoop()
 {
     auto current = utils::CurrentTimeMillis();
-    if (current - m_lastLoop > LOOP_PERIOD)
+    if (current - m_lastLoop > m_loopCounter)
     {
         m_lastLoop = current;
         heartbeatCycle(current);
@@ -70,7 +69,7 @@ void RlsUdpTask::onLoop()
     uint8_t buffer[BUFFER_SIZE];
     InetAddress peerAddress;
 
-    int size = m_server->Receive(buffer, BUFFER_SIZE, RECEIVE_TIMEOUT, peerAddress);
+    int size = m_server->Receive(buffer, BUFFER_SIZE, m_receiveTimeout, peerAddress);
     if (size > 0)
     {
         auto rlsMsg = rls::DecodeRlsMessage(OctetView{buffer, static_cast<size_t>(size)});
@@ -115,7 +114,7 @@ void RlsUdpTask::receiveRlsPdu(
         int dbm = computeDbm(hb.simPos);
         if (dbm < MIN_ALLOWED_DBM)
         {
-            // if the simulated signal strength is such low, then ignore this message
+            // if the simulated signal strength is too low, then ignore this message
             return;
         }
 
@@ -212,7 +211,7 @@ void RlsUdpTask::heartbeatCycle(int64_t time)
         std::lock_guard<std::mutex> lock(m_ueMutex);
         for (auto &item : m_ueMap)
         {
-            if (time - item.second.lastSeen > HEARTBEAT_THRESHOLD)
+            if (time - item.second.lastSeen > m_heartbeatThreshold)
             {
                 lostUeId.insert(item.first);
                 lostSti.insert(item.second.sti);

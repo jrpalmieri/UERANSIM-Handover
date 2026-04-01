@@ -49,7 +49,7 @@ void NgapTask::createUeContext(int ueId, int32_t &requestedSliceType)
     // Perform AMF selection
     auto *amf = selectAmf(ueId, requestedSliceType);
     if (amf == nullptr)
-        m_logger->err("AMF selection for UE[%d] failed. Could not find a suitable AMF.", ueId);
+        m_logger->err("UE[%d] AMF selection failed. Could not find a suitable AMF.", ueId);
     else
         ctx->associatedAmfId = amf->ctxId;
 }
@@ -60,7 +60,7 @@ NgapUeContext *NgapTask::findUeContext(int ctxId)
     if (m_ueCtx.count(ctxId))
         ctx = m_ueCtx[ctxId];
     if (ctx == nullptr)
-        m_logger->err("UE context not found with id: %d", ctxId);
+        m_logger->err("UE[%d] NGAP context not found", ctxId);
     return ctx;
 }
 
@@ -70,7 +70,7 @@ NgapUeContext *NgapTask::findUeByRanId(int64_t ranUeNgapId)
         return nullptr;
     // TODO: optimize
     for (auto &ue : m_ueCtx)
-        if (ue.second->ranUeNgapId == ranUeNgapId)
+        if (ue.second != nullptr && ue.second->ranUeNgapId == ranUeNgapId)
             return ue.second;
     return nullptr;
 }
@@ -89,7 +89,7 @@ NgapUeContext *NgapTask::findUeByAmfId(int64_t amfUeNgapId)
         return nullptr;
     // TODO: optimize
     for (auto &ue : m_ueCtx)
-        if (ue.second->amfUeNgapId == amfUeNgapId)
+        if (ue.second != nullptr && ue.second->amfUeNgapId == amfUeNgapId)
             return ue.second;
     return nullptr;
 }
@@ -149,22 +149,29 @@ NgapUeContext *NgapTask::findUeByNgapIdPair(int amfCtxId, const NgapIdPair &idPa
 
 void NgapTask::deleteUeContext(int ueId)
 {
-    auto *ue = m_ueCtx[ueId];
-    if (ue)
+    auto it = m_ueCtx.find(ueId);
+    if (it == m_ueCtx.end())
     {
-        delete ue;
-        m_ueCtx.erase(ueId);
+        m_logger->err("UE[%d] NGAP context not found, no deletion performed", ueId);
+        return;
     }
+
+    delete it->second;
+    m_ueCtx.erase(it);
+    m_logger->debug("UE[%d] NGAP context deleted", ueId);
 }
 
 void NgapTask::deleteAmfContext(int amfId)
 {
-    auto *amf = m_amfCtx[amfId];
-    if (amf)
+    auto it = m_amfCtx.find(amfId);
+    if (it == m_amfCtx.end())
     {
-        delete amf;
-        m_amfCtx.erase(amfId);
+        m_logger->err("AMF context with id %d not found, no deletion performed", amfId);
+        return;
     }
+
+    delete it->second;
+    m_amfCtx.erase(it);
 }
 
 /**

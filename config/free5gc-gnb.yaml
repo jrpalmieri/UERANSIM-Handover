@@ -28,3 +28,11 @@ ignoreStreamIds: true
 rsrp:
   dbValue: -60
   updateMode: Fixed
+
+# RLS loop/timer settings (ms).
+# HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT.
+rls:
+  LOOP_COUNTER: 1000
+  RECEIVE_TIMEOUT: 200
+  TIMER_PERIOD_ACK_SEND: 2250
+  TIMER_PERIOD_ACK_CONTROL: 1500

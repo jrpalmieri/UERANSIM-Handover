@@ -58,7 +58,7 @@ void GnbRrcTask::handleUplinkRrc(int ueId, int cRnti, rrc::RrcChannel channel, c
         if (pdu == nullptr)
             m_logger->err("RRC UL-DCCH PDU decoding failed.");
         else
-            receiveRrcMessage(ueId, pdu);
+            receiveRrcMessage(ueId, cRnti, pdu);
         asn::Free(asn_DEF_ASN_RRC_UL_DCCH_Message, pdu);
         break;
     }
@@ -196,7 +196,7 @@ void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH1_Message *msg)
 }
 
 // Handles RRCReconfigurationComplete, MeasurementReport, and ULInformationTransfer
-void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_DCCH_Message *msg)
+void GnbRrcTask::receiveRrcMessage(int ueId, int cRnti, ASN_RRC_UL_DCCH_Message *msg)
 {
     if (msg->message.present != ASN_RRC_UL_DCCH_MessageType_PR_c1)
         return;
@@ -207,11 +207,11 @@ void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_DCCH_Message *msg)
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_NOTHING:
         return;
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_measurementReport:
-        receiveMeasurementReport(ueId, *c1->choice.measurementReport);
+        receiveMeasurementReport(ueId, cRnti, *c1->choice.measurementReport);
         break;
     // Received from UE after RRC Reconfiguration, e.g. handover command or meas config, to indicate completion of the reconfiguration.
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_rrcReconfigurationComplete:
-        receiveRrcReconfigurationComplete(ueId, *c1->choice.rrcReconfigurationComplete);
+        receiveRrcReconfigurationComplete(ueId, cRnti, *c1->choice.rrcReconfigurationComplete);
         break;
     // Received from UE after RRC Setup, to indicate completion of the setup and move the UE to connected mode.
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_rrcSetupComplete:

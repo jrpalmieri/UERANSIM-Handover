@@ -55,6 +55,9 @@ class RlsUdpTask : public NtsTask
 
     int m_newIdCounter;
     int m_fixedRsrp;
+    int m_loopCounter;
+    int m_receiveTimeout;
+    int m_heartbeatThreshold;
 
   public:
     explicit RlsUdpTask(TaskBase *base, uint64_t sti,

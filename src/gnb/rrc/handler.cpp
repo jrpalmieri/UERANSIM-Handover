@@ -75,7 +75,7 @@ void GnbRrcTask::receiveUplinkInformationTransfer(int ueId, const ASN_RRC_ULInfo
 
 void GnbRrcTask::releaseConnection(int ueId)
 {
-    m_logger->info("Releasing RRC connection for UE[%d]", ueId);
+    m_logger->info("Releasing RRC connection UE[%d] ", ueId);
 
     // Send RRC Release message
     auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
@@ -83,7 +83,7 @@ void GnbRrcTask::releaseConnection(int ueId)
     pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
     pdu->message.choice.c1->present = ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcRelease;
     auto &rrcRelease = pdu->message.choice.c1->choice.rrcRelease = asn::New<ASN_RRC_RRCRelease>();
-    rrcRelease->rrc_TransactionIdentifier = getNextTid();
+    rrcRelease->rrc_TransactionIdentifier = getNextTid(ueId);
     rrcRelease->criticalExtensions.present = ASN_RRC_RRCRelease__criticalExtensions_PR_rrcRelease;
     rrcRelease->criticalExtensions.choice.rrcRelease = asn::New<ASN_RRC_RRCRelease_IEs>();
 
@@ -92,6 +92,7 @@ void GnbRrcTask::releaseConnection(int ueId)
 
     // Delete UE RRC context (map is keyed by UE ID)
     m_ueCtx.erase(ueId);
+    m_tidCountersByUe.erase(ueId);
 }
 
 void GnbRrcTask::handleRadioLinkFailure(int ueId)
@@ -103,6 +104,7 @@ void GnbRrcTask::handleRadioLinkFailure(int ueId)
 
     // Delete UE RRC context (map is keyed by UE ID)
     m_ueCtx.erase(ueId);
+    m_tidCountersByUe.erase(ueId);
 }
 
 void GnbRrcTask::handlePaging(const asn::Unique<ASN_NGAP_FiveG_S_TMSI> &tmsi,

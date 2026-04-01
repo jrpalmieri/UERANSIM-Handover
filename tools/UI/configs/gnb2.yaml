@@ -7,8 +7,8 @@ idLength: 32        # portion of NCI that is used for the gNB ID, in bits [22...
 tac: 1              # Tracking Area Code
 
 linkIp: 127.0.0.3   # gNB's local IP address for Radio Link Simulation (must match UE gnbSearchList)
-ngapIp: 172.22.0.202   # gNB's local IP address for N2 Interface (Usually same with local IP)
-gtpIp: 172.22.0.202    # gNB's local IP address for N3 Interface (Usually same with local IP)
+ngapIp: 172.22.0.203   # gNB's local IP address for N2 Interface (Usually same with local IP)
+gtpIp: 172.22.0.203    # gNB's local IP address for N3 Interface (Usually same with local IP)
 
 # List of AMF address information
 amfConfigs:
@@ -29,6 +29,19 @@ ignoreStreamIds: true
 rsrp:
   dbValue: -60
   updateMode: Fixed
+
+# RLS loop/timer settings (ms).
+#  If these are omitted, default values will be used:
+#   LOOP_COUNTER: 1000
+#   RECEIVE_TIMEOUT: 200
+#   TIMER_PERIOD_ACK_SEND: 1500
+#   TIMER_PERIOD_ACK_CONTROL: 2250
+# (HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT).
+rls:
+  LOOP_COUNTER: 200
+  RECEIVE_TIMEOUT: 300
+  TIMER_PERIOD_ACK_SEND: 300
+  TIMER_PERIOD_ACK_CONTROL: 500
 
 # Neighbor cells for handover
 neighborList:

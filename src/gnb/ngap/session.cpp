@@ -203,13 +203,14 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
     sendNgapUeAssociated(ue->ctxId, respPdu);
 
     if (failedList.empty())
-        m_logger->info("PDU session resource(s) setup for UE[%d] count[%d]", ue->ctxId,
+        m_logger->info("UE[%d] PDU session resource(s) setup count[%d]", ue->ctxId,
                        static_cast<int>(successList.size()));
     else if (successList.empty())
-        m_logger->err("PDU session resource(s) setup was failed for UE[%d] count[%d]", ue->ctxId,
+        m_logger->err("UE[%d] PDU session resource(s) setup failed count[%d]", ue->ctxId,
                       static_cast<int>(failedList.size()));
     else
-        m_logger->err("PDU session establishment is partially successful for UE[%d], success[%d], failed[%d]",
+        m_logger->err("UE[%d] PDU session establishment partially successful success[%d] failed[%d]",
+                      ue->ctxId,
                       static_cast<int>(successList.size()), static_cast<int>(failedList.size()));
 }
 
@@ -319,7 +320,7 @@ void NgapTask::receiveSessionResourceReleaseCommand(int amfId, ASN_NGAP_PDUSessi
     auto *respPdu = asn::ngap::NewMessagePdu<ASN_NGAP_PDUSessionResourceReleaseResponse>({ieResp});
     sendNgapUeAssociated(ue->ctxId, respPdu);
 
-    m_logger->info("PDU session resource(s) released for UE[%d] count[%d]", ue->ctxId, static_cast<int>(psIds.size()));
+    m_logger->info("UE[%d] PDU session resource(s) released, count[%d]", ue->ctxId, static_cast<int>(psIds.size()));
 }
 
 } // namespace nr::gnb

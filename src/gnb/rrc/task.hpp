@@ -50,10 +50,10 @@ class GnbRrcTask : public NtsTask
     // UE RRC Contexts, indexed by UE ID
     std::unordered_map<int, RrcUeContext *> m_ueCtx;
 
-    // Pending Handover Contexts, indexed by TxId
-    std::unordered_map<long, RRCHandoverPending*> m_handoversPending;
+    // Pending Handover Contexts, indexed by UE ID
+    std::unordered_map<int, RRCHandoverPending *> m_handoversPending;
 
-    int m_tidCounter;
+    std::unordered_map<int, int> m_tidCountersByUe;
 
     bool m_isBarred = true;
     bool m_cellReserved = false;
@@ -82,7 +82,7 @@ class GnbRrcTask : public NtsTask
     
   /* Management - management.cpp */
 
-    int getNextTid();
+    int getNextTid(int ueId);
     int allocateCrnti() const;
     RrcUeContext* findCtxByCrnti(int cRnti);
     RrcUeContext* findCtxByUeId(int ueId);
@@ -112,7 +112,7 @@ class GnbRrcTask : public NtsTask
     void receiveRrcMessage(int ueId, ASN_RRC_BCCH_BCH_Message *msg);
     void receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH_Message *msg);
     void receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH1_Message *msg);
-    void receiveRrcMessage(int ueId, ASN_RRC_UL_DCCH_Message *msg);
+    void receiveRrcMessage(int ueId, int cRnti, ASN_RRC_UL_DCCH_Message *msg);
 
     /* System Information Broadcast related - broadcast.cpp */
     
@@ -136,8 +136,8 @@ class GnbRrcTask : public NtsTask
 
     /* Handover - handover.cpp */
 
-    void receiveRrcReconfigurationComplete(int ueId, const ASN_RRC_RRCReconfigurationComplete &msg);
-    void receiveMeasurementReport(int ueId, const ASN_RRC_MeasurementReport &msg);
+    void receiveRrcReconfigurationComplete(int ueId, int cRnti, const ASN_RRC_RRCReconfigurationComplete &msg);
+    void receiveMeasurementReport(int ueId, int cRnti, const ASN_RRC_MeasurementReport &msg);
     void sendHandoverCommand(int ueId, int targetPci, int newCrnti, int t304Ms);
     void handleHandoverComplete(int ueId);
     void sendMeasConfig(int ueId, bool forceResend = false);

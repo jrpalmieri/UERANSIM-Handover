@@ -46,8 +46,19 @@ RrcUeContext *GnbRrcTask::tryFindUeByCrnti(int crnti)
 
 RrcUeContext *GnbRrcTask::tryFindUeByUeId(int ueId)
 {
-    if (m_ueCtx.count(ueId))
-        return m_ueCtx[ueId];
+    auto it = m_ueCtx.find(ueId);
+    if (it == m_ueCtx.end() || it->second == nullptr)
+        return nullptr;
+
+    auto *ctx = it->second;
+    if (ctx->ueId != ueId)
+    {
+        m_logger->warn("UE[%d] RRC context key mismatch: keyUeId=%d ctxUeId=%d cRnti=%d",
+                       ueId, ueId, ctx->ueId, ctx->cRnti);
+        return nullptr;
+    }
+
+    return ctx;
 
     return nullptr;
 }

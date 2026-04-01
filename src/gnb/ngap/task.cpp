@@ -69,14 +69,14 @@ void NgapTask::onLoop()
         // RRC (target gnb) notifies NGAP of handover completion (RRCReconfigComplete). NGAP will notify AMF with HANDOVER_NOTIFY.
         //      AMF will notify source gnb to delete UE context.
         case NmGnbRrcToNgap::HANDOVER_NOTIFY: {
-            m_logger->info("Handover complete notification for UE[%d]", w.ueId);
+            m_logger->info("UE[%d] Handover complete notification from RRC", w.ueId);
             handleHandoverNotifyFromRrc(w.ueId);
             break;
         }
         // RRC (source gnb) notifies NGAP of handover start. NGAP will notify AMF with HANDOVER_REQUIRED.  
         //      AMF will then notify target gNB.
         case NmGnbRrcToNgap::HANDOVER_REQUIRED: {
-            m_logger->info("HandoverRequired from RRC for UE[%d] targetPCI=%d", w.ueId, w.hoTargetPci);
+            m_logger->info("UE[%d] HandoverRequired received from RRC, targetPCI=%d", w.ueId, w.hoTargetPci);
             sendHandoverRequired(w.ueId, w.hoTargetPci, w.hoCause);
             break;
         }
@@ -107,7 +107,7 @@ void NgapTask::onLoop()
         switch (w.present)
         {
         case NmGnbXnToNgap::PATH_SWITCH_REQUEST_REQUIRED: {
-            m_logger->info("Xn requested PathSwitchRequest for UE[%d]", w.ueId);
+            m_logger->info("Xn requested PathSwitchRequest UE[%d] ", w.ueId);
             sendPathSwitchRequest(w.ueId);
             break;
         }

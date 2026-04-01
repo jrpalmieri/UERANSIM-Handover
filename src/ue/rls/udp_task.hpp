@@ -49,6 +49,9 @@ class RlsUdpTask : public NtsTask
     GeoPosition m_simPos;
     // used to generate a unique UE-local cellId for each new cell that sends a heartbeat ACK
     int m_cellIdCounter;
+    int m_loopCounter;
+    int m_receiveTimeout;
+    int m_heartbeatThreshold;
 
     std::unordered_map<u_int64_t, int> cellIdBySti;  // map of cellId indexed by sti value
 

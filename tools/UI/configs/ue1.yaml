@@ -34,6 +34,20 @@ gnbSearchList:
   - 127.0.0.2
   - 127.0.0.3
 
+# RLS loop/timer settings (ms).
+# If not specified, default values will be used:
+#   LOOP_COUNTER: 1000
+#   RECEIVE_TIMEOUT: 200
+#   TIMER_PERIOD_ACK_SEND: 1500
+#   TIMER_PERIOD_ACK_CONTROL: 2250
+# If these are omitted, default values will be used.
+# HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT.
+rls:
+  LOOP_COUNTER: 200
+  RECEIVE_TIMEOUT: 100
+  TIMER_PERIOD_ACK_SEND: 300
+  TIMER_PERIOD_ACK_CONTROL: 500
+
 # UAC Access Identities Configuration
 uacAic:
   mps: false

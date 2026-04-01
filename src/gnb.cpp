@@ -137,6 +137,19 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
         result->rsrp.updateMode = ReadRsrpMode(rsrp);
     }
 
+    if (yaml::HasField(config, "rls"))
+    {
+        auto rls = config["rls"];
+        if (yaml::HasField(rls, "LOOP_COUNTER"))
+            result->rls.loopCounter = yaml::GetInt32(rls, "LOOP_COUNTER", 1, 60000);
+        if (yaml::HasField(rls, "RECEIVE_TIMEOUT"))
+            result->rls.receiveTimeout = yaml::GetInt32(rls, "RECEIVE_TIMEOUT", 1, 60000);
+        if (yaml::HasField(rls, "TIMER_PERIOD_ACK_SEND"))
+            result->rls.timerPeriodAckSend = yaml::GetInt32(rls, "TIMER_PERIOD_ACK_SEND", 1, 60000);
+        if (yaml::HasField(rls, "TIMER_PERIOD_ACK_CONTROL"))
+            result->rls.timerPeriodAckControl = yaml::GetInt32(rls, "TIMER_PERIOD_ACK_CONTROL", 1, 60000);
+    }
+
     if (yaml::HasField(config, "handover"))
     {
         auto handover = config["handover"];

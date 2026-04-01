@@ -17,17 +17,15 @@
 #include <utils/constants.hpp>
 
 static constexpr const int BUFFER_SIZE = 16384;
-static constexpr const int LOOP_PERIOD = 200;
-static constexpr const int RECEIVE_TIMEOUT = 100;
-// Use a relaxed threshold to avoid transient scheduler/network jitter causing false cell churn.
-static constexpr const int HEARTBEAT_THRESHOLD = 2000;
 
 namespace nr::ue
 {
 
 RlsUdpTask::RlsUdpTask(TaskBase *base, RlsSharedContext *shCtx, const std::vector<std::string> &searchSpace)
     : m_base{base}, m_server{}, m_ctlTask{}, m_shCtx{shCtx}, m_searchSpace{}, m_cells{}, m_cellIdToSti{}, m_lastLoop{},
-      m_cellIdCounter{}
+    m_cellIdCounter{}, m_loopCounter{base->config->rls.loopCounter},
+    m_receiveTimeout{base->config->rls.receiveTimeout},
+    m_heartbeatThreshold{base->config->rls.getHeartbeatThreshold()}
 {
     m_logger = base->logBase->makeUniqueLogger(base->config->getLoggerPrefix() + "rls-udp");
 
@@ -49,12 +47,12 @@ void RlsUdpTask::onStart()
 
 void RlsUdpTask::onLoop()
 {
-    // Do a heartbeat cycle every LOOP_PERIOD milliseconds, 
+    // Do a heartbeat cycle every LOOP_COUNTER milliseconds,
     //  - send a HEARTBEAT message to all gnb IPs in the search space
-    //  - check if any known cells haven't sent HEARTBEAT_ACKs for more than HEARTBEAT_THRESHOLD
+    //  - check if known cells haven't sent HEARTBEAT_ACKs for more than HEARTBEAT_THRESHOLD
     //  
     auto current = utils::CurrentTimeMillis();
-    if (current - m_lastLoop > LOOP_PERIOD)
+    if (current - m_lastLoop > m_loopCounter)
     {
         m_lastLoop = current;
         heartbeatCycle(current, m_simPos);
@@ -64,7 +62,7 @@ void RlsUdpTask::onLoop()
 
     // pull a UDP message from the server, and if one is received, 
     //  decode it as an RLS message and handle it
-    int size = m_server->Receive(buffer, BUFFER_SIZE, RECEIVE_TIMEOUT, peerAddress);
+    int size = m_server->Receive(buffer, BUFFER_SIZE, m_receiveTimeout, peerAddress);
     if (size > 0)
     {
         auto rlsMsg = rls::DecodeRlsMessage(OctetView{buffer, static_cast<size_t>(size)});
@@ -211,12 +209,12 @@ void RlsUdpTask::heartbeatCycle(uint64_t time,
     std::set<std::pair<uint64_t, int>> toRemove;
 
     // ACK check - loop through each known cell (in m_cells map)
-    //  if it hasn't been "seen" (no heartbeat ack received) for more than HEARTBEAT_THRESHOLD, 
+    //  if it hasn't been "seen" for more than HEARTBEAT_THRESHOLD,
     //  mark it for removal
     for (auto &cell : m_cells)
     {
         auto delta = time - cell.second.lastSeen;
-        if (delta > HEARTBEAT_THRESHOLD)
+        if (delta > static_cast<uint64_t>(m_heartbeatThreshold))
             toRemove.insert({cell.first, cell.second.cellId});
     }
 

@@ -13,11 +13,14 @@
 namespace nr::gnb
 {
 
-int GnbRrcTask::getNextTid()
+int GnbRrcTask::getNextTid(int ueId)
 {
-    m_tidCounter++;
-    m_tidCounter %= 4;
-    return m_tidCounter;
+    if (ueId <= 0)
+        return 0;
+
+    int &counter = m_tidCountersByUe[ueId];
+    counter = (counter + 1) % 4;
+    return counter;
 }
 
 /**
@@ -92,8 +95,19 @@ RrcUeContext* GnbRrcTask::findCtxByUeId(int ueId)
     if (ueId <= 0)
         return nullptr;
 
-    if (m_ueCtx.count(ueId))
-        return m_ueCtx[ueId];
+    auto it = m_ueCtx.find(ueId);
+    if (it == m_ueCtx.end() || it->second == nullptr)
+        return nullptr;
+
+    auto *ctx = it->second;
+    if (ctx->ueId != ueId)
+    {
+        m_logger->warn("UE[%d] RRC context key mismatch: keyUeId=%d ctxUeId=%d cRnti=%d",
+                       ueId, ueId, ctx->ueId, ctx->cRnti);
+        return nullptr;
+    }
+
+    return ctx;
 
     return nullptr;
 

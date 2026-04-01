@@ -3,15 +3,15 @@
 This tool launches one UE and two gNB processes, then renders a terminal dashboard with separate
 windows for:
 
-- UE
-- gNB #1
-- gNB #2
+- UE (single pane for all UE logs)
+- GNB1
+- GNB2
 - AMF
+- Summary
 
-Each entity window shows:
-
-- scalar values at the top
-- live log lines below
+Entity windows (UE, GNB1, GNB2, AMF) are log-only and show live process output.
+Summary window shows combined scalar/status information for UE, GNB1, GNB2, and AMF.
+Summary includes all configured UEs (`ue.count`) with no fixed upper limit.
 
 ## Features
 
@@ -51,6 +51,20 @@ Menu bar additions:
 
 - `File` -> `Exit` performs a graceful shutdown of spawned processes.
 - `Handover` -> `Program` opens a dialog to run periodic signal injection.
+- `User Plane` -> `Open Demo` opens a split window for user-plane payload demo.
+- `User Plane` -> `Send Text Message` opens a dialog to send demo text traffic.
+- `User Plane` -> `Send Repeated Message` opens a dialog for message + cycle period (ms).
+- `User Plane` -> `Stop Repeated Message` stops active repeated sending loop.
+
+User Plane demo window:
+
+- Top pane shows printable ASCII extracted from payload bytes seen as inbound traffic on UE #1 TUN.
+- Bottom pane shows the source generator send output from dashboard actions.
+- Sender action transmits plain UDP payload to UE #1 TUN IP on `user_plane.upf_port`.
+- If raw-socket capture is denied, dashboard falls back to `tcpdump` capture automatically.
+- Optional: move UE #1 TUN into a Linux network namespace after creation.
+- Dashboard verifies host routing to UE #1 TUN IP via `172.22.0.1` (configurable).
+- If route is missing, dashboard attempts to add `UE_TUN_IP/32 via gateway` automatically.
 
 Handover Program inputs:
 
@@ -72,6 +86,7 @@ Use `OK` to start the program and `Cancel` to close the dialog without starting.
 - `ui.process_log_dir` controls where UE/gNB logs are written (defaults to `./tools/UI/logs`).
 - Files are `ue.log`, `gnb1.log`, and `gnb2.log`, and each is truncated when dashboard starts.
 - `ue.node` and each `gnbs[i].node` must match runtime node names used by `nr-cli`.
+- For multi-UE runs, UE node names are derived from `ue.node` and `ue.count`.
 - `ue.config` and each `gnbs[i].config` are passed to `nr-ue -c ...` and `nr-gnb -c ...`.
 - `ue.auto_setcap` (default `true`) attempts `sudo -n setcap cap_net_admin+ep <nr-ue>` once at startup.
 - `ue.run_with_sudo` enables launching UE with `sudo`.
@@ -86,3 +101,15 @@ Use `OK` to start the program and `Cancel` to close the dialog without starting.
   `sudo setcap cap_net_admin+ep /path/to/nr-ue`
 - Windowed process logs are written as `ue-windowed.log`, `gnb1-windowed.log`, and
 	`gnb2-windowed.log` under `ui.process_log_dir`.
+- `user_plane.upf_ip` is retained for compatibility and not used as sender destination.
+- `user_plane.upf_port` configures the destination UDP port for demo sends.
+- `user_plane.capture_enabled` enables or disables UE #1 TUN packet capture for the top pane.
+- `user_plane.capture_use_sudo` enables `sudo` for tcpdump fallback capture.
+- `user_plane.capture_sudo_non_interactive` uses `sudo -n` for tcpdump fallback when true.
+- `user_plane.move_tun_to_netns` moves UE #1 TUN interface into a namespace after setup.
+- `user_plane.netns_name` sets namespace name used for moved UE TUN interface.
+- `user_plane.netns_prefix_len` sets prefix length applied in namespace (e.g., 16 for /16).
+- `user_plane.ensure_host_route_to_ue` enables route check/add for UE #1 TUN IP.
+- `user_plane.host_route_gateway` sets the gateway used for UE route injection.
+- `user_plane.host_route_subnet` sets the expected host subnet route (for warning visibility).
+- `user_plane.max_log_lines` controls retained lines for each user-plane demo pane.

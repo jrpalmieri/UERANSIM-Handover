@@ -625,6 +625,12 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
     if (m_handoverPending.count(ueId))
     {
         m_logger->warn("HandoverRequest received for UE ID %d which is already pending handover; overwriting", ueId);
+        auto *oldPending = m_handoverPending[ueId];
+        if (oldPending)
+        {
+            delete oldPending->ctx;
+            delete oldPending;
+        }
         m_handoverPending.erase(ueId);
     }
 
@@ -662,12 +668,17 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
     OctetString targetRrcContainer{};
     if (!m_base->rrcTask->addPendingHandover(ueId, transferredCtx.handoverPreparation, targetRrcContainer))
     {
-        m_logger->warn("HandoverRequest failed for UE[%d]: failed to add RRC pending handover context",
+        m_logger->warn("UE[%d] HandoverRequest failed: failed to add RRC pending handover context",
                        ue->ctxId);
 
         if (m_handoverPending.count(ueId))
         {
-            delete m_handoverPending[ueId];
+            auto *pending = m_handoverPending[ueId];
+            if (pending)
+            {
+                delete pending->ctx;
+                delete pending;
+            }
             m_handoverPending.erase(ueId);
         }
         return;
@@ -683,7 +694,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
 
     auto sendHandoverFailure = [&](NgapCause cause, const char *reason) {
         if (reason)
-            m_logger->warn("HandoverRequest failed for UE[%d]: %s", ue->ctxId, reason);
+            m_logger->warn("UE[%d] HandoverRequest failed: %s", ue->ctxId, reason);
 
         auto *causeIe = asn::New<ASN_NGAP_HandoverFailureIEs>();
         causeIe->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
@@ -850,7 +861,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
         return;
     }
 
-    m_logger->debug("Built TargetToSource wrapper for UE[%d]: rrc=%dB total=%dB", ue->ctxId,
+    m_logger->debug("UE[%d] Built TargetToSource wrapper: rrc=%dB total=%dB", ue->ctxId,
                     targetRrcContainer.length(), targetToSourceContainer.length());
 
 
@@ -867,7 +878,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
     auto *ackPdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverRequestAcknowledge>(ackIes);
     sendNgapUeAssociated(ue->ctxId, ackPdu);
 
-    m_logger->info("HandoverRequestAcknowledge sent for UE[%d] admitted=%d failed=%d", ue->ctxId,
+    m_logger->info("UE[%d] HandoverRequestAcknowledge sent admitted=%d failed=%d", ue->ctxId,
                    (int)admittedList.size(), (int)failedList.size());
 }
 
@@ -882,12 +893,12 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
  */
 void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause)
 {
-    m_logger->info("Sending HandoverRequired to AMF for UE[%d] targetPCI=%d", ueId, targetPci);
+    m_logger->info("UE[%d] Sending HandoverRequired to AMF targetPCI=%d", ueId, targetPci);
 
     auto *ue = findUeContext(ueId);
     if (!ue)
     {
-        m_logger->err("sendHandoverRequired: UE context not found for UE[%d]", ueId);
+        m_logger->err("sendHandoverRequired: UE context not found UE[%d] ", ueId);
         return;
     }
 
@@ -1003,7 +1014,7 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause)
                             sourceToTarget);
         ies.push_back(ie);
 
-        m_logger->info("Encoded SourceToTarget container for UE[%d]: sourcePCI=%d targetPCI=%d size=%dB",
+        m_logger->info("UE[%d] Encoded SourceToTarget container sourcePCI=%d targetPCI=%d size=%dB",
                        ueId,
                        sourcePci,
                        targetPci,
@@ -1048,7 +1059,7 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause)
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverRequired>(ies);
     sendNgapUeAssociated(ue->ctxId, pdu);
 
-    m_logger->info("HandoverRequired sent to AMF for UE[%d]", ueId);
+    m_logger->info("UE[%d] HandoverRequired sent to AMF", ueId);
 }
 
 /**
@@ -1079,7 +1090,7 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
     if (ieContainer)
     {
         OctetString encodedT2s = asn::GetOctetString(ieContainer->TargetToSource_TransparentContainer);
-        m_logger->debug("Received TargetToSource wrapper for UE[%d] from AMF: total=%dB", ue->ctxId,
+        m_logger->debug("Received TargetToSource wrapper UE[%d] from AMF: total=%dB", ue->ctxId,
                         encodedT2s.length());
 
         auto decodedRrc = DecodeTargetToSourceTransparentContainer(encodedT2s);
@@ -1091,7 +1102,7 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
         }
 
         rrcContainer = std::move(decodedRrc.value());
-        m_logger->debug("Decoded TargetToSource wrapper for UE[%d]: rrcContainer=%dB", ue->ctxId,
+        m_logger->debug("UE[%d] Decoded TargetToSource wrapper rrcContainer=%dB", ue->ctxId,
                         rrcContainer.length());
     }
 
@@ -1101,7 +1112,7 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
     w->rrcContainer = std::move(rrcContainer);
     m_base->rrcTask->push(std::move(w));
 
-    m_logger->info("HandoverCommand forwarded to RRC for UE[%d] rrcContainer=%dB", ue->ctxId,
+    m_logger->info("UE[%d] HandoverCommand forwarded to RRC rrcContainer=%dB", ue->ctxId,
                    rrcContainer.length());
 }
 
@@ -1127,12 +1138,12 @@ void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPre
     auto *ieCause = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_Cause);
     if (ieCause)
     {
-        m_logger->warn("Handover preparation failed for UE[%d], cause present=%d",
+        m_logger->warn("UE[%d] Handover preparation failed cause present=%d",
                        ue->ctxId, ieCause->Cause.present);
     }
 
     // TODO: Notify RRC that handover failed so it can reset the pending state
-    m_logger->warn("Handover preparation failed for UE[%d]. UE remains on source cell.", ue->ctxId);
+    m_logger->warn("UE[%d] Handover preparation failed. UE remains on source cell.", ue->ctxId);
 }
 
 /**
@@ -1151,7 +1162,7 @@ void NgapTask::sendHandoverNotify(int ueId)
     auto *ue = findUeContext(ueId);
     if (!ue)
     {
-        m_logger->err("sendHandoverNotify: UE context not found for UE[%d]", ueId);
+        m_logger->err("sendHandoverNotify: UE context not found UE[%d] ", ueId);
         return;
     }
 
@@ -1185,7 +1196,7 @@ void NgapTask::sendHandoverNotify(int ueId)
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverNotify>(ies);
     sendNgapUeAssociated(ue->ctxId, pdu);
 
-    m_logger->info("HandoverNotify sent to AMF for UE[%d]", ueId);
+    m_logger->info("UE[%d] HandoverNotify sent to AMF", ueId);
 }
 
 /**
@@ -1197,12 +1208,12 @@ void NgapTask::sendHandoverNotify(int ueId)
  */
 void NgapTask::sendPathSwitchRequest(int ueId)
 {
-    m_logger->info("Sending PathSwitchRequest for UE[%d]", ueId);
+    m_logger->info("UE[%d] Sending PathSwitchRequest", ueId);
 
     auto *ue = findUeContext(ueId);
     if (!ue)
     {
-        m_logger->err("sendPathSwitchRequest: UE context not found for UE[%d]", ueId);
+        m_logger->err("sendPathSwitchRequest: UE context not found UE[%d] ", ueId);
         return;
     }
 
@@ -1233,7 +1244,7 @@ void NgapTask::sendPathSwitchRequest(int ueId)
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_PathSwitchRequest>(ies);
     sendNgapUeAssociated(ue->ctxId, pdu);
 
-    m_logger->info("PathSwitchRequest sent to AMF for UE[%d]", ueId);
+    m_logger->info("UE[%d] PathSwitchRequest sent to AMF", ueId);
 }
 
 /**
@@ -1254,7 +1265,7 @@ void NgapTask::receivePathSwitchRequestAcknowledge(int amfId, ASN_NGAP_PathSwitc
         return;
     }
 
-    m_logger->info("Path switch complete for UE[%d]. AMF path updated.", ue->ctxId);
+    m_logger->info("UE[%d] Path switch complete. AMF path updated.", ue->ctxId);
 
     // Notify RRC that path switch is acknowledged
     auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::PATH_SWITCH_REQUEST_ACK);
@@ -1290,7 +1301,7 @@ void NgapTask::receivePathSwitchRequestFailure(int amfId, ASN_NGAP_PathSwitchReq
         return;
     }
 
-    m_logger->warn("Path switch failed for UE[%d].", ue->ctxId);
+    m_logger->warn("UE[%d] Path switch failed.", ue->ctxId);
 
     if (m_base->xnTask)
     {
@@ -1313,13 +1324,20 @@ void NgapTask::receivePathSwitchRequestFailure(int amfId, ASN_NGAP_PathSwitchReq
 
 void NgapTask::handleHandoverNotifyFromRrc(int ueId)
 {
-    m_logger->info("Processing handover complete for UE[%d], sending HandoverNotify", ueId);
-
     // move the UE context from handover pending map to ueCtx map
-    auto *hoPending = m_handoverPending[ueId];
+    auto it = m_handoverPending.find(ueId);
+    if (it == m_handoverPending.end() || it->second == nullptr || it->second->ctx == nullptr)
+    {
+        m_logger->warn("UE[%d] Ignoring handover complete: no pending NGAP handover context", ueId);
+        return;
+    }
+
+    m_logger->info("UE[%d] Processing handover complete, sending HandoverNotify", ueId);
+
+    auto *hoPending = it->second;
     m_ueCtx[ueId] = hoPending->ctx;
     delete hoPending;
-    m_handoverPending.erase(ueId);
+    m_handoverPending.erase(it);
 
     // Send HandoverNotify to AMF to indicate handover completion and update UE location.
     sendHandoverNotify(ueId);

@@ -69,8 +69,11 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
 
     // the AMF msg must contain the NGAP IDs of the UE, which we use to find the relevant UE NGAP context
     auto *ue = findUeByNgapIdPair(amfId, ngap_utils::FindNgapIdPair(msg));
-    if (ue == nullptr)
+    if (ue == nullptr) 
+    {
+        m_logger->err("receiveInitialContextSetup: UE not found");
         return;
+    }
 
     // User plane - Initial context setup
     auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_UPDATE);
@@ -248,8 +251,11 @@ void NgapTask::receiveContextRelease(int amfId, ASN_NGAP_UEContextReleaseCommand
 
     auto *ue = findUeByNgapIdPair(amfId, ngap_utils::FindNgapIdPairFromUeNgapIds(msg));
     if (ue == nullptr)
+    {
+        m_logger->err("receiveContextRelease: UE not found");
         return;
-
+    }
+    
     // Notify RRC task
     auto w1 = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::AN_RELEASE);
     w1->ueId = ue->ctxId;

@@ -16,14 +16,13 @@ static constexpr const int MAX_PDU_TTL = 3000;
 static constexpr const int TIMER_ID_ACK_CONTROL = 1;
 static constexpr const int TIMER_ID_ACK_SEND = 2;
 
-static constexpr const int TIMER_PERIOD_ACK_CONTROL = 1500;
-static constexpr const int TIMER_PERIOD_ACK_SEND = 2250;
-
 namespace nr::ue
 {
 
 RlsControlTask::RlsControlTask(TaskBase *base, RlsSharedContext *shCtx)
-    : m_shCtx{shCtx}, m_servingCell{}, m_mainTask{}, m_udpTask{}, m_pduMap{}, m_pendingAck{}
+    : m_shCtx{shCtx}, m_servingCell{}, m_mainTask{}, m_udpTask{}, m_pduMap{}, m_pendingAck{},
+      m_timerPeriodAckControl{base->config->rls.timerPeriodAckControl},
+      m_timerPeriodAckSend{base->config->rls.timerPeriodAckSend}
 {
     m_logger = base->logBase->makeUniqueLogger(base->config->getLoggerPrefix() + "rls-ctl");
 }
@@ -36,8 +35,8 @@ void RlsControlTask::initialize(NtsTask *mainTask, RlsUdpTask *udpTask)
 
 void RlsControlTask::onStart()
 {
-    setTimer(TIMER_ID_ACK_CONTROL, TIMER_PERIOD_ACK_CONTROL);
-    setTimer(TIMER_ID_ACK_SEND, TIMER_PERIOD_ACK_SEND);
+    setTimer(TIMER_ID_ACK_CONTROL, m_timerPeriodAckControl);
+    setTimer(TIMER_ID_ACK_SEND, m_timerPeriodAckSend);
 }
 
 void RlsControlTask::onLoop()
@@ -77,12 +76,12 @@ void RlsControlTask::onLoop()
         auto &w = dynamic_cast<NmTimerExpired &>(*msg);
         if (w.timerId == TIMER_ID_ACK_CONTROL)
         {
-            setTimer(TIMER_ID_ACK_CONTROL, TIMER_PERIOD_ACK_CONTROL);
+            setTimer(TIMER_ID_ACK_CONTROL, m_timerPeriodAckControl);
             onAckControlTimerExpired();
         }
         else if (w.timerId == TIMER_ID_ACK_SEND)
         {
-            setTimer(TIMER_ID_ACK_SEND, TIMER_PERIOD_ACK_SEND);
+            setTimer(TIMER_ID_ACK_SEND, m_timerPeriodAckSend);
             onAckSendTimerExpired();
         }
         break;

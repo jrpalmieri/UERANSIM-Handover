@@ -24,14 +24,14 @@ UeRlsTask::UeRlsTask(TaskBase *base) : m_base{base}
     m_shCtx = new RlsSharedContext();
     m_shCtx->sti = Random::Mixed(base->config->getNodeName()).nextL();
 
-    // Derive senderId from the low-order 4 bytes of the IMEI
-    if (base->config->imei.has_value())
+    // Derive senderId from the low-order 8 digits of the IMSI if available, otherwise default to 0.
+    if (base->config->supi.has_value())
     {
-        const auto &imei = base->config->imei.value();
-        // IMEI is a 15-digit decimal string; parse the last 8 digits
+        const auto &imsi = base->config->supi->value;
+        // IMSI is a decimal string; parse the last 8 digits
         // and truncate to uint32
-        std::string tail = imei.length() > 8
-            ? imei.substr(imei.length() - 8) : imei;
+        std::string tail = imsi.length() > 8
+            ? imsi.substr(imsi.length() - 8) : imsi;
         m_shCtx->senderId = static_cast<uint32_t>(
             std::stoul(tail));
     }

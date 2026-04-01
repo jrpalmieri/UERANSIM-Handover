@@ -21,7 +21,7 @@ static constexpr const int TIMER_PERIOD_SI_BROADCAST = 10'000;
 namespace nr::gnb
 {
 
-GnbRrcTask::GnbRrcTask(TaskBase *base) : m_base{base}, m_ueCtx{}, m_tidCounter{}
+GnbRrcTask::GnbRrcTask(TaskBase *base) : m_base{base}, m_ueCtx{}, m_tidCountersByUe{}
 {
     m_logger = base->logBase->makeUniqueLogger("rrc");
     m_config = m_base->config;
@@ -81,7 +81,7 @@ void GnbRrcTask::onLoop()
             break;
         }
         case NmGnbNgapToRrc::PATH_SWITCH_REQUEST_ACK: {
-            m_logger->info("PathSwitchRequestAck received for UE[%d], handover fully complete", w.ueId);
+            m_logger->info("UE[%d] PathSwitchRequestAck received, handover fully complete", w.ueId);
             break;
         }
         }
@@ -92,13 +92,13 @@ void GnbRrcTask::onLoop()
         switch (w.present)
         {
         case NmGnbXnToRrc::HANDOVER_COMMAND_READY:
-            m_logger->debug("Xn handover command ready for UE[%d]", w.ueId);
+            m_logger->debug("UE[%d] Xn handover command ready", w.ueId);
             break;
         case NmGnbXnToRrc::HANDOVER_PREP_FAILURE:
-            m_logger->warn("Xn handover preparation failed for UE[%d] cause=%d", w.ueId, w.causeCode);
+            m_logger->warn("UE[%d] Xn handover preparation failed cause=%d", w.ueId, w.causeCode);
             break;
         case NmGnbXnToRrc::SOURCE_CONTEXT_RELEASE:
-            m_logger->debug("Xn source context release requested for UE[%d]", w.ueId);
+            m_logger->debug("UE[%d] Xn source context release requested", w.ueId);
             break;
         }
         break;

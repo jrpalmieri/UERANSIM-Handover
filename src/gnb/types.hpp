@@ -493,6 +493,19 @@ struct GnbHandoverConfig
     GnbXnConfig xn{};
 };
 
+struct GnbRlsConfig
+{
+    int loopCounter{1000};
+    int receiveTimeout{200};
+    int timerPeriodAckControl{1500};
+    int timerPeriodAckSend{2250};
+
+    [[nodiscard]] int getHeartbeatThreshold() const
+    {
+        return loopCounter + receiveTimeout;
+    }
+};
+
 struct GnbConfig
 {
     /* Read from config file */
@@ -508,6 +521,7 @@ struct GnbConfig
     std::optional<std::string> gtpAdvertiseIp{};
     bool ignoreStreamIds{};
     GnbRsrpConfig rsrp{};
+    GnbRlsConfig rls{};
     GnbHandoverConfig handover{};
     std::vector<GnbNeighborConfig> neighborList{};
 

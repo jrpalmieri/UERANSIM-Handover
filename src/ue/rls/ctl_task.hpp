@@ -35,6 +35,8 @@ class RlsControlTask : public NtsTask
     // map of all sent PDUs that are being tracked for acknowledgment, indexed by pduId
     std::unordered_map<uint32_t, rls::PduInfo> m_pduMap;
     std::unordered_map<int, std::vector<uint32_t>> m_pendingAck;
+    int m_timerPeriodAckControl;
+    int m_timerPeriodAckSend;
 
   public:
     explicit RlsControlTask(TaskBase *base, RlsSharedContext *shCtx);

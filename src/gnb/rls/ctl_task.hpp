@@ -27,6 +27,8 @@ class RlsControlTask : public NtsTask
     RlsUdpTask *m_udpTask;
     std::unordered_map<uint32_t, rls::PduInfo> m_pduMap;
     std::unordered_map<int, std::vector<uint32_t>> m_pendingAck;
+    int m_timerPeriodAckControl;
+    int m_timerPeriodAckSend;
 
   public:
     explicit RlsControlTask(TaskBase *base, uint64_t sti);

@@ -75,11 +75,11 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
 {
     int32_t requestedSliceType = extractSliceInfoAndModifyPdu(nasPdu);
 
-    m_logger->debug("Initial NAS message received from UE[%d]", ueId);
+    m_logger->debug("UE[%d] Initial NAS message received", ueId);
 
     if (m_ueCtx.count(ueId))
     {
-        m_logger->err("UE context[%d] already exists.  Overwriting.", ueId);
+        m_logger->err("UE[%d] Context already exists.  Overwriting.", ueId);
         //return;
     }
 
@@ -87,17 +87,24 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
 
     // sanity check on ctx creation
     auto *ueCtx = findUeContext(ueId);
-    if (ueCtx == nullptr)
+    if (ueCtx == nullptr) 
+    {
+        m_logger->err("UE[%d] Context creation failed.", ueId);
         return;
+    }
+
 
     // sanity check on AMF assignment (happens during ctx creation)
     auto *amfCtx = findAmfContext(ueCtx->associatedAmfId);
     if (amfCtx == nullptr)
+    {
+        m_logger->err("UE[%d] AMF association failed.", ueId);
         return;
+    }
 
     if (amfCtx->state != EAmfState::CONNECTED)
     {
-        m_logger->err("Initial NAS transport failure. AMF is not in connected state.");
+        m_logger->err("UE[%d] Initial NAS transport failure. AMF is not in connected state.", ueId);
         return;
     }
 
@@ -176,7 +183,7 @@ void NgapTask::handleUplinkNasTransport(int ueId, const OctetString &nasPdu)
 
 void NgapTask::sendNasNonDeliveryIndication(int ueId, const OctetString &nasPdu, NgapCause cause)
 {
-    m_logger->debug("Sending non-delivery indication for UE[%d]", ueId);
+    m_logger->debug("Sending non-delivery indication UE[%d] ", ueId);
 
     auto *ieNasPdu = asn::New<ASN_NGAP_NASNonDeliveryIndication_IEs>();
     ieNasPdu->id = ASN_NGAP_ProtocolIE_ID_id_NAS_PDU;

@@ -90,7 +90,7 @@ void XnTask::handleRrcMessage(NmGnbRrcToXn &message)
         auto endpoint = resolveNeighborXnEndpoint(message.hoTargetPci);
         if (!endpoint)
         {
-            m_logger->warn("Xn handover request dropped for UE[%d], targetPCI=%d not found",
+            m_logger->warn("UE[%d] Xn handover request dropped, targetPCI=%d not found",
                            message.ueId, message.hoTargetPci);
             return;
         }
@@ -118,7 +118,7 @@ void XnTask::handleRrcMessage(NmGnbRrcToXn &message)
         break;
     }
     case NmGnbRrcToXn::HANDOVER_COMPLETE_XN:
-        m_logger->info("Xn HandoverComplete notification received for UE[%d]", message.ueId);
+        m_logger->info("UE[%d] Xn HandoverComplete notification received", message.ueId);
         break;
     }
 }
@@ -128,7 +128,7 @@ void XnTask::handleNgapMessage(NmGnbNgapToXn &message)
     switch (message.present)
     {
     case NmGnbNgapToXn::PATH_SWITCH_ACK:
-        m_logger->info("Xn observed PathSwitch ACK for UE[%d], success=%s",
+        m_logger->info("UE[%d] Xn observed PathSwitch ACK success=%s",
                        message.ueId, message.success ? "true" : "false");
         break;
     }

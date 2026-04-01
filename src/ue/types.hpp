@@ -139,6 +139,19 @@ struct HandoverServerConfig
     uint16_t port{7200};
 };
 
+struct UeRlsConfig
+{
+    int loopCounter{200};
+    int receiveTimeout{100};
+    int timerPeriodAckControl{1500};
+    int timerPeriodAckSend{2250};
+
+    [[nodiscard]] int getHeartbeatThreshold() const
+    {
+        return loopCounter + receiveTimeout;
+    }
+};
+
 struct UeConfig
 {
     /* Read from config file */
@@ -191,6 +204,8 @@ struct UeConfig
     
     // UE position from config (for D1 handover events)
     std::optional<UePosition> initialPosition{};
+
+    UeRlsConfig rls{};
 
     /* Assigned by program */
     bool configureRouting{};

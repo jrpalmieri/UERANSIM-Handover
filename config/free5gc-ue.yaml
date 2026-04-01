@@ -33,6 +33,14 @@ tunNetmask: '255.255.255.0'
 gnbSearchList:
   - 127.0.0.1
 
+# RLS loop/timer settings (ms).
+# HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT.
+rls:
+  LOOP_COUNTER: 200
+  RECEIVE_TIMEOUT: 100
+  TIMER_PERIOD_ACK_SEND: 2250
+  TIMER_PERIOD_ACK_CONTROL: 1500
+
 # UAC Access Identities Configuration
 uacAic:
   mps: false

@@ -18,8 +18,30 @@
     "command_timeout_sec": 3.0,
     "process_log_dir": "./tools/UI/logs"
   },
+  "user_plane": {
+    "upf_ip": "172.22.0.8",
+    "upf_port": 5000,
+    "capture_enabled": true,
+    "capture_use_sudo": true,
+    "capture_sudo_non_interactive": true,
+    "move_tun_to_netns": true,
+    "netns_name": "ue1",
+    "netns_prefix_len": 16,
+    "ensure_host_route_to_ue": true,
+    "host_route_gateway": "172.22.0.8",
+    "host_route_subnet": "172.22.0.0/24",
+    "max_log_lines": 400
+  },
+  "core_db": {
+    "warn_missing_subscribers": true,
+    "dbctl_script": "./tools/open5gs-dbctl.py",
+    "db_uri": "mongodb://localhost/open5gs",
+    "check_timeout_sec": 10.0,
+    "python": "python3"
+  },
   "ue": {
     "node": "UE1",
+    "count": 100,
     "config": "./tools/UI/configs/ue1.yaml",
     "auto_setcap": true,
     "run_with_sudo": true,

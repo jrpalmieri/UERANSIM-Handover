@@ -119,7 +119,22 @@ static nr::ue::UeConfig *ReadConfigYaml()
         result->routingIndicator = yaml::GetString(config, "routingIndicator", 1, 4);
 
     for (auto &gnbSearchItem : yaml::GetSequence(config, "gnbSearchList"))
+    {
         result->gnbSearchList.push_back(gnbSearchItem.as<std::string>());
+    }
+
+    if (yaml::HasField(config, "rls"))
+    {
+        auto rls = config["rls"];
+        if (yaml::HasField(rls, "LOOP_COUNTER"))
+            result->rls.loopCounter = yaml::GetInt32(rls, "LOOP_COUNTER", 1, 60000);
+        if (yaml::HasField(rls, "RECEIVE_TIMEOUT"))
+            result->rls.receiveTimeout = yaml::GetInt32(rls, "RECEIVE_TIMEOUT", 1, 60000);
+        if (yaml::HasField(rls, "TIMER_PERIOD_ACK_SEND"))
+            result->rls.timerPeriodAckSend = yaml::GetInt32(rls, "TIMER_PERIOD_ACK_SEND", 1, 60000);
+        if (yaml::HasField(rls, "TIMER_PERIOD_ACK_CONTROL"))
+            result->rls.timerPeriodAckControl = yaml::GetInt32(rls, "TIMER_PERIOD_ACK_CONTROL", 1, 60000);
+    }
 
     if (yaml::HasField(config, "default-nssai"))
     {
@@ -419,7 +434,7 @@ static nr::ue::UeConfig *GetConfigByUe(int ueIndex)
     c->uacAic = g_refConfig->uacAic;
     c->uacAcc = g_refConfig->uacAcc;
     c->useHandoverMeasFramework = g_refConfig->useHandoverMeasFramework;
-    //c->measSourceConfig = g_refConfig->measSourceConfig;
+    c->rls = g_refConfig->rls;
     c->initialPosition = g_refConfig->initialPosition;
 
     if (c->supi.has_value())
