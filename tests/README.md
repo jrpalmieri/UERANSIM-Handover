@@ -2,8 +2,8 @@
 
 A Python-based test harness for integration- and unit-testing the
 **UERANSIM UE** (User Equipment emulator).  The harness simulates a
-gNB (base station) entirely in Python, injects Out-of-Band (OOB)
-measurements, and verifies UE state transitions and signaling.
+gNB (base station) entirely in Python, supports optional UDP measurement
+injection for manual experiments, and verifies UE state transitions and signaling.
 
 ---
 
@@ -15,7 +15,7 @@ measurements, and verifies UE state transitions and signaling.
 │ (C++ bin)  │                   │  (Python)     │
 └────────────┘                   └──────┬───────┘
       ▲                                 │
-      │ UDP :7200 (OOB)         orchestrates
+      │ UDP :7200 (optional)    orchestrates
       │                                 │
 ┌─────┴──────┐        ┌────────────────┴──────────────┐
 │ MeasInject  │        │  rls_protocol / rrc_builder / │
@@ -26,7 +26,7 @@ measurements, and verifies UE state transitions and signaling.
 | Component | Description |
 |---|---|
 | **FakeGnb** | Listens on UDP 4997, speaks the RLS binary protocol, drives RRC/NAS flows |
-| **MeasurementInjector** | Sends JSON cell measurements to the UE's OOB UDP port (7200) |
+| **MeasurementInjector** | Sends JSON cell measurements to the UE's optional UDP measurement port (7200) |
 | **UeProcess** | Starts/stops `nr-ue`, manages config YAML, captures stdout logs |
 | **rls_protocol** | Encode / decode RLS HeartBeat, HeartBeatAck, PduTransmission, … |
 | **rrc_builder** | RRC message encoding (MIB, SIB1, RRCSetup, Reconfiguration, …) via `asn1tools` with fallback |
@@ -64,24 +64,46 @@ Contents of `requirements.txt`:
 
 ```
 tests/
-├── conftest.py                # pytest fixtures (fake_gnb, ue_process, …)
+├── README.md
 ├── requirements.txt
-├── README.md                  # ← you are here
+├── open5gs-dbctl.py
+├── open5gs-dbctl.sh
 ├── configs/
-│   └── test-ue.yaml           # UE config with OOB measurement provider
-├── harness/
-│   ├── __init__.py
-│   ├── rls_protocol.py        # RLS binary protocol
-│   ├── fake_gnb.py            # Fake gNB orchestrator
-│   ├── meas_injector.py       # OOB measurement injector
-│   ├── ue_process.py          # nr-ue process manager
-│   ├── rrc_builder.py         # RRC message codec
-│   ├── nas_builder.py         # NAS message builder
-│   └── milenage.py            # Milenage + 5G-AKA crypto
-├── test_ue_rrc_states.py      # RRC state transition tests
-├── test_ue_nas_states.py      # NAS / RM / CM / MM state tests
-├── test_measurement.py        # Measurement event A2 / A3 / A5 tests
-└── test_signaling.py          # Signaling correctness tests
+│   ├── test-ue.yaml
+│   ├── test_ue1.yaml
+│   └── test_gnb2.yaml
+├── ue/
+│   ├── conftest.py
+│   ├── demo_handover_a3.py
+│   ├── manual_handover.py
+│   ├── harness/
+│   │   ├── fake_gnb.py
+│   │   ├── meas_injector.py
+│   │   ├── milenage.py
+│   │   ├── nas_builder.py
+│   │   ├── rls_protocol.py
+│   │   ├── rrc_builder.py
+│   │   └── ue_process.py
+│   ├── test_ue_cho.py
+│   ├── test_ue_execution.py
+│   ├── test_ue_handover.py
+│   ├── test_ue_nas_states.py
+│   ├── test_ue_rls.py
+│   ├── test_ue_rrc_states.py
+│   └── test_ue_signaling_units.py
+└── gnb/
+  ├── conftest.py
+  ├── harness/
+  │   ├── fake_amf.py
+  │   ├── fake_ue.py
+  │   ├── gnb_process.py
+  │   ├── marks.py
+  │   └── ngap_codec.py
+  ├── test_gnb_handover.py
+  ├── test_gnb_health.py
+  ├── test_gnb_ngap.py
+  ├── test_gnb_registration.py
+  └── test_gnb_rrc.py
 ```
 
 ---
@@ -107,7 +129,7 @@ are automatically **skipped** when the binary is not present.
 ### Run a single test file
 
 ```bash
-pytest -v test_measurement.py
+pytest -v ue/test_ue_cho.py
 ```
 
 ### Run with extra debug output
@@ -140,20 +162,7 @@ pytest -v -s --timeout=180
 | CM state follows RRC | Integration |
 | MM substates during registration | Integration |
 
-### 3. Measurement Tests (`test_measurement.py`)
-
-| Test | What it verifies |
-|---|---|
-| A2 event fired when serving ≤ threshold | Integration |
-| A2 *not* fired above threshold | Integration |
-| A3 event (neighbour better by offset) | Integration |
-| A5 dual-threshold | Integration |
-| Time-to-trigger delay | Integration |
-| One-shot reporting per measId | Integration |
-| RSRP encoding math | Unit |
-| Hysteresis boundary analysis | Unit |
-
-### 4. Signaling Tests (`test_signaling.py`)
+### 3. Signaling Tests (`test_ue_signaling_units.py`)
 
 | Test | What it verifies |
 |---|---|
@@ -199,7 +208,7 @@ UE                              FakeGnb
 FakeGnb                              UE
  │── RRCReconfiguration ──────────►│  (carries measConfig with A2/A3/A5)
  │                                  │
- │  [OOB measurement injection]     │  (MeasurementInjector sends JSON)
+ │  [optional UDP measurement feed] │  (MeasurementInjector sends JSON)
  │                                  │
  │◄── MeasurementReport (UL_DCCH) ─│  (when event condition met)
 ```
@@ -218,16 +227,19 @@ uses these credentials:
 | Key (K) | `465B5CE8B199B49FAA5F0A2EE238A6BC` |
 | OP | `E8ED289DEBA952E4283B54E88E6183CA` |
 | OP type | OP (not OPc) |
-| OOB meas port | UDP 7200 |
+| UDP measurement port | UDP 7200 |
 
 These match the default UERANSIM test credentials.  No real 5G core
 is required — the fake gNB handles all NAS messages.
 
 ---
 
-## Measurement injection
+## Optional UDP measurement injection
 
-The `MeasurementInjector` sends JSON over UDP to port 7200:
+The `MeasurementInjector` sends JSON over UDP to port 7200.
+
+This path is kept for manual/debug scenarios; the primary automated
+handover direction in `tests` is heartbeat-ACK dbm steering.
 
 ```python
 from harness.meas_injector import MeasurementInjector, CellMeas
@@ -305,4 +317,4 @@ byte constant.
 - **Milenage**: 3GPP TS 35.206
 - **5G-AKA**: 3GPP TS 33.501
 - **NIA2 / NEA2**: 3GPP TS 33.401 (EIA2 / EEA2, AES-based)
-- **OOB measurement provider**: UERANSIM custom extension (`src/ue/rls/measurement.cpp`)
+- **UDP measurement provider**: UERANSIM custom extension (`src/ue/rls/measurement.cpp`)

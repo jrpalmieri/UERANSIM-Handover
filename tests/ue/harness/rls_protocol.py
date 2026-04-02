@@ -11,12 +11,13 @@ Wire format (all fields big-endian):
     3       1     patch version (7)
   4       1     message type  (EMessageType)
   5       8     STI  – Session Temporary Identifier (uint64)
-  13      4     SenderId (uint32, always present)
-  17+     var   payload (depends on message type)
+    13      4     SenderId  (uint32, always present)
+    17      4     SenderId2 (uint32, always present)
+    21+     var   payload (depends on message type)
 
 Payload per message type:
 
-  HEARTBEAT (4):      simPos.x (4B int32), .y (4B), .z (4B)
+    HEARTBEAT (4):      latitude (8B double), longitude (8B), altitude (8B)
   HEARTBEAT_ACK (5):  dbm (4B int32)
   PDU_TRANSMISSION (6):
       pduType (1B), pduId (4B uint32), payload (4B uint32),
@@ -45,6 +46,8 @@ RLS_STI_FMT = "!Q"                 # uint64
 RLS_STI_SIZE = struct.calcsize(RLS_STI_FMT)        # 8
 RLS_CELL_ID_FMT = "!I"             # uint32 (senderId on the wire)
 RLS_CELL_ID_SIZE = struct.calcsize(RLS_CELL_ID_FMT)
+RLS_CELL_ID2_FMT = "!I"            # uint32 (senderId2 on the wire)
+RLS_CELL_ID2_SIZE = struct.calcsize(RLS_CELL_ID2_FMT)
 
 # Portal port used by UERANSIM gNB RLS
 PORTAL_PORT = 4997
@@ -86,6 +89,7 @@ class RrcChannel(IntEnum):
 class RlsHeartBeat:
     sti: int
     sender_id: int
+    sender_id2: int
     sim_pos: tuple  # (x, y, z) as ints
 
 
@@ -93,6 +97,7 @@ class RlsHeartBeat:
 class RlsHeartBeatAck:
     sti: int
     sender_id: int
+    sender_id2: int
     dbm: int
 
 
@@ -100,6 +105,7 @@ class RlsHeartBeatAck:
 class RlsPduTransmission:
     sti: int
     sender_id: int
+    sender_id2: int
     pdu_type: EPduType
     pdu_id: int
     payload: int         # RrcChannel for RRC PDUs, PSI for DATA
@@ -110,6 +116,7 @@ class RlsPduTransmission:
 class RlsPduTransmissionAck:
     sti: int
     sender_id: int
+    sender_id2: int
     pdu_ids: List[int]
 
 
@@ -122,7 +129,10 @@ RlsMessage = (RlsHeartBeat | RlsHeartBeatAck
 # ---------------------------------------------------------------------------
 
 def _encode_header(
-    msg_type: EMessageType, sti: int, sender_id: int = 0,
+    msg_type: EMessageType,
+    sti: int,
+    sender_id: int = 0,
+    sender_id2: int = 0,
 ) -> bytes:
     hdr = struct.pack(
         RLS_HEADER_FMT,
@@ -134,22 +144,29 @@ def _encode_header(
     )
     return (hdr
             + struct.pack(RLS_STI_FMT, sti)
-            + struct.pack(RLS_CELL_ID_FMT, sender_id))
+            + struct.pack(RLS_CELL_ID_FMT, sender_id)
+            + struct.pack(RLS_CELL_ID2_FMT, sender_id2))
 
 
 def encode_heartbeat(
-    sti: int, sim_pos: tuple = (0, 0, 0), sender_id: int = 0,
+    sti: int,
+    sim_pos: tuple = (0.0, 0.0, 0.0),
+    sender_id: int = 0,
+    sender_id2: int = 0,
 ) -> bytes:
     """Encode an RLS HeartBeat message."""
-    return (_encode_header(EMessageType.HEARTBEAT, sti, sender_id)
-            + struct.pack("!iii", sim_pos[0], sim_pos[1], sim_pos[2]))
+    return (_encode_header(EMessageType.HEARTBEAT, sti, sender_id, sender_id2)
+            + struct.pack("!ddd", sim_pos[0], sim_pos[1], sim_pos[2]))
 
 
 def encode_heartbeat_ack(
-    sti: int, dbm: int, sender_id: int = 0,
+    sti: int,
+    dbm: int,
+    sender_id: int = 0,
+    sender_id2: int = 0,
 ) -> bytes:
     """Encode an RLS HeartBeatAck message."""
-    return (_encode_header(EMessageType.HEARTBEAT_ACK, sti, sender_id)
+    return (_encode_header(EMessageType.HEARTBEAT_ACK, sti, sender_id, sender_id2)
             + struct.pack("!i", dbm))
 
 
@@ -160,6 +177,7 @@ def encode_pdu_transmission(
     payload: int,
     pdu: bytes,
     sender_id: int = 0,
+    sender_id2: int = 0,
 ) -> bytes:
     """Encode an RLS PduTransmission message.
 
@@ -173,7 +191,7 @@ def encode_pdu_transmission(
     """
     body = struct.pack("!BIII", int(pdu_type), pdu_id, payload, len(pdu))
     return (_encode_header(
-        EMessageType.PDU_TRANSMISSION, sti, sender_id,
+        EMessageType.PDU_TRANSMISSION, sti, sender_id, sender_id2,
     ) + body + pdu)
 
 
@@ -181,13 +199,14 @@ def encode_pdu_transmission_ack(
     sti: int,
     pdu_ids: List[int],
     sender_id: int = 0,
+    sender_id2: int = 0,
 ) -> bytes:
     """Encode an RLS PduTransmissionAck message."""
     body = struct.pack("!I", len(pdu_ids))
     for pid in pdu_ids:
         body += struct.pack("!I", pid)
     return _encode_header(
-        EMessageType.PDU_TRANSMISSION_ACK, sti, sender_id,
+        EMessageType.PDU_TRANSMISSION_ACK, sti, sender_id, sender_id2,
     ) + body
 
 
@@ -200,7 +219,7 @@ def decode_rls_message(data: bytes) -> Optional[RlsMessage]:
 
     Returns None if the datagram is malformed or has an unknown type.
     """
-    min_size = RLS_HEADER_SIZE + RLS_STI_SIZE + RLS_CELL_ID_SIZE
+    min_size = RLS_HEADER_SIZE + RLS_STI_SIZE + RLS_CELL_ID_SIZE + RLS_CELL_ID2_SIZE
     if len(data) < min_size:
         return None
 
@@ -219,20 +238,22 @@ def decode_rls_message(data: bytes) -> Optional[RlsMessage]:
 
     sender_id = struct.unpack_from(RLS_CELL_ID_FMT, data, offset)[0]
     offset += RLS_CELL_ID_SIZE
+    sender_id2 = struct.unpack_from(RLS_CELL_ID2_FMT, data, offset)[0]
+    offset += RLS_CELL_ID2_SIZE
 
     if msg_type == EMessageType.HEARTBEAT:
-        if len(data) < offset + 12:
+        if len(data) < offset + 24:
             return None
-        x, y, z = struct.unpack_from("!iii", data, offset)
+        x, y, z = struct.unpack_from("!ddd", data, offset)
         return RlsHeartBeat(
-            sti=sti, sender_id=sender_id, sim_pos=(x, y, z))
+            sti=sti, sender_id=sender_id, sender_id2=sender_id2, sim_pos=(x, y, z))
 
     if msg_type == EMessageType.HEARTBEAT_ACK:
         if len(data) < offset + 4:
             return None
         dbm = struct.unpack_from("!i", data, offset)[0]
         return RlsHeartBeatAck(
-            sti=sti, sender_id=sender_id, dbm=dbm)
+            sti=sti, sender_id=sender_id, sender_id2=sender_id2, dbm=dbm)
 
     if msg_type == EMessageType.PDU_TRANSMISSION:
         if len(data) < offset + 13:
@@ -248,7 +269,7 @@ def decode_rls_message(data: bytes) -> Optional[RlsMessage]:
         except ValueError:
             pdu_type = EPduType.RESERVED
         return RlsPduTransmission(
-            sti=sti, sender_id=sender_id, pdu_type=pdu_type,
+            sti=sti, sender_id=sender_id, sender_id2=sender_id2, pdu_type=pdu_type,
             pdu_id=pdu_id, payload=payload, pdu=pdu)
 
     if msg_type == EMessageType.PDU_TRANSMISSION_ACK:
@@ -264,7 +285,7 @@ def decode_rls_message(data: bytes) -> Optional[RlsMessage]:
                 struct.unpack_from("!I", data, offset)[0])
             offset += 4
         return RlsPduTransmissionAck(
-            sti=sti, sender_id=sender_id, pdu_ids=pdu_ids)
+            sti=sti, sender_id=sender_id, sender_id2=sender_id2, pdu_ids=pdu_ids)
 
     return None
 

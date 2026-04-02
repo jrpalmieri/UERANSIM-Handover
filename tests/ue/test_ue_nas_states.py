@@ -16,9 +16,9 @@ import time
 
 import pytest
 
-from harness.fake_gnb import FakeGnb
-from harness.ue_process import UeProcess
-from conftest import ue_binary_exists, needs_asn1tools
+from .harness.fake_gnb import FakeGnb
+from .harness.ue_process import UeProcess
+from .conftest import ue_binary_exists, needs_asn1tools
 
 
 # ======================================================================

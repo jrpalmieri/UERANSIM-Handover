@@ -25,8 +25,8 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Path to the RRC ASN.1 schema bundled with UERANSIM
-_ASN1_PATH = Path(__file__).resolve().parents[2] / "tools" / "rrc-15.6.0.asn1"
-_ASN1_EXPANDED_PATH = Path(__file__).resolve().parents[2] / "tools" / "rrc-15.6.0-expanded.asn1"
+_ASN1_PATH = Path(__file__).resolve().parents[3] / "tools" / "rrc-15.6.0.asn1"
+_ASN1_EXPANDED_PATH = Path(__file__).resolve().parents[3] / "tools" / "rrc-15.6.0-expanded.asn1"
 
 
 def _try_compile_asn1():
@@ -154,6 +154,14 @@ def _push_length_determinant(bits: list, length: int):
         raise ValueError(f"Length {length} too large for fallback encoder")
 
 
+def _bit_string_from_int(value: int, bit_length: int) -> tuple[bytes, int]:
+    """Build an asn1tools BIT STRING tuple as (bytes, bit_length)."""
+    if bit_length <= 0:
+        return (b"", 0)
+    width = (bit_length + 7) // 8
+    return (int(value).to_bytes(width, "big"), bit_length)
+
+
 def _uper_dl_info_transfer(tid: int, nas_pdu: bytes) -> bytes:
     """UPER-encode DL-DCCH-Message → c1 → dlInformationTransfer."""
     bits: list = []
@@ -212,7 +220,7 @@ class RrcCodec:
             mib_msg = {
                 "message": (
                     "mib", {
-                        "systemFrameNumber": (sfn, 6),
+                        "systemFrameNumber": _bit_string_from_int(sfn, 6),
                         "subCarrierSpacingCommon": scs_common,
                         "ssb-SubcarrierOffset": ssb_offset,
                         "dmrs-TypeA-Position": dmrs_pos,
@@ -222,7 +230,7 @@ class RrcCodec:
                         },
                         "cellBarred": cell_barred,
                         "intraFreqReselection": intra_freq,
-                        "spare": (0, 1),
+                        "spare": _bit_string_from_int(0, 1),
                     }
                 )
             }
@@ -257,8 +265,8 @@ class RrcCodec:
                     "plmn-IdentityList": [
                         {
                             "plmn-IdentityList": [plmn],
-                            "trackingAreaCode": (tac, 24),
-                            "cellIdentity": (cell_identity, 36),
+                            "trackingAreaCode": _bit_string_from_int(tac, 24),
+                            "cellIdentity": _bit_string_from_int(cell_identity, 36),
                             "cellReservedForOperatorUse": "notReserved",
                         }
                     ]
@@ -463,6 +471,102 @@ class RrcCodec:
         return self._fallback_rrc_reconfig(
             transaction_id, meas_objects, report_configs, meas_ids
         )
+
+    def build_conditional_reconfiguration_payload(
+        self,
+        candidates_to_add_mod: Optional[List[Dict]] = None,
+        candidate_ids_to_remove: Optional[List[int]] = None,
+    ) -> Dict[str, Any]:
+        """Build a ConditionalReconfiguration payload dict.
+
+        candidates_to_add_mod entries:
+          {
+            "candidateId": int,
+            "measIds": [int, ...],
+            "condRrcReconfig": bytes,
+          }
+
+        candidate_ids_to_remove is a list of CondReconfigId values.
+        """
+        payload: Dict[str, Any] = {}
+
+        if candidates_to_add_mod:
+            add_mod_list = []
+            for cand in candidates_to_add_mod:
+                item: Dict[str, Any] = {
+                    "condReconfigId": cand["candidateId"],
+                }
+
+                meas_ids = cand.get("measIds")
+                if meas_ids:
+                    item["condExecutionCond"] = list(meas_ids)
+
+                cond_rrc = cand.get("condRrcReconfig")
+                if cond_rrc is not None:
+                    item["condRRCReconfig"] = cond_rrc
+
+                add_mod_list.append(item)
+
+            payload["condReconfigToAddModList"] = add_mod_list
+
+        if candidate_ids_to_remove:
+            payload["condReconfigToRemoveList"] = list(candidate_ids_to_remove)
+
+        return payload
+
+    def build_rrc_reconfiguration_conditional_handover(
+        self,
+        transaction_id: int = 0,
+        candidates_to_add_mod: Optional[List[Dict]] = None,
+        candidate_ids_to_remove: Optional[List[int]] = None,
+    ) -> bytes:
+        """Build an RRCReconfiguration carrying ConditionalReconfiguration.
+
+        This uses the v1530->v1540->v1560->v1610 nonCriticalExtension chain,
+        matching the UE parser path in `src/ue/rrc/reconfig.cpp`.
+        """
+        cond_payload = self.build_conditional_reconfiguration_payload(
+            candidates_to_add_mod=candidates_to_add_mod,
+            candidate_ids_to_remove=candidate_ids_to_remove,
+        )
+
+        if self._asn1 is not None:
+            msg = {
+                "message": (
+                    "c1", (
+                        "rrcReconfiguration",
+                        {
+                            "rrc-TransactionIdentifier": transaction_id,
+                            "criticalExtensions": (
+                                "rrcReconfiguration",
+                                {
+                                    "nonCriticalExtension": {
+                                        "nonCriticalExtension": {
+                                            "nonCriticalExtension": {
+                                                "nonCriticalExtension": {
+                                                    "conditionalReconfiguration": cond_payload,
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            ),
+                        },
+                    )
+                )
+            }
+            try:
+                return self._asn1.encode("DL-DCCH-Message", msg)
+            except Exception as exc:
+                logger.debug(
+                    "asn1tools ConditionalReconfiguration encode failed: %s",
+                    exc,
+                )
+
+        logger.warning(
+            "Using fallback ConditionalReconfiguration RRC message — install asn1tools"
+        )
+        return self._fallback_rrc_reconfig(transaction_id, [], [], [])
 
     # ------------------------------------------------------------------
     #  Handover: CellGroupConfig + RRCReconfiguration with sync

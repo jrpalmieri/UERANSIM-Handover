@@ -5,13 +5,8 @@ import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-LEGACY_TESTS_ROOT = PROJECT_ROOT / "tests"
-
-if str(LEGACY_TESTS_ROOT) not in sys.path:
-    sys.path.insert(0, str(LEGACY_TESTS_ROOT))
-
-from gnb_harness.marks import gnb_binary_exists, needs_pysctp
-from gnb_harness import ngap_codec as ngap
+from .harness.marks import gnb_binary_exists, needs_pysctp
+from .harness import ngap_codec as ngap
 from .harness.fake_ue import RrcChannel
 
 

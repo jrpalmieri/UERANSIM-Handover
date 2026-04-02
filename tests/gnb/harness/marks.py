@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _GNB_CANDIDATE = PROJECT_ROOT / "cmake-build-release" / "nr-gnb"
 GNB_BINARY = _GNB_CANDIDATE if _GNB_CANDIDATE.exists() else PROJECT_ROOT / "build" / "nr-gnb"
 

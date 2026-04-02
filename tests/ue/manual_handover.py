@@ -1,5 +1,5 @@
 """
-Simplified OOB measurement generator for manual handover testing.
+Simplified UDP measurement generator for manual handover testing.
 
 Rather than launching any processes, this script assumes the UE and gNB
 instances are already running (configured via their respective YAML files).
@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 
-from harness.meas_injector import MeasurementInjector
+from .harness.meas_injector import MeasurementInjector
 
 # def get_db(db_uri="mongodb://localhost:27017/open5gs"):
 #     """Connect to MongoDB and return the database object."""
@@ -128,9 +128,9 @@ class TestOobHandover:
     """
 
     def test_oob_measurement_handover(self):
-        """Generate periodic OOB measurements without touching UE/GNB processes."""
+        """Generate periodic UDP measurements without touching UE/GNB processes."""
 
-        print("Generating OOB measurements (no GNB/UE control)")
+        print("Generating UDP measurements (no GNB/UE control)")
 
         # load the NCI values from the YAML configs so we know which cells to
         # reference.  (This is purely for demonstration; hard‑coding 1/2 would

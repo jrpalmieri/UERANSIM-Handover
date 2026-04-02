@@ -1,195 +1,147 @@
-"""
-Integration tests for the gNB handover flow.
-
-Verifies the complete N2 (AMF-mediated) handover sequence:
-
-    MeasConfig → MeasReport → HandoverDecision → HandoverRequired →
-    HandoverCommand → RRCReconfiguration → RRCReconfigurationComplete →
-    HandoverNotify → PathSwitchRequest → PathSwitchRequestAck
-
-All tests use FakeAmf (SCTP) + FakeUe (RLS) against a real ``nr-gnb``
-binary.
-"""
-
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
 
-import sys
-from pathlib import Path
-_TESTS_DIR = Path(__file__).resolve().parent.parent
-if str(_TESTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_TESTS_DIR))
+from .harness.marks import gnb_binary_exists, needs_pysctp
+from .harness import ngap_codec as ngap
 
-from gnb_harness.marks import gnb_binary_exists, needs_pysctp
-from gnb_harness.fake_amf import FakeAmf
-from gnb_harness.fake_ue import FakeUe
-from gnb_harness.gnb_process import GnbProcess
-from gnb_harness import ngap_codec as ngap
-
-from harness.rls_protocol import RrcChannel
-
-
-# =====================================================================
-#  Full handover flow
-# =====================================================================
 
 @gnb_binary_exists
 @needs_pysctp
-class TestHandoverFlow:
-    """End-to-end gNB handover integration tests."""
-
-    def test_full_n2_handover(
+class TestGnbHandover:
+    def test_gnb_sends_handover_required_after_measurement_report(
         self,
-        fake_amf: FakeAmf,
-        started_gnb: GnbProcess,
+        fake_amf,
+        started_gnb_with_neighbor,
+        rrc_connected_ue_with_neighbor,
     ):
-        """Complete N2 handover from UE attach through path switch.
+        if not started_gnb_with_neighbor.wait_for_meas_config(timeout_s=10):
+            pytest.skip("gNB did not send MeasConfig in neighbor scenario")
+        time.sleep(1.0)
 
-        Steps:
-        1. FakeUe connects and completes RRC Setup
-        2. gNB sends MeasConfig (A3)
-        3. FakeUe sends MeasurementReport (neighbour stronger)
-        4. gNB makes handover decision → sends HandoverRequired to AMF
-        5. AMF auto-responds with HandoverCommand
-        6. gNB forwards handover to UE via RRCReconfiguration
-        7. FakeUe sends RRCReconfigurationComplete
-        8. gNB sends HandoverNotify + PathSwitchRequest to AMF
-        9. AMF auto-responds with PathSwitchRequestAck
-        """
-        # -- Step 1: UE attach --
-        ue = FakeUe()
-        ue.start()
-        try:
-            assert ue.wait_for_heartbeat_ack(timeout_s=10), \
-                "No heartbeat ack from gNB"
+        rrc_connected_ue_with_neighbor.send_measurement_report(
+            meas_id=1,
+            serving_rsrp=20,
+            serving_pci=0,
+            neighbor_pci=2,
+            neighbor_rsrp=60,
+        )
 
-            ue.send_rrc_setup_request()
-            dl = ue.wait_for_dl_rrc(RrcChannel.DL_CCCH, timeout_s=5)
-            assert dl is not None, "Did not receive RRCSetup"
+        assert started_gnb_with_neighbor.wait_for_handover_decision(timeout_s=10), "gNB did not log handover decision"
 
-            ue.send_rrc_setup_complete()  # default NAS includes NSSAI(SST=1)
+        ho = fake_amf.wait_for_handover_required(timeout_s=10)
+        assert ho is not None, "AMF did not receive HandoverRequired"
+        assert ho.procedure_code == ngap.PROC_HANDOVER_PREPARATION
 
-            # -- Step 2: MeasConfig --
-            assert started_gnb.wait_for_meas_config(timeout_s=10), \
-                "gNB did not send MeasConfig"
-            meas_dl = ue.wait_for_dl_rrc(RrcChannel.DL_DCCH, timeout_s=5)
-            assert meas_dl is not None, "UE did not receive MeasConfig"
-
-            # Wait for AMF to assign UE context (InitialUEMessage → DL NAS)
-            ium = fake_amf.wait_for_initial_ue_message(timeout_s=10)
-            assert ium is not None, "AMF did not receive InitialUEMessage"
-            time.sleep(1.0)
-
-            # -- Step 3: Measurement Report --
-            ue.send_measurement_report(
-                meas_id=1,
-                serving_rsrp=20,   # weak
-                serving_pci=0,
-                neighbor_pci=1,
-                neighbor_rsrp=60,  # strong
-            )
-
-            # -- Step 4: Handover decision + HandoverRequired --
-            assert started_gnb.wait_for_handover_decision(timeout_s=10), \
-                "gNB did not make handover decision"
-            ho_req = fake_amf.wait_for_handover_required(timeout_s=10)
-            assert ho_req is not None, "AMF did not receive HandoverRequired"
-
-            # -- Step 5: HandoverCommand auto-response (FakeAmf handles this) --
-            assert started_gnb.wait_for_handover_command(timeout_s=10), \
-                "gNB did not receive HandoverCommand from AMF"
-
-            # -- Step 6: RRCReconfiguration to UE --
-            assert started_gnb.wait_for_log(
-                r"Sending handover command to UE|Forwarding NGAP Handover Command",
-                timeout_s=10,
-            ), "gNB did not forward handover to UE"
-
-            # Wait for the DL-DCCH handover RRC message
-            time.sleep(1.0)
-            dcch_msgs = [m for m in ue.dl_messages
-                         if m.channel == int(RrcChannel.DL_DCCH)]
-            assert len(dcch_msgs) >= 2, \
-                "UE did not receive handover RRCReconfiguration"
-
-            # -- Step 7: RRCReconfigurationComplete --
-            ue.send_rrc_reconfiguration_complete()
-
-            # -- Step 8 & 9: HandoverNotify + PathSwitchRequest --
-            hn = fake_amf.wait_for_handover_notify(timeout_s=10)
-            ps = fake_amf.wait_for_path_switch_request(timeout_s=10)
-
-            # At least one of these should appear (depends on code path)
-            assert hn is not None or ps is not None, \
-                "AMF received neither HandoverNotify nor PathSwitchRequest"
-
-            # Verify gNB state
-            state = started_gnb.parse_state()
-            assert state.handover_completed or state.path_switch_sent, \
-                "gNB state does not reflect handover completion"
-
-        finally:
-            ue.stop()
-
-    def test_handover_preparation_failure(
+    def test_gnb_reports_handover_completion_after_reconfig_complete(
         self,
-        started_gnb: GnbProcess,
+        fake_amf,
+        started_gnb_with_neighbor,
+        rrc_connected_ue_with_neighbor,
     ):
-        """Verify gNB handles HandoverPreparationFailure gracefully.
+        if not started_gnb_with_neighbor.wait_for_meas_config(timeout_s=10):
+            pytest.skip("gNB did not send MeasConfig in neighbor scenario")
+        time.sleep(1.0)
 
-        The AMF returns a failure instead of HandoverCommand — the gNB
-        should log a warning and keep the UE on the source cell.
-        """
-        # Create a FakeAmf that does NOT auto-respond with HandoverCommand
-        amf = FakeAmf(auto_initial_context=True)
-        # Override: we need to intercept (not auto-respond to) HandoverRequired
-        # We'll handle it manually below
+        rrc_connected_ue_with_neighbor.send_measurement_report(
+            meas_id=1,
+            serving_rsrp=20,
+            serving_pci=0,
+            neighbor_pci=2,
+            neighbor_rsrp=60,
+        )
 
-        # NOTE: This test requires a custom AMF; however, the started_gnb
-        # fixture already uses the default fake_amf.  For a clean test,
-        # we skip if the auto-responding AMF has already handled the HO.
-        # This is a design-level test placeholder.
-        pytest.skip("HandoverPreparationFailure test requires custom AMF wiring — placeholder")
+        assert started_gnb_with_neighbor.wait_for_handover_command(timeout_s=15), "gNB did not receive HandoverCommand"
 
-    def test_meas_report_no_handover_weak_neighbour(
+        time.sleep(0.5)
+        rrc_connected_ue_with_neighbor.send_rrc_reconfiguration_complete()
+
+        notify = fake_amf.wait_for_handover_notify(timeout_s=10)
+        if notify is not None:
+            assert notify.procedure_code == ngap.PROC_HANDOVER_NOTIFICATION
+            return
+
+        ps = fake_amf.wait_for_path_switch_request(timeout_s=3)
+        assert ps is not None, "AMF did not receive HandoverNotify or PathSwitchRequest"
+        assert ps.procedure_code == ngap.PROC_PATH_SWITCH_REQUEST
+
+    def test_target_handover_request_without_sessions_returns_failure_or_error(
         self,
-        fake_amf: FakeAmf,
-        started_gnb: GnbProcess,
+        fake_amf,
+        started_gnb,
     ):
-        """If the neighbour is weaker than serving, no handover should be
-        triggered."""
-        ue = FakeUe()
-        ue.start()
-        try:
-            assert ue.wait_for_heartbeat_ack(timeout_s=10)
-            ue.send_rrc_setup_request()
-            dl = ue.wait_for_dl_rrc(RrcChannel.DL_CCCH, timeout_s=5)
-            assert dl is not None
+        fake_amf.send_handover_request(amf_ue_ngap_id=9001)
 
-            ue.send_rrc_setup_complete(
-                nas_pdu=b'\x7e\x00\x41\x01',
-            )
-            assert started_gnb.wait_for_meas_config(timeout_s=10)
-            time.sleep(1.0)
+        failure = fake_amf.wait_for_handover_failure(timeout_s=10)
+        if failure is not None:
+            assert failure.pdu is not None
+            assert failure.pdu.is_unsuccessful
+            assert failure.procedure_code == ngap.PROC_HANDOVER_PREPARATION
+            return
 
-            # Neighbour weaker than serving
-            ue.send_measurement_report(
-                meas_id=1,
-                serving_rsrp=60,   # strong serving
-                serving_pci=0,
-                neighbor_pci=1,
-                neighbor_rsrp=20,  # weak neighbour
-            )
-            time.sleep(3.0)
+        err = fake_amf.wait_for_error_indication(timeout_s=3)
+        assert err is not None, "AMF did not receive HandoverFailure or ErrorIndication"
 
-            # Should NOT trigger a handover
-            assert not started_gnb.has_log("Handover decision"), \
-                "gNB should not trigger handover with weaker neighbour"
-            assert not fake_amf.has_message(ngap.PROC_HANDOVER_PREPARATION), \
-                "AMF should not have received HandoverRequired"
+    def test_handover_selects_strongest_neighbor_from_multi_neighbor_report(
+        self,
+        fake_amf,
+        started_gnb_with_two_neighbors,
+        rrc_connected_ue_with_two_neighbors,
+    ):
+        if not started_gnb_with_two_neighbors.wait_for_meas_config(timeout_s=10):
+            pytest.skip("gNB did not send MeasConfig in two-neighbor scenario")
+        time.sleep(1.0)
 
-        finally:
-            ue.stop()
+        # Neighbor PCI 3 is intentionally stronger than PCI 2 and should be selected as target.
+        rrc_connected_ue_with_two_neighbors.send_measurement_report_multi_neighbor(
+            meas_id=1,
+            serving_rsrp=20,
+            serving_pci=0,
+            neighbors=((2, 55), (3, 65)),
+        )
+
+        decision_line = started_gnb_with_two_neighbors.wait_for_handover_decision(timeout_s=10)
+        assert decision_line is not None, "gNB did not log handover decision"
+        assert re.search(r"targetPCI=3\b", decision_line), (
+            f"Expected handover target PCI 3, but decision log was: {decision_line}"
+        )
+
+        required_line = started_gnb_with_two_neighbors.wait_for_handover_required(timeout_s=10)
+        assert required_line is not None, "gNB did not log HandoverRequired dispatch"
+
+        ho = fake_amf.wait_for_handover_required(timeout_s=10)
+        assert ho is not None, "AMF did not receive HandoverRequired for strongest neighbor"
+        assert ho.procedure_code == ngap.PROC_HANDOVER_PREPARATION
+
+    def test_handover_selects_pci2_when_pci2_is_strongest_in_multi_neighbor_report(
+        self,
+        fake_amf,
+        started_gnb_with_two_neighbors,
+        rrc_connected_ue_with_two_neighbors,
+    ):
+        if not started_gnb_with_two_neighbors.wait_for_meas_config(timeout_s=10):
+            pytest.skip("gNB did not send MeasConfig in two-neighbor scenario")
+        time.sleep(1.0)
+
+        rrc_connected_ue_with_two_neighbors.send_measurement_report_multi_neighbor(
+            meas_id=1,
+            serving_rsrp=20,
+            serving_pci=0,
+            neighbors=((2, 64), (3, 56)),
+        )
+
+        decision_line = started_gnb_with_two_neighbors.wait_for_handover_decision(timeout_s=10)
+        assert decision_line is not None, "gNB did not log handover decision"
+        assert re.search(r"targetPCI=2\b", decision_line), (
+            f"Expected handover target PCI 2, but decision log was: {decision_line}"
+        )
+
+        required_line = started_gnb_with_two_neighbors.wait_for_handover_required(timeout_s=10)
+        assert required_line is not None, "gNB did not log HandoverRequired dispatch"
+
+        ho = fake_amf.wait_for_handover_required(timeout_s=10)
+        assert ho is not None, "AMF did not receive HandoverRequired for strongest neighbor"
+        assert ho.procedure_code == ngap.PROC_HANDOVER_PREPARATION

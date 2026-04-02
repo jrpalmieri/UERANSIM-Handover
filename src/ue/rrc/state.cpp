@@ -43,8 +43,8 @@ void UeRrcTask::performCycle()
         //if (!m_base->config->useHandoverMeasFramework) return;
 
         evaluateMeasurements();
-        
-        //evaluateChoCandidates();
+
+        evaluateChoCandidates();
     }
     else if (m_state == ERrcState::RRC_IDLE)
     {

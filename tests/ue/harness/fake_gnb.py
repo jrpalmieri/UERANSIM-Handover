@@ -297,6 +297,7 @@ class FakeGnb:
         self._sock.settimeout(0.5)
 
         self._running = True
+        self._consumed_idx = 0
         self._thread = threading.Thread(target=self._listen_loop, daemon=True)
         self._thread.start()
         logger.info("FakeGnb listening on %s:%d", self._addr, self._port)
@@ -364,23 +365,53 @@ class FakeGnb:
 
         Must be called after wait_for_heartbeat() succeeds.
         """
+        self.broadcast_system_information()
+        logger.info("Sent MIB + SIB1 for cell attach")
+
+    def broadcast_system_information(self):
+        """Broadcast MIB + SIB1 once.
+
+        The UE may miss a single SI burst while transitioning states. Higher-level
+        attach helpers can call this multiple times.
+        """
         mib = self._rrc.build_mib()
         sib1 = self._rrc.build_sib1(self._mcc, self._mnc, self._tac, self._nci)
         self.send_rrc(RrcChannel.BCCH_BCH, mib)
         time.sleep(0.1)
         self.send_rrc(RrcChannel.BCCH_DL_SCH, sib1)
-        logger.info("Sent MIB + SIB1 for cell attach")
+        logger.debug("Broadcast system information (MIB=%dB SIB1=%dB)", len(mib), len(sib1))
 
-    def wait_for_rrc_setup_request(self, timeout_s: float = 10.0) -> Optional[CapturedMessage]:
-        """Wait for the UE to send an RRCSetupRequest on UL-CCCH."""
-        return self._wait_for_ul(RrcChannel.UL_CCCH, timeout_s=timeout_s)
+    def wait_for_rrc_setup_request(
+        self,
+        timeout_s: float = 20.0,
+        rebroadcast_si: bool = True,
+        si_period_s: float = 1.0,
+    ) -> Optional[CapturedMessage]:
+        """Wait for the UE to send an RRCSetupRequest on UL-CCCH.
 
-    def perform_rrc_setup(self, transaction_id: int = 0) -> bool:
+        When *rebroadcast_si* is enabled, MIB/SIB1 are re-sent periodically to
+        avoid missing initial-access windows in timing-sensitive test runs.
+        """
+        end = time.monotonic() + timeout_s
+        next_si_broadcast = time.monotonic() + max(0.2, si_period_s)
+
+        while time.monotonic() < end:
+            msg = self._wait_for_ul(RrcChannel.UL_CCCH, timeout_s=0.4)
+            if msg is not None:
+                return msg
+
+            if rebroadcast_si and time.monotonic() >= next_si_broadcast:
+                self.broadcast_system_information()
+                next_si_broadcast = time.monotonic() + max(0.2, si_period_s)
+
+        return None
+
+    def perform_rrc_setup(self, transaction_id: int = 0, timeout_s: float = 20.0) -> bool:
         """Wait for RRCSetupRequest and respond with RRCSetup.
 
         Returns True if the setup request was received.
         """
-        req = self.wait_for_rrc_setup_request()
+        req = self.wait_for_rrc_setup_request(timeout_s=timeout_s)
         if req is None:
             logger.warning("No RRCSetupRequest received")
             return False
@@ -541,6 +572,35 @@ class FakeGnb:
             "Sent CHO configuration: %d candidate(s)", len(candidates)
         )
 
+    def send_conditional_reconfiguration(
+        self,
+        candidates_to_add_mod: Optional[List[Dict]] = None,
+        candidate_ids_to_remove: Optional[List[int]] = None,
+        transaction_id: int = 3,
+    ):
+        """Send ASN-based ConditionalReconfiguration in DL-DCCH.
+
+        candidates_to_add_mod entries:
+          {
+            "candidateId": int,
+            "measIds": [int, ...],
+            "condRrcReconfig": bytes,
+          }
+
+        candidate_ids_to_remove is a list of CondReconfigId values.
+        """
+        reconfig = self._rrc.build_rrc_reconfiguration_conditional_handover(
+            transaction_id=transaction_id,
+            candidates_to_add_mod=candidates_to_add_mod,
+            candidate_ids_to_remove=candidate_ids_to_remove,
+        )
+        self.send_dl_dcch(reconfig)
+        logger.info(
+            "Sent ConditionalReconfiguration: addMod=%d remove=%d",
+            len(candidates_to_add_mod or []),
+            len(candidate_ids_to_remove or []),
+        )
+
     def send_sib19(self, **kwargs):
         """Send a SIB19 NTN configuration via the DL_SIB19 custom channel.
 
@@ -600,6 +660,7 @@ class FakeGnb:
     def clear_captured(self):
         with self._lock:
             self._captured.clear()
+            self._consumed_idx = 0
 
     # ------------------------------------------------------------------
     #  Properties

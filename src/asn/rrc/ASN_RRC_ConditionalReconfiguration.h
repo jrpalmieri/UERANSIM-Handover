@@ -29,7 +29,12 @@ typedef struct ASN_RRC_ConditionalReconfiguration {
 		/* Context for parsing across buffer boundaries */
 		asn_struct_ctx_t _asn_ctx;
 	} *condReconfigToAddModList;	/* OPTIONAL */
-	/* condReconfigToRemoveList omitted — not needed for CHO execution */
+	struct ASN_RRC_ConditionalReconfiguration__condReconfigToRemoveList {
+		A_SEQUENCE_OF(long) list; /* SEQUENCE (SIZE(1..8)) OF CondReconfigId */
+
+		/* Context for parsing across buffer boundaries */
+		asn_struct_ctx_t _asn_ctx;
+	} *condReconfigToRemoveList;	/* OPTIONAL */
 
 	/* Context for parsing across buffer boundaries */
 	asn_struct_ctx_t _asn_ctx;
@@ -38,7 +43,7 @@ typedef struct ASN_RRC_ConditionalReconfiguration {
 /* Implementation */
 extern asn_TYPE_descriptor_t asn_DEF_ASN_RRC_ConditionalReconfiguration;
 extern asn_SEQUENCE_specifics_t asn_SPC_ASN_RRC_ConditionalReconfiguration_specs_1;
-extern asn_TYPE_member_t asn_MBR_ASN_RRC_ConditionalReconfiguration_1[1];
+extern asn_TYPE_member_t asn_MBR_ASN_RRC_ConditionalReconfiguration_1[2];
 
 #ifdef __cplusplus
 }

@@ -455,6 +455,12 @@ class UeProcess:
           - t1_expired_ids (list[int]): candidate IDs with expired T1
           - executed_id (int or None): ID of executed candidate
           - cancelled (bool): whether candidates were cancelled
+                    - applied_added (int): total candidates added via apply summaries
+                    - applied_updated (int): total candidates updated via apply summaries
+                    - applied_removed (int): total candidates removed via apply summaries
+                    - applied_remove_miss (int): total remove misses via apply summaries
+                    - applied_skipped (int): total candidates skipped via apply summaries
+                    - active_candidates (int): last reported active CHO candidate count
         """
         self.collect_output(timeout_s=0.3)
         info: dict = {
@@ -462,6 +468,12 @@ class UeProcess:
             "t1_expired_ids": [],
             "executed_id": None,
             "cancelled": False,
+                        "applied_added": 0,
+                        "applied_updated": 0,
+                        "applied_removed": 0,
+                        "applied_remove_miss": 0,
+                        "applied_skipped": 0,
+                        "active_candidates": 0,
         }
 
         for line in self._log_lines:
@@ -483,5 +495,47 @@ class UeProcess:
             # "Cancelling X CHO candidate(s)"
             if "Cancelling" in line and "CHO candidate" in line:
                 info["cancelled"] = True
+
+            #
+            # Apply summary logs:
+            #   ConditionalReconfiguration applied: removed=1 removeMiss=0 added=2
+            #       updated=1 skipped=0 activeCandidates=3
+            #   DL_CHO applied: total=2 added=1 updated=1 skipped=0 activeCandidates=2
+            #
+            m = re.search(
+                r"ConditionalReconfiguration applied: removed=(\d+) removeMiss=(\d+) "
+                r"added=(\d+) updated=(\d+) skipped=(\d+) activeCandidates=(\d+)",
+                line,
+            )
+            if m:
+                info["applied_removed"] += int(m.group(1))
+                info["applied_remove_miss"] += int(m.group(2))
+                info["applied_added"] += int(m.group(3))
+                info["applied_updated"] += int(m.group(4))
+                info["applied_skipped"] += int(m.group(5))
+                info["active_candidates"] = int(m.group(6))
+                continue
+
+            m = re.search(
+                r"ConditionalReconfiguration applied: removed=(\d+) removeMiss=(\d+) "
+                r"activeCandidates=(\d+)",
+                line,
+            )
+            if m:
+                info["applied_removed"] += int(m.group(1))
+                info["applied_remove_miss"] += int(m.group(2))
+                info["active_candidates"] = int(m.group(3))
+                continue
+
+            m = re.search(
+                r"DL_CHO applied: total=\d+ added=(\d+) updated=(\d+) skipped=(\d+) "
+                r"activeCandidates=(\d+)",
+                line,
+            )
+            if m:
+                info["applied_added"] += int(m.group(1))
+                info["applied_updated"] += int(m.group(2))
+                info["applied_skipped"] += int(m.group(3))
+                info["active_candidates"] = int(m.group(4))
 
         return info

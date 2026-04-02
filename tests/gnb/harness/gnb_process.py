@@ -34,7 +34,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # Use cmake-build-release first, fall back to build/
 _DEFAULT_BINARY = (
     _PROJECT_ROOT / "cmake-build-release" / "nr-gnb"

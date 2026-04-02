@@ -99,6 +99,23 @@ static std::string conditionGroupStr(const std::vector<ChoCondition> &conds)
     return s;
 }
 
+// Upsert a CHO candidate by candidateId and return true if updated, false if added.
+static bool upsertChoCandidate(std::vector<ChoCandidate> &candidates, ChoCandidate &&cand)
+{
+    auto existing = std::find_if(
+        candidates.begin(), candidates.end(),
+        [&](const ChoCandidate &c) { return c.candidateId == cand.candidateId; });
+
+    if (existing != candidates.end())
+    {
+        *existing = std::move(cand);
+        return true;
+    }
+
+    candidates.push_back(std::move(cand));
+    return false;
+}
+
 /* ================================================================== */
 /*  Parse ConditionalReconfiguration from ASN.1 extension chain       */
 /* ================================================================== */
@@ -106,23 +123,74 @@ static std::string conditionGroupStr(const std::vector<ChoCondition> &conds)
 void UeRrcTask::parseConditionalReconfiguration(
     const ASN_RRC_ConditionalReconfiguration *condReconfig)
 {
-    if (!condReconfig || !condReconfig->condReconfigToAddModList)
+    if (!condReconfig)
     {
-        m_logger->warn("ConditionalReconfiguration: empty or missing addModList");
+        m_logger->warn("ConditionalReconfiguration: null message");
+        return;
+    }
+
+    int removedCount = 0;
+    int removeMissCount = 0;
+
+    // Apply remove list first, then add/modify list.
+    if (condReconfig->condReconfigToRemoveList)
+    {
+        auto &removeList = condReconfig->condReconfigToRemoveList->list;
+        for (int i = 0; i < removeList.count; i++)
+        {
+            long *pId = removeList.array[i];
+            if (!pId)
+            {
+                removeMissCount++;
+                continue;
+            }
+
+            int candidateId = static_cast<int>(*pId);
+            size_t before = m_choCandidates.size();
+            m_choCandidates.erase(
+                std::remove_if(
+                    m_choCandidates.begin(), m_choCandidates.end(),
+                    [&](const ChoCandidate &c) { return c.candidateId == candidateId; }),
+                m_choCandidates.end());
+
+            if (m_choCandidates.size() < before)
+                removedCount++;
+            else
+                removeMissCount++;
+        }
+    }
+
+    int addModCount = condReconfig->condReconfigToAddModList ?
+        condReconfig->condReconfigToAddModList->list.count : 0;
+    m_logger->info("ConditionalReconfiguration received: addMod=%d remove=%d",
+                   addModCount, removedCount);
+
+    // if addMod list is not present, then we are done after applying the remove list
+    if (!condReconfig->condReconfigToAddModList)
+    {
+        m_logger->info("ConditionalReconfiguration applied: removed=%d removeMiss=%d activeCandidates=%zu",
+                       removedCount, removeMissCount, m_choCandidates.size());
         return;
     }
 
     auto &addList = condReconfig->condReconfigToAddModList->list;
-    m_logger->info("ConditionalReconfiguration received: %d candidate(s)", addList.count);
+
+    int addedCount = 0;
+    int updatedCount = 0;
+    int skippedCount = 0;
 
     for (int i = 0; i < addList.count; i++)
     {
         auto *item = addList.array[i];
         if (!item)
+        {
+            skippedCount++;
             continue;
+        }
 
         ChoCandidate cand{};
         cand.candidateId = static_cast<int>(item->condReconfigId);
+        bool hasExecutionCond = (item->condExecutionCond != nullptr);
 
         // --- Build condition group from condExecutionCond MeasIds ---
         // Per TS 38.331: multiple MeasIds in one condExecutionCond = AND logic.
@@ -147,7 +215,11 @@ void UeRrcTask::parseConditionalReconfiguration(
 
                 auto itRc = m_measConfig.reportConfigs.find(itMid->second.reportConfigId);
                 if (itRc == m_measConfig.reportConfigs.end())
+                {
+                    m_logger->warn("CHO candidate %d: reportConfig %d for MeasId %d not found; skipping condition",
+                                   cand.candidateId, itMid->second.reportConfigId, measId);
                     continue;
+                }
 
                 auto &rc = itRc->second;
                 ChoCondition cond{};
@@ -190,9 +262,18 @@ void UeRrcTask::parseConditionalReconfiguration(
             }
         }
 
-        // If no conditions were parsed from condExecutionCond, add a T1 fallback.
+        // If condExecutionCond was present but did not resolve to usable conditions,
+        // reject the candidate instead of silently falling back to T1.
         if (cand.conditions.empty())
         {
+            if (hasExecutionCond)
+            {
+                m_logger->warn("CHO candidate %d: condExecutionCond has no usable MeasIds; skipping candidate",
+                               cand.candidateId);
+                skippedCount++;
+                continue;
+            }
+
             ChoCondition t1Cond{};
             t1Cond.eventType = EChoEventType::T1;
             t1Cond.t1DurationMs = DEFAULT_T1_DURATION_MS;
@@ -206,6 +287,7 @@ void UeRrcTask::parseConditionalReconfiguration(
         {
             m_logger->warn("CHO candidate %d: missing condRRCReconfig – skipping",
                            cand.candidateId);
+            skippedCount++;
             continue;
         }
 
@@ -216,6 +298,7 @@ void UeRrcTask::parseConditionalReconfiguration(
         {
             m_logger->err("CHO candidate %d: failed to UPER-decode condRRCReconfig",
                           cand.candidateId);
+            skippedCount++;
             continue;
         }
 
@@ -257,6 +340,7 @@ void UeRrcTask::parseConditionalReconfiguration(
         {
             m_logger->warn("CHO candidate %d: no ReconfigurationWithSync in nested reconfig "
                            "– skipping", cand.candidateId);
+            skippedCount++;
             continue;
         }
 
@@ -269,8 +353,22 @@ void UeRrcTask::parseConditionalReconfiguration(
                        conditionGroupStr(cand.conditions).c_str(),
                        cand.executionPriority);
 
-        m_choCandidates.push_back(std::move(cand));
+        bool wasUpdated = upsertChoCandidate(m_choCandidates, std::move(cand));
+        if (wasUpdated)
+        {
+            updatedCount++;
+        }
+        else
+        {
+            addedCount++;
+        }
     }
+
+    m_logger->info(
+        "ConditionalReconfiguration applied: removed=%d removeMiss=%d "
+        "added=%d updated=%d skipped=%d activeCandidates=%zu",
+        removedCount, removeMissCount, addedCount,
+        updatedCount, skippedCount, m_choCandidates.size());
 }
 
 /* ================================================================== */
@@ -335,6 +433,9 @@ void UeRrcTask::handleChoConfiguration(const OctetString &pdu)
 
     uint32_t numCandidates = readU32(0);
     size_t offset = 4;
+    int addedCount = 0;
+    int updatedCount = 0;
+    int skippedCount = 0;
 
     for (uint32_t i = 0; i < numCandidates; i++)
     {
@@ -425,6 +526,14 @@ void UeRrcTask::handleChoConfiguration(const OctetString &pdu)
 
         offset += numConditions * CONDITION_SIZE;
 
+        if (cand.conditions.empty())
+        {
+            m_logger->warn("DL_CHO candidate %d: no usable conditions after decoding; skipping candidate",
+                           cand.candidateId);
+            skippedCount++;
+            continue;
+        }
+
         // Initialise runtime state
         cand.executed = false;
 
@@ -450,10 +559,15 @@ void UeRrcTask::handleChoConfiguration(const OctetString &pdu)
                                c.d1sib19ElevationMinDeg);
         }
 
-        m_choCandidates.push_back(std::move(cand));
+        bool wasUpdated = upsertChoCandidate(m_choCandidates, std::move(cand));
+        if (wasUpdated)
+            updatedCount++;
+        else
+            addedCount++;
     }
 
-    m_logger->info("DL_CHO: %d candidate(s) configured", numCandidates);
+    m_logger->info("DL_CHO applied: total=%u added=%d updated=%d skipped=%d activeCandidates=%zu",
+                   numCandidates, addedCount, updatedCount, skippedCount, m_choCandidates.size());
 }
 
 /* ================================================================== */
@@ -598,7 +712,7 @@ static double evaluateConditionWithTTT(
 
 void UeRrcTask::evaluateChoCandidates()
 {
-    if (m_choCandidates.empty() || m_handoverInProgress)
+    if (m_choCandidates.empty() || m_handoverInProgress || m_measurementEvalSuspended)
         return;
 
     int64_t now = utils::CurrentTimeMillis();

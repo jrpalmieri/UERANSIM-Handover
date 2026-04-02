@@ -1,5 +1,5 @@
 # Test UE configuration for UERANSIM test harness.
-# This config enables OOB measurement injection via UDP.
+# This config includes an optional UDP measurement source.
 
 supi: 'imsi-286010000000001'
 mcc: '286'
@@ -57,7 +57,7 @@ position:
   longitude: -84.3880
   altitude: 320.0
 
-# Out-of-band measurement source (for test injection)
+# Optional UDP measurement source (manual/debug injection)
 measSource:
   type: 'UDP'
   udpPort: 7200
