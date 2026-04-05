@@ -722,6 +722,37 @@ class FakeGnb:
                 return None
             return dict(self._true_position_velocity)
 
+    def _update_modeled_cell_dbm_locked(self, now_ms: Optional[int] = None):
+        """Update modeled cell dBm from true gNB PV and latest UE heartbeat position.
+
+        Caller must hold ``self._lock``.
+        """
+        if self._true_position_velocity is None or self._last_heartbeat_sim_pos is None:
+            return
+
+        if now_ms is None:
+            now_ms = int(time.time() * 1000)
+
+        pv = self._true_position_velocity
+        dt_sec = max(0.0, (now_ms - int(pv["epochMs"])) / 1000.0)
+        gx = pv["x"] + pv["vx"] * dt_sec
+        gy = pv["y"] + pv["vy"] * dt_sec
+        gz = pv["z"] + pv["vz"] * dt_sec
+
+        ux, uy, uz = self._last_heartbeat_sim_pos
+        dx = ux - gx
+        dy = uy - gy
+        dz = uz - gz
+        distance_m = (dx * dx + dy * dy + dz * dz) ** 0.5
+
+        modeled = int(round(-35.0 - min(distance_m, 2_000_000.0) / 20_000.0))
+        self._cell_dbm = max(-120, min(-30, modeled))
+
+    def refresh_modeled_cell_dbm(self, now_ms: Optional[int] = None):
+        """Refresh modeled cell dBm from time-evolved true gNB position."""
+        with self._lock:
+            self._update_modeled_cell_dbm_locked(now_ms)
+
     def run_command(self, command: str) -> str:
         """Run a minimal CLI-equivalent gNB command in the test harness.
 
@@ -758,20 +789,7 @@ class FakeGnb:
                 "vz": vz,
                 "epochMs": epoch_ms,
             }
-
-            # Derive a deterministic pseudo-RSRP from UE<->gNB distance whenever
-            # both true gNB position and UE heartbeat position are available.
-            if self._last_heartbeat_sim_pos is not None:
-                ux, uy, uz = self._last_heartbeat_sim_pos
-                dx = ux - x
-                dy = uy - y
-                dz = uz - z
-                distance_m = (dx * dx + dy * dy + dz * dz) ** 0.5
-
-                # Simple monotonic mapping for test determinism:
-                # 0 m -> about -35 dBm, +1,000,000 m -> about -85 dBm.
-                modeled = int(round(-35.0 - min(distance_m, 2_000_000.0) / 20_000.0))
-                self._cell_dbm = max(-120, min(-30, modeled))
+            self._update_modeled_cell_dbm_locked(epoch_ms)
 
         return "Updated true gNB position/velocity for SIB19 generation"
 
@@ -841,6 +859,7 @@ class FakeGnb:
         with self._lock:
             self._heartbeat_count += 1
             self._last_heartbeat_sim_pos = hb.sim_pos
+            self._update_modeled_cell_dbm_locked()
         ack = encode_heartbeat_ack(
             self._gnb_sti,
             self._cell_dbm,

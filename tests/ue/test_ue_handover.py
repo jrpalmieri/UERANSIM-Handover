@@ -305,3 +305,101 @@ class TestUeDistanceChoLocationUpdate:
         if info["target_cell"] is not None:
             assert info["target_cell"] == 2
 
+    def test_distance_based_cho_after_time_evolved_gnb_position(
+        self, two_gnb_ue, source_gnb, target_gnb
+    ):
+        """Validate CHO trigger from time-evolved gNB position/velocity.
+
+        Flow:
+        1. Send `loc-pv` with non-zero velocity for source/target gNBs and verify update.
+        2. Send standards-based CHO and verify UE acknowledges candidate add.
+        3. Let PV evolve in time, refresh modeled RSRP from evolved positions, and
+           verify CHO handover to target gNB.
+        """
+        ue_process = two_gnb_ue
+        self._ensure_rrc_connected_with_two_gnb(source_gnb, target_gnb)
+
+        source_pos = source_gnb.wait_for_heartbeat_position(timeout_s=12)
+        assert source_pos is not None, "Source gNB did not receive UE heartbeat position"
+
+        target_pos = target_gnb.wait_for_heartbeat_position(timeout_s=12)
+        assert target_pos is not None, "Target gNB did not receive UE heartbeat position"
+
+        assert source_gnb.heartbeat_count > 0
+        assert target_gnb.heartbeat_count > 0
+
+        now_ms = int(time.time() * 1000)
+        src_cmd = (
+            f"loc-pv {source_pos[0] + 50_000.0}:{source_pos[1]}:{source_pos[2]}:"
+            f"30000.0:0.0:0.0:{now_ms}"
+        )
+        tgt_cmd = (
+            f"loc-pv {source_pos[0] + 250_000.0}:{source_pos[1]}:{source_pos[2]}:"
+            f"-30000.0:0.0:0.0:{now_ms}"
+        )
+
+        assert "Updated true gNB position/velocity" in source_gnb.run_command(src_cmd)
+        assert "Updated true gNB position/velocity" in target_gnb.run_command(tgt_cmd)
+        assert source_gnb.true_position_velocity is not None
+        assert target_gnb.true_position_velocity is not None
+        assert source_gnb.cell_dbm > target_gnb.cell_dbm
+
+        source_gnb.send_meas_config(
+            meas_objects=[{"id": 1, "ssbFreq": 632628}],
+            report_configs=[
+                {
+                    "id": 1,
+                    "event": "a3",
+                    "a3Offset": 3,
+                    "hysteresis": 1,
+                    "timeToTrigger": 160,
+                    "maxReportCells": 8,
+                }
+            ],
+            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
+            transaction_id=43,
+        )
+        assert ue_process.wait_for_log(
+            r"RRCReconfigurationComplete sent \(non-handover reconfiguration\)",
+            timeout_s=12,
+        ), "UE did not apply MeasConfig before CHO setup"
+
+        cond_rrc = source_gnb.rrc_codec.build_conditional_rrc_reconfiguration_with_sync(
+            transaction_id=44,
+            target_pci=2,
+            new_crnti=0x4202,
+            t304_ms=1000,
+        )
+        source_gnb.send_conditional_reconfiguration(
+            candidates_to_add_mod=[
+                {
+                    "candidateId": 3,
+                    "measIds": [1],
+                    "condRrcReconfig": cond_rrc,
+                }
+            ],
+            transaction_id=45,
+        )
+
+        assert ue_process.wait_for_log(
+            r"ConditionalReconfiguration applied:.*added=1",
+            timeout_s=12,
+        ), "UE did not acknowledge ASN ConditionalReconfiguration CHO"
+
+        assert ue_process.wait_for_cho_execution(timeout_s=3) is None
+
+        time.sleep(5.0)
+        source_gnb.refresh_modeled_cell_dbm()
+        target_gnb.refresh_modeled_cell_dbm()
+        assert target_gnb.cell_dbm > source_gnb.cell_dbm
+
+        executed = ue_process.wait_for_cho_execution(timeout_s=20)
+        switched = ue_process.wait_for_cell_switch(timeout_s=20)
+        assert executed is not None or switched is not None, (
+            "No CHO execution or serving-cell switch observed after time-evolved position update"
+        )
+
+        info = ue_process.parse_handover_info()
+        if info["target_cell"] is not None:
+            assert info["target_cell"] == 2
+
