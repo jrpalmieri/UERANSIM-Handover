@@ -6,15 +6,11 @@ build: FORCE
 	mkdir -p build
 	rm -fr build/*
 	
-	# cmake -DCMAKE_BUILD_TYPE=Debug -G "CodeBlocks - Unix Makefiles" . -B cmake-build-debug
-	cmake -DCMAKE_BUILD_TYPE=Release -G "CodeBlocks - Unix Makefiles" . -B cmake-build-release
-	# cmake --build cmake-build-debug --target all
-	cmake --build cmake-build-release --target all
+	# cmake -DCMAKE_BUILD_TYPE=Debug -G "CodeBlocks - Unix Makefiles" . -B build
+	cmake -DCMAKE_BUILD_TYPE=Release -G "CodeBlocks - Unix Makefiles" . -B build
+	# cmake --build build --target all
+	cmake --build build --target all
 	
-	cp cmake-build-release/nr-gnb build/
-	cp cmake-build-release/nr-ue build/
-	cp cmake-build-release/nr-cli build/
-	cp cmake-build-release/libdevbnd.so build/
 	cp tools/nr-binder build/
 
 	@printf "${GREEN}UERANSIM successfully built.${NC}\n"
@@ -26,19 +22,24 @@ build-static: FORCE
 	mkdir -p build
 	rm -fr build/*
 	
-	cmake -DCMAKE_BUILD_TYPE=Release -DSTATIC_BUILD=ON -G "CodeBlocks - Unix Makefiles" . -B cmake-build-release
-	cmake --build cmake-build-release --target all
+	cmake -DCMAKE_BUILD_TYPE=Release -DSTATIC_BUILD=ON -G "CodeBlocks - Unix Makefiles" . -B build
+	cmake --build build --target all
 	
-	cp cmake-build-release/nr-gnb build/
-	cp cmake-build-release/nr-ue build/
-	cp cmake-build-release/nr-cli build/
-	cp cmake-build-release/libdevbnd.so build/
 	cp tools/nr-binder build/
 
 	@printf "${GREEN}UERANSIM successfully built (static).${NC}\n"
+
+# Incremental build: only changed files and affected targets are rebuilt.
+fast: FORCE
+	@if [ ! -f build/CMakeCache.txt ]; then \
+		cmake -DCMAKE_BUILD_TYPE=Release -G "CodeBlocks - Unix Makefiles" . -B build; \
+	fi
+	cmake --build build --target all
+	@if [ -f tools/nr-binder ]; then cp tools/nr-binder build/; fi
+
+	@printf "${GREEN}UERANSIM incremental build completed.${NC}\n"
 
 FORCE:
 
 clean:
 	rm -fr build
-	rm -fr cmake-build-release/

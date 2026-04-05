@@ -46,6 +46,17 @@ Json ToJson(const EMeasEvent &v)
     case EMeasEvent::A2: return "A2";
     case EMeasEvent::A3: return "A3";
     case EMeasEvent::A5: return "A5";
+    case EMeasEvent::D1: return "D1";
+    default: return "?";
+    }
+}
+
+static const char *d1RefTypeName(ED1ReferenceType t)
+{
+    switch (t)
+    {
+    case ED1ReferenceType::Fixed: return "fixed";
+    case ED1ReferenceType::Nadir: return "nadir";
     default: return "?";
     }
 }
@@ -71,6 +82,20 @@ Json ToJson(const UeReportConfig &v)
         j.put("a5Threshold1", v.a5Threshold1);
         j.put("a5Threshold2", v.a5Threshold2);
         break;
+    case EMeasEvent::D1:
+    {
+        char buf[64];
+        j.put("d1ReferenceType", std::string(d1RefTypeName(v.d1ReferenceType)));
+        snprintf(buf, sizeof(buf), "%.3f", v.d1RefX);
+        j.put("d1RefX", std::string(buf));
+        snprintf(buf, sizeof(buf), "%.3f", v.d1RefY);
+        j.put("d1RefY", std::string(buf));
+        snprintf(buf, sizeof(buf), "%.3f", v.d1RefZ);
+        j.put("d1RefZ", std::string(buf));
+        snprintf(buf, sizeof(buf), "%.3f", v.d1ThresholdM);
+        j.put("d1ThresholdM", std::string(buf));
+        break;
+    }
     }
     return j;
 }
@@ -96,7 +121,6 @@ Json ToJson(const EChoEventType &v)
     case EChoEventType::A3: return "A3";
     case EChoEventType::A5: return "A5";
     case EChoEventType::D1: return "D1";
-    case EChoEventType::D1_SIB19: return "D1_SIB19";
     default: return "?";
     }
 }
@@ -129,6 +153,7 @@ Json ToJson(const ChoCondition &v)
     case EChoEventType::D1:
     {
         char buf[64];
+        j.put("d1ReferenceType", std::string(d1RefTypeName(v.d1ReferenceType)));
         snprintf(buf, sizeof(buf), "%.3f", v.d1RefX);
         j.put("d1RefX", std::string(buf));
         snprintf(buf, sizeof(buf), "%.3f", v.d1RefY);
@@ -137,18 +162,8 @@ Json ToJson(const ChoCondition &v)
         j.put("d1RefZ", std::string(buf));
         snprintf(buf, sizeof(buf), "%.3f", v.d1ThresholdM);
         j.put("d1ThresholdM", std::string(buf));
-        break;
-    }
-    case EChoEventType::D1_SIB19:
-    {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "%.3f", v.d1sib19ThresholdM);
-        j.put("d1sib19ThresholdM", std::string(buf));
-        snprintf(buf, sizeof(buf), "%.3f", v.d1sib19ElevationMinDeg);
-        j.put("d1sib19ElevationMinDeg", std::string(buf));
-        j.put("d1sib19UseNadir", v.d1sib19UseNadir);
-        snprintf(buf, sizeof(buf), "%.3f", v.d1sib19ResolvedThreshM);
-        j.put("d1sib19ResolvedThreshM", std::string(buf));
+        snprintf(buf, sizeof(buf), "%.3f", v.d1ResolvedThreshM);
+        j.put("d1ResolvedThreshM", std::string(buf));
         break;
     }
     }
@@ -175,6 +190,7 @@ Json ToJson(const ChoCandidate &v)
         {"targetPci", v.targetPci},
         {"newCRNTI", v.newCRNTI},
         {"t304Ms", v.t304Ms},
+        {"txId", v.txId},
         {"executionPriority", v.executionPriority},
         {"conditionGroup", condSummary},
         {"conditions", std::move(condArr)},
@@ -344,6 +360,12 @@ void UeRrcTask::evaluateMeasurements()
                     }
                 }
             }
+            break;
+        }
+        case EMeasEvent::D1:
+        {
+            // D1 is consumed by CHO condition-group evaluation, not MeasurementReport.
+            eventSatisfied = false;
             break;
         }
         } // switch
@@ -527,7 +549,7 @@ void UeRrcTask::applyMeasConfig(const UeMeasConfig &cfg)
     if (cfg.fullConfig)
     {
         m_logger->info("MeasConfig fullConfig=true: replacing existing measurement configuration");
-        resetMeasurements();
+        resetMeasurements();  // this empties the m_measConfig map
     }
 
     std::vector<int> removedMeasIds{};

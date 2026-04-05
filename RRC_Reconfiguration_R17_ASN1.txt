@@ -1,0 +1,93 @@
+--ASN.1 snippets of relevant IEs for handover in RRCReconfiguration
+
+RRCReconfiguration-IEs ::= SEQUENCE {
+    radioBearerConfig                   RadioBearerConfig                                  OPTIONAL, -- Need M
+    secondaryCellGroup                  OCTET STRING (CONTAINING CellGroupConfig)           OPTIONAL, -- Need M
+    measConfig                          MeasConfig                                          OPTIONAL, -- Need M
+    lateNonCriticalExtension            OCTET STRING                                        OPTIONAL,
+    nonCriticalExtension                RRCReconfiguration-v1530-IEs                        OPTIONAL
+}
+
+RRCReconfiguration-v1530-IEs ::= SEQUENCE {
+    masterCellGroup                     OCTET STRING (CONTAINING CellGroupConfig)           OPTIONAL, -- Need M
+    fullConfig                          ENUMERATED {true}                                   OPTIONAL, -- Cond FullConfig
+    dedicatedNAS-MessageList            SEQUENCE (SIZE(1..maxDRB)) OF DedicatedNAS-Message  OPTIONAL, -- Cond exec
+    masterKeyUpdate                     MasterKeyUpdate                                     OPTIONAL, -- Cond MasterKey
+    sk-Counter                          SK-Counter                                          OPTIONAL, -- Cond SN-Term
+    nonCriticalExtension                RRCReconfiguration-v1610-IEs                        OPTIONAL
+}
+
+-- Release 16: Introduction of Conditional Reconfiguration (CHO)
+RRCReconfiguration-v1610-IEs ::= SEQUENCE {
+    conditionalReconfiguration-r16      ConditionalReconfiguration-r16                      OPTIONAL, -- Need M
+    daps-Config-r16                     DAPS-Config-r16                                     OPTIONAL, -- Need M
+    nonCriticalExtension                RRCReconfiguration-v1700-IEs                        OPTIONAL
+}
+
+-- Release 17: Introduction of NTN and CHO Enhancements
+RRCReconfiguration-v1700-IEs ::= SEQUENCE {
+    scg-State-r17                       ENUMERATED {deactivated, activated}                 OPTIONAL, -- Need R
+    appLayerMeasConfig-r17              AppLayerMeasConfig-r17                              OPTIONAL, -- Need M
+    nonCriticalExtension                SEQUENCE {}                                         OPTIONAL
+}
+
+-- The CHO Container
+ConditionalReconfiguration-r16 ::= SEQUENCE {
+    attemptCondReconfig-r16             ENUMERATED {true}                                   OPTIONAL, -- Need R
+    condReconfigToRemoveModList-r16     CondReconfigToRemoveModList-r16                     OPTIONAL, -- Need N
+    condReconfigToAddModList-r16        CondReconfigToAddModList-r16                        OPTIONAL, -- Need N
+    ...
+}
+
+-- The Individual Candidate Satellite Entry
+CondReconfigToAddMod-r16 ::= SEQUENCE {
+    condReconfigId-r16                  CondReconfigId-r16,
+    condExecutionCond-r16               SEQUENCE (SIZE (1..2)) OF MeasId                    OPTIONAL, -- Need M
+    condRRCReconfig-r16                 OCTET STRING (CONTAINING RRCReconfiguration)        OPTIONAL, -- Need M
+    ...,
+    [[
+    -- Rel-17 NTN Specific: Priority for tie-breaking multiple satellites
+    condExecutionPriority-r17           INTEGER (1..128)                                    OPTIONAL  -- Need R
+    ]]
+}
+
+-- The "Link" to SIB19 Distance Triggers
+MeasConfig ::= SEQUENCE {
+    measObjectToRemoveList              MeasObjectToRemoveList                              OPTIONAL, -- Need N
+    measObjectToAddModList              MeasObjectToAddModList                              OPTIONAL, -- Need N
+    reportConfigToRemoveList            ReportConfigToRemoveList                            OPTIONAL, -- Need N
+    reportConfigToAddModList            ReportConfigToAddModList                            OPTIONAL, -- Need N
+    measIdToRemoveList                  MeasIdToRemoveList                                  OPTIONAL, -- Need N
+    measIdToAddModList                  MeasIdToAddModList                                  OPTIONAL, -- Need N
+    ...
+}
+
+-- Event D1 Definition (inside ReportConfigNR)
+ReportConfigNR ::= SEQUENCE {
+    reportType CHOICE {
+        eventTriggered SEQUENCE {
+            eventId CHOICE {
+                eventD1-r17 SEQUENCE {
+                    distanceThresh-r17      INTEGER (0..20000), -- Resolution in meters
+                    referenceLocation-r17   ReferenceLocation-r17,
+                    hysteresis              Hysteresis,
+                    timeToTrigger           TimeToTrigger
+                },
+                ...
+            },
+            ...
+        },
+        ...
+    }
+}
+
+ReferenceLocation-r17 ::= CHOICE {
+    fixedReferenceLocation-r17 SEQUENCE {
+        longitude-r17             INTEGER (-180000000..180000000), -- 0.000001 degree steps
+        latitude-r17              INTEGER (-90000000..90000000),   -- 0.000001 degree steps
+        height-r17                INTEGER (-1000..10000)           -- Meters
+    },
+    nadirReferenceLocation-r17   NULL,
+    ...
+}
+

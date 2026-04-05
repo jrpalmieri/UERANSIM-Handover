@@ -4,6 +4,7 @@
 
 #include "task.hpp"
 #include "measurement.hpp"
+#include "position.hpp"
 
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/encode.hpp>
@@ -87,6 +88,11 @@ static int triggerQuantityOffsetToDb(const ASN_RRC_MeasTriggerQuantityOffset &tq
     return 0;
 }
 
+static double microDegreesToDegrees(long val)
+{
+    return static_cast<double>(val) / 1000000.0;
+}
+
 /* ================================================================== */
 /*  Parse ASN MeasConfig → UeMeasConfig                               */
 /* ================================================================== */
@@ -166,6 +172,8 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
             if (!eTrig)
                 continue;
 
+            // rc is the new UeReportConfig we will populate based on the 
+            //  ASN ReportConfig and add to cfg.reportConfigs
             UeReportConfig rc{};
             rc.reportConfigId = static_cast<int>(item->reportConfigId);
             rc.maxReportCells = static_cast<int>(eTrig->maxReportCells);
@@ -203,8 +211,58 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
                 rc.timeToTriggerMs = timeToTriggerMs(a5->timeToTrigger);
                 break;
             }
+            // D1 event
+            case ASN_RRC_EventTriggerConfig__eventId_PR_eventD1_r17:
+            {
+                auto *d1 = eTrig->eventId.choice.eventD1_r17;
+                if (!d1)
+                    break;
+
+                rc.event = EMeasEvent::D1;
+                rc.hysteresis = hysteresisToDb(d1->hysteresis);
+                rc.timeToTriggerMs = timeToTriggerMs(d1->timeToTrigger);
+                rc.d1ThresholdM = static_cast<double>(d1->distanceThresh_r17);
+
+                // for fixed references (terrestrial sources)
+                if (d1->referenceLocation_r17.present ==
+                    ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_fixedReferenceLocation_r17)
+                {
+                    auto *fixed = d1->referenceLocation_r17.choice.fixedReferenceLocation_r17;
+                    if (!fixed)
+                        break;
+
+                    GeoPosition geo{};
+                    geo.longitude = microDegreesToDegrees(fixed->longitude_r17);
+                    geo.latitude = microDegreesToDegrees(fixed->latitude_r17);
+                    geo.altitude = static_cast<double>(fixed->height_r17);
+                    EcefPosition ecef = geoToEcef(geo);
+
+                    rc.d1ReferenceType = ED1ReferenceType::Fixed;
+                    rc.d1RefX = ecef.x;
+                    rc.d1RefY = ecef.y;
+                    rc.d1RefZ = ecef.z;
+                }
+                // for nadir references (SIB19 - satellite ephemeris)
+                else if (d1->referenceLocation_r17.present ==
+                         ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_nadirReferenceLocation_r17)
+                {
+                    rc.d1ReferenceType = ED1ReferenceType::Nadir;
+                    rc.d1RefX = 0.0;
+                    rc.d1RefY = 0.0;
+                    rc.d1RefZ = 0.0;
+                }
+                // this is an invalid configuration
+                else
+                {
+                    rc.d1ReferenceType = ED1ReferenceType::Unknown;
+                    rc.d1RefX = 0.0;
+                    rc.d1RefY = 0.0;
+                    rc.d1RefZ = 0.0;
+                }
+                break;
+            }
             default:
-                continue; // skip unsupported events (A1, A4, A6)
+                continue; // skip unsupported events
             }
 
             cfg.reportConfigs[rc.reportConfigId] = rc;
@@ -254,6 +312,10 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
         return;
     }
 
+    // save the txId for Ack matching
+    int txId = static_cast<int>(msg.rrc_TransactionIdentifier);
+
+    // RRCReconfiguration-IEs are under teh criticalExtensions IE
     auto *ies = msg.criticalExtensions.choice.rrcReconfiguration;
     if (!ies)
     {
@@ -263,53 +325,74 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
 
     m_logger->info("RRCReconfiguration received (txId=%ld)", msg.rrc_TransactionIdentifier);
 
+    // RRCReconfiguration takes the format:
+    // RRCReconfiguration-IEs ::= SEQUENCE {
+    //   radioBearerConfig                   RadioBearerConfig    (Not used by simulation)
+    //   secondaryCellGroup                  OCTET STRING (CONTAINING CellGroupConfig) (Not used by simulation)
+    //   measConfig                          MeasConfig                     (array of measConfigs)
+    //   lateNonCriticalExtension            OCTET STRING                   (not used by simulation)
+    //   nonCriticalExtension                RRCReconfiguration-v1530-IEs     (list of version-specific added IEs, including CHO)
+    // }
+
+    // check for a fullConfig indicator in the nonCriticalExtention->[v1530] IEs. 
+    //  If fullConfig is true, then the MeasConfig is a full replacement of the existing config
     bool fullConfig = false;
     if (ies->nonCriticalExtension && ies->nonCriticalExtension->fullConfig)
         fullConfig = true;
 
-    // --- Apply MeasConfig if present ---
+    // add/remove MeasConfigs if present
     if (ies->measConfig)
     {
         auto cfg = parseMeasConfig(*ies->measConfig);
         cfg.fullConfig = fullConfig;
         applyMeasConfig(cfg);
     }
+    // if no measConfigs provided but fullConfig=true, just clear measurement state
     else if (fullConfig)
     {
         m_logger->info("RRCReconfiguration fullConfig=true without MeasConfig: clearing measurement state");
         resetMeasurements();
     }
 
-    // --- Check v1530-IEs for masterCellGroup (handover) & dedicated NAS ---
     bool isHandover = false;
     int hoPhysCellId = -1;
     int hoNewCRNTI = 0;
     int hoT304Ms = 0;
     bool hoHasRachConfig = false;
-    bool hasConditionalReconfig = false;
-    (void)hasConditionalReconfig; // May be used in future for CHO-specific response
+    const ASN_RRC_ConditionalReconfiguration *pendingConditionalReconfig = nullptr;
 
+    // Walk the nonCriticalExtension chain: v1530 → v1540 → v1560 → v1610 for CHO
     if (ies->nonCriticalExtension)
     {
+        // v1530:
+        //   RRCReconfiguration-v1530-IEs ::= SEQUENCE {
+        //     masterCellGroup                     OCTET STRING (CONTAINING CellGroupConfig)           OPTIONAL, -- Need M
+        //     fullConfig                          ENUMERATED {true}                                   OPTIONAL, -- Cond FullConfig
+        //     dedicatedNAS-MessageList            SEQUENCE (SIZE(1..maxDRB)) OF DedicatedNAS-Message  OPTIONAL, -- Cond exec
+        //     masterKeyUpdate                     MasterKeyUpdate                                     OPTIONAL, -- Cond MasterKey
+        //     sk-Counter                          SK-Counter                                          OPTIONAL, -- Cond SN-Term
+        //     nonCriticalExtension                RRCReconfiguration-v1610-IEs                        OPTIONAL
+        // }
         auto *v1530 = ies->nonCriticalExtension;
 
         // Deliver any dedicated NAS messages to the NAS layer
-        if (v1530->dedicatedNAS_MessageList)
-        {
-            auto &nasList = v1530->dedicatedNAS_MessageList->list;
-            for (int i = 0; i < nasList.count; i++)
-            {
-                auto *nasPdu = nasList.array[i];
-                if (nasPdu && nasPdu->buf && nasPdu->size > 0)
-                {
-                    auto w = std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::NAS_DELIVERY);
-                    w->nasPdu = OctetString::FromArray(nasPdu->buf, static_cast<size_t>(nasPdu->size));
-                    m_base->nasTask->push(std::move(w));
-                }
-            }
-        }
+        //  (None of these are used by the simulator)
+        // if (v1530->dedicatedNAS_MessageList)
+        // {
+        //     auto &nasList = v1530->dedicatedNAS_MessageList->list;
+        //     for (int i = 0; i < nasList.count; i++)
+        //     {
+        //         auto *nasPdu = nasList.array[i];
+        //         if (nasPdu && nasPdu->buf && nasPdu->size > 0)
+        //         {
+        //             auto w = std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::NAS_DELIVERY);
+        //             w->nasPdu = OctetString::FromArray(nasPdu->buf, static_cast<size_t>(nasPdu->size));
+        //             m_base->nasTask->push(std::move(w));
+        //         }
+        //     }
+        // }
 
-        // Decode masterCellGroup → CellGroupConfig → SpCellConfig → ReconfigurationWithSync
+        // masterCellGroup -> check for ReconfigurationWithSync to detect handover scenarios and extract relevant parameters 
         if (v1530->masterCellGroup)
         {
             auto *cellGroupConfig = rrc::encode::Decode<ASN_RRC_CellGroupConfig>(
@@ -317,9 +400,13 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
 
             if (cellGroupConfig)
             {
+                // check for the presence of ReconfigurationWithSync in the spCellConfig, 
+                //  which indicates a handover is being commanded.
                 if (cellGroupConfig->spCellConfig &&
                     cellGroupConfig->spCellConfig->reconfigurationWithSync)
                 {
+                    // extract the target cell handover parameters
+                    //  and set the handover flag
                     auto *rws = cellGroupConfig->spCellConfig->reconfigurationWithSync;
 
                     hoPhysCellId = (rws->spCellConfigCommon && rws->spCellConfigCommon->physCellId)
@@ -348,23 +435,53 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
         auto *v1560 = v1540 ? v1540->nonCriticalExtension : nullptr;
         auto *v1610 = v1560 ? v1560->nonCriticalExtension : nullptr;
 
+        m_logger->info(
+            "RRCReconfiguration extension chain: v1530=%s v1540=%s v1560=%s v1610=%s conditional=%s",
+            "yes",
+            v1540 ? "yes" : "no",
+            v1560 ? "yes" : "no",
+            v1610 ? "yes" : "no",
+            (v1610 && v1610->conditionalReconfiguration) ? "yes" : "no");
+
+        // check for a ConditionalReconfiguration IE in the v1610 extension, which indicates 
+        //   a CHO is pending and we should parse the CHO IEs 
         if (v1610 && v1610->conditionalReconfiguration)
         {
-            hasConditionalReconfig = true;
-            auto *condReconfig = v1610->conditionalReconfiguration;
-            parseConditionalReconfiguration(condReconfig);
+            pendingConditionalReconfig = v1610->conditionalReconfiguration;
+        }
+        else if (v1610)
+        {
+            // if v1610 IEs are present but ConditionalReconfiguration is omitted or not populated by the sender,
+            //  just log it for debugging
+            m_logger->debug("RRCReconfiguration v1610 present without ConditionalReconfiguration; ignoring CHO update");
         }
     }
 
-    // Execute operation based on reconfiguration msg type
+    // Compatibility rule: fullConfig means replace-all configuration state.
+    // If ConditionalReconfiguration is omitted, CHO state is cleared and stays empty
+    // (Rel-15 fallback path with no CHO IE).
+    if (fullConfig)
+    {
+        m_logger->info("RRCReconfiguration fullConfig=true: clearing existing CHO candidates");
+        cancelAllChoCandidates();
+    }
+
+    // set the conditional handover events (if present)
+    if (pendingConditionalReconfig)
+        parseConditionalReconfiguration(pendingConditionalReconfig);
+
+    // if this RRC reconfig was to execute a handover, then trigger the handover procedure with the extracted parameters.
+    //   Note - we do this last, because the RRC can include new measurement configurations from the new  GNB
+    //      that we want to apply before executing the handover
     if (isHandover)
     {
         // handovers require special processing
-        performHandover(msg.rrc_TransactionIdentifier, hoPhysCellId, hoNewCRNTI, hoT304Ms, hoHasRachConfig);
+        performHandover(txId, hoPhysCellId, hoNewCRNTI, hoT304Ms, hoHasRachConfig);
     }
+
+    // Non-handover reconfiguration: just send RRCReconfigurationComplete as ACK
     else
     {
-        // Non-handover reconfiguration: just send RRCReconfigurationComplete as ACK
         auto *pdu = asn::New<ASN_RRC_UL_DCCH_Message>();
         pdu->message.present = ASN_RRC_UL_DCCH_MessageType_PR_c1;
         pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
@@ -373,7 +490,7 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
 
         auto &rrc = pdu->message.choice.c1->choice.rrcReconfigurationComplete =
             asn::New<ASN_RRC_RRCReconfigurationComplete>();
-        rrc->rrc_TransactionIdentifier = msg.rrc_TransactionIdentifier;
+        rrc->rrc_TransactionIdentifier = txId;
         rrc->criticalExtensions.present =
             ASN_RRC_RRCReconfigurationComplete__criticalExtensions_PR_rrcReconfigurationComplete;
         rrc->criticalExtensions.choice.rrcReconfigurationComplete =

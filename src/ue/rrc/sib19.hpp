@@ -184,7 +184,8 @@ enum class ENtnUlSyncValidityDuration
  * and scheduling offset.
  *
  * epochTime-r17 is represented as a 64-bit integer in units of 10 ms
- * steps (related to the SFN — System Frame Number).
+ * steps. Note that in 3gpp this is related to the System Frame Number (SFN)
+ * and subfame, but for the simulation we are simply using the Unix epoch as a 10ms value.
  *
  * kOffset-r17 is a scheduling offset in milliseconds that compensates
  * for the satellite round-trip delay.
@@ -195,7 +196,7 @@ struct NtnConfig
     EphemerisInfo ephemerisInfo{};
 
     /* Time reference */
-    int64_t epochTime{};               ///< 10-ms steps (SFN-based)
+    int64_t epochTime{};               ///< 10-ms steps
 
     /* Scheduling offset */
     int32_t kOffset{};                 ///< ms — compensates round-trip delay
@@ -221,7 +222,6 @@ struct NtnConfig
  * Key fields for CHO integration:
  *   - ntnConfig.ephemerisInfo: satellite position/velocity for extrapolation
  *   - ntnConfig.epochTime: "T_epoch" for the math X_now = X + VX × Δt
- *   - distanceThresh: distance (meters) for Event D1 triggering
  *   - ntnConfig.ulSyncValidityDuration: expiration of the ephemeris data
  *
  * The receivedTime field records the UE's local clock (ms since epoch)
@@ -237,9 +237,6 @@ struct Sib19Info
 
     /* Cell-specific K_offset (additional to the one in ntn-Config) */
     std::optional<int32_t> cellSpecificKoffset{};
-
-    /* Distance threshold for CHO Event D1 (meters) */
-    std::optional<double> distanceThresh{};
 
     /* Antenna polarisation */
     std::optional<ENtnPolarization> ntnPolarization{};
@@ -278,6 +275,8 @@ Json ToJson(const Sib19Info &v);
  *  X_now = X_epoch + VX × Δt
  *  Y_now = Y_epoch + VY × Δt
  *  Z_now = Z_epoch + VZ × Δt
+ * 
+ * units - X,Y,Z in meters; VX,VY,VZ in m/s; Δt in seconds
  *
  * @param posVel   The position/velocity at epoch time.
  * @param dtSec    Elapsed time since epoch, in seconds.
@@ -285,7 +284,7 @@ Json ToJson(const Sib19Info &v);
  * @param[out] y   Extrapolated Y position (meters).
  * @param[out] z   Extrapolated Z position (meters).
  */
-inline void extrapolateSatellitePosition(const SatPositionVelocity &posVel,
+inline void extrapolateSatelliteEcefPosition(const SatPositionVelocity &posVel,
                                           double dtSec,
                                           double &x, double &y, double &z)
 {

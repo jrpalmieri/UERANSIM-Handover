@@ -10,6 +10,7 @@
 
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <lib/app/monitor.hpp>
@@ -73,6 +74,7 @@ struct NGAPHandoverPending
     int id{};
     NgapUeContext* ctx{};
     uint64_t expireTime{};
+    bool choCandidate{};
 };
 
 struct SctpAssociation
@@ -249,6 +251,10 @@ struct RrcUeContext
     int lastMeasReportRsrp{-140};
     int lastServingRsrp{-140};
     bool handoverDecisionPending{};
+    bool choPreparationPending{};
+    std::vector<int> choPreparationCandidatePcis{};
+    std::unordered_map<int, int> choPreparationCandidateScores{};
+    std::vector<long> choPreparationMeasIds{};
 
     [[nodiscard]] const SentMeasIdentity *findSentMeasIdentity(long measId) const
     {
@@ -418,6 +424,38 @@ struct SatelliteLinkConfig
     double rxGainDbi{25.0};      // receive antenna gain in dBi
 };
 
+struct SIB19Config
+{
+    bool sib19On{false};
+    int sib19TimingMs{1000};
+
+    int32_t kOffset{0};
+    int64_t taCommon{0};
+    int32_t taCommonDrift{0};
+    std::optional<int32_t> taCommonDriftVariation{};
+    std::optional<int32_t> ulSyncValidityDuration{};
+    std::optional<int32_t> cellSpecificKoffset{};
+    std::optional<int32_t> polarization{};
+    std::optional<int32_t> taDrift{};
+};
+
+struct NtnConfig
+{
+    SIB19Config sib19{};
+};
+
+struct TruePositionVelocity
+{
+    bool isValid{false};
+    double x{};
+    double y{};
+    double z{};
+    double vx{};
+    double vy{};
+    double vz{};
+    int64_t epochMs{};
+};
+
 enum class EGnbRsrpMode
 {
     Calculated,
@@ -474,6 +512,34 @@ struct GnbRsrpConfig
 
 struct GnbHandoverConfig
 {
+    struct GnbHandoverReferencePosition
+    {
+        double latitude{};
+        double longitude{};
+        double altitude{};
+    };
+
+    struct GnbHandoverEventConfig
+    {
+        std::string eventType{"A3"};
+        int a2ThresholdDbm{-110};
+        int a3OffsetDb{3};
+        int a5Threshold1Dbm{-110};
+        int a5Threshold2Dbm{-95};
+        int distanceThreshold{1000};
+        int hysteresisDb{1};
+        int hysteresisM{0};
+        int tttMs{100};
+        std::string distanceType{"nadir"};
+        std::optional<GnbHandoverReferencePosition> referencePosition{};
+        std::optional<EcefPosition> referencePositionEcef{};
+    };
+
+    struct GnbChoEventConfig
+    {
+        std::vector<GnbHandoverEventConfig> events{};
+    };
+
     struct GnbXnConfig
     {
         bool enabled{false};
@@ -484,12 +550,9 @@ struct GnbHandoverConfig
         bool fallbackToN2{true};
     };
 
-    std::vector<std::string> eventTypes{"A3"};
-    int a2ThresholdDbm{-110};
-    int a3OffsetDb{3};
-    int a5Threshold1Dbm{-110};
-    int a5Threshold2Dbm{-95};
-    int hysteresisDb{1};
+    bool choEnabled{false};
+    std::vector<GnbHandoverEventConfig> events{{}};
+    std::vector<GnbChoEventConfig> choEvents{};
     GnbXnConfig xn{};
 };
 
@@ -528,6 +591,7 @@ struct GnbConfig
     /* Satellite simulation config */
     bool satSim{false};
     SatelliteLinkConfig satLink{};
+    NtnConfig ntn{};
 
     /* Assigned by program */
     std::string name{};

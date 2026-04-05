@@ -461,6 +461,7 @@ class UeProcess:
                     - applied_remove_miss (int): total remove misses via apply summaries
                     - applied_skipped (int): total candidates skipped via apply summaries
                     - active_candidates (int): last reported active CHO candidate count
+                    - runtime_resets (int): number of CHO runtime reset events observed
         """
         self.collect_output(timeout_s=0.3)
         info: dict = {
@@ -474,6 +475,7 @@ class UeProcess:
                         "applied_remove_miss": 0,
                         "applied_skipped": 0,
                         "active_candidates": 0,
+                        "runtime_resets": 0,
         }
 
         for line in self._log_lines:
@@ -495,6 +497,12 @@ class UeProcess:
             # "Cancelling X CHO candidate(s)"
             if "Cancelling" in line and "CHO candidate" in line:
                 info["cancelled"] = True
+
+            # "CHO runtime state reset for N candidate(s)"
+            m = re.search(r"CHO runtime state reset for (\d+) candidate\(s\)", line)
+            if m:
+                info["runtime_resets"] += 1
+                continue
 
             #
             # Apply summary logs:

@@ -77,3 +77,55 @@ satLink:
   txGainDbi: 35.0        # Transmit antenna gain (dBi)
   rxGainDbi: 25.0        # Receive antenna gain (dBi)
 
+# Handover measurement/CHO configuration.
+# events: classic (non-CHO) events always sent to UEs.
+# choEvents: CHO condition groups (AND within group).
+# CHO priority is derived from target candidate ranking (best=1).
+handover:
+  choEnabled: false
+  events:
+    - eventType: A3
+      a3OffsetDb: 3
+      hysteresisDb: 1
+      tttMs: 200
+  choEvents:
+    - events:
+        - eventType: D1
+          distanceThreshold: 1200
+          distanceType: nadir
+          hysteresisM: 100
+          tttMs: 1000
+          # Required when distanceType is fixed.
+          referencePosition:
+            latitude: 37.7749
+            longitude: -122.4194
+            altitude: 100
+        - eventType: A3
+          a3OffsetDb: 3
+          hysteresisDb: 1
+          tttMs: 1000
+  xn:
+    enabled: false
+    bindAddress: 127.0.0.1
+    bindPort: 9487
+    requestTimeoutMs: 1000
+    contextTtlMs: 5000
+    fallbackToN2: true
+        
+# NTN configuration
+ntn:
+  # controls how SIB19 is configured/sent
+  sib19:
+    # sib19on must be true to enable SIB19 transmissions
+    sib19on: false
+    # send period (in ms)
+    sib19timing: 1000
+    # these params are not used in the simulation, set to default values for completeness
+    kOffset: 0
+    taCommon: 0
+    taCommonDrift: 0
+    # taCommonDriftVariation: 0
+    # ulSyncValidityDuration: 60
+    # cellSpecificKoffset: 0
+    # polarization: 0          # 0: RHCP, 1: LHCP, 2: LINEAR
+    # taDrift: 0

@@ -180,6 +180,7 @@ struct NmGnbNgapToRrc : NtsMessage
         PAGING,
         UE_CONTEXT_RELEASE,
         HANDOVER_COMMAND_DELIVERY,
+        HANDOVER_FAILURE,
         PATH_SWITCH_REQUEST_ACK,
     } present;
 
@@ -187,6 +188,7 @@ struct NmGnbNgapToRrc : NtsMessage
     OctetString rrcContainer{};
     int hoTargetPci{};
     int hoNewCrnti{};
+    bool hoForChoPreparation{};
 
     // NAS_DELIVERY
     // AN_RELEASE
@@ -220,6 +222,7 @@ struct NmGnbRrcToNgap : NtsMessage
     int hoTargetPci{};
     int hoTargetNci{};
     NgapCause hoCause{};
+    bool hoForChoPreparation{};
 
     // INITIAL_NAS_DELIVERY
     // UPLINK_NAS_DELIVERY

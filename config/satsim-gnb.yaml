@@ -72,3 +72,21 @@ satLink:
   txGainDbi: 35.0        # Transmit antenna gain (dBi)
   rxGainDbi: 25.0        # Receive antenna gain (dBi)
 
+# NTN configuration
+ntn:
+  # controls how SIB19 is configured/sent
+  sib19:
+    # sib19on must be true to enable SIB19 transmissions
+    sib19on: false
+    # send period (in ms)
+    sib19timing: 1000
+    # these params are not used in the simulation, set to default values for completeness
+    kOffset: 0
+    taCommon: 0
+    taCommonDrift: 0
+    # taCommonDriftVariation: 0
+    # ulSyncValidityDuration: 60
+    # cellSpecificKoffset: 0
+    # polarization: 0          # 0: RHCP, 1: LHCP, 2: LINEAR
+    # taDrift: 0
+

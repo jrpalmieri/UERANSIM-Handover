@@ -40,11 +40,10 @@
 //   76      4      taCommonDriftVar   (int32, T_c/s²; -1 = not present)
 //   80      4      ulSyncValidity     (int32, seconds; -1 = not present)
 //   84      4      cellSpecificKoff   (int32; -1 = not present)
-//   88      8      distanceThresh     (double, meters; <0 = not present)
-//   96      4      ntnPolarization    (int32; 0=RHCP, 1=LHCP, 2=LINEAR, -1=absent)
-//   100     4      taDrift            (int32, T_c/s; INT32_MIN = not present)
+//   88      4      ntnPolarization    (int32; 0=RHCP, 1=LHCP, 2=LINEAR, -1=absent)
+//   92      4      taDrift            (int32, T_c/s; INT32_MIN = not present)
 //   ------  -----  -------------------------------------------------------
-//   Total: 104 bytes (fixed size)
+//   Total: 96 bytes (fixed size)
 //
 
 #include "task.hpp"
@@ -64,15 +63,17 @@ namespace nr::ue
 /* ================================================================== */
 
 // Total fixed size of the DL_SIB19 PDU.
-static constexpr size_t SIB19_PDU_SIZE = 104;
+static constexpr size_t SIB19_PDU_SIZE = 96;
 
 // Offset where the common fields begin (after 4-byte header + 48-byte ephemeris).
 static constexpr size_t COMMON_OFFSET = 52;
 
 /* ================================================================== */
 /*  receiveSib19 — parse DL_SIB19 PDU and store in cell descriptor    */
+/*                                                                    */
+/*  Note - this is a custom implementation of SIB19 messages that does
+not use the standard ASN.1 parsing */
 /* ================================================================== */
-
 void UeRrcTask::receiveSib19(int cellId, const OctetString &pdu)
 {
     const uint8_t *p = pdu.data();
@@ -178,18 +179,13 @@ void UeRrcTask::receiveSib19(int cellId, const OctetString &pdu)
     if (csKoff >= 0)
         sib19.cellSpecificKoffset = csKoff;
 
-    // Distance threshold
-    double distThresh = readF64(COMMON_OFFSET + 36);
-    if (distThresh >= 0.0)
-        sib19.distanceThresh = distThresh;
-
     // NTN Polarization
-    int32_t pol = readI32(COMMON_OFFSET + 44);
+    int32_t pol = readI32(COMMON_OFFSET + 36);
     if (pol >= 0 && pol <= 2)
         sib19.ntnPolarization = static_cast<ENtnPolarization>(pol);
 
     // TA drift (top-level shortcut)
-    int32_t taDriftTop = readI32(COMMON_OFFSET + 48);
+    int32_t taDriftTop = readI32(COMMON_OFFSET + 40);
     if (taDriftTop != INT32_MIN)
         sib19.taDrift = taDriftTop;
 
@@ -201,14 +197,10 @@ void UeRrcTask::receiveSib19(int cellId, const OctetString &pdu)
     auto &desc = m_cellDesc[cellId];
     desc.sib19 = sib19;
 
-    m_logger->info("SIB19 received for cell %d: epochTime=%" PRId64 " kOffset=%d "
-                   "distanceThresh=%s syncValidity=%s",
+    m_logger->info("SIB19 received for cell %d: epochTime=%" PRId64 " kOffset=%d syncValidity=%s",
                    cellId,
                    sib19.ntnConfig.epochTime,
                    sib19.ntnConfig.kOffset,
-                   sib19.distanceThresh.has_value()
-                       ? std::to_string(sib19.distanceThresh.value()).c_str()
-                       : "N/A",
                    sib19.ntnConfig.ulSyncValidityDuration.has_value()
                        ? std::to_string(static_cast<int>(
                              sib19.ntnConfig.ulSyncValidityDuration.value())).c_str()
@@ -323,12 +315,6 @@ Json ToJson(const Sib19Info &v)
 
     if (v.cellSpecificKoffset.has_value())
         j.put("cellSpecificKoffset", v.cellSpecificKoffset.value());
-    if (v.distanceThresh.has_value())
-    {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "%.3f", v.distanceThresh.value());
-        j.put("distanceThresh", std::string(buf));
-    }
     if (v.ntnPolarization.has_value())
         j.put("ntnPolarization", ToJson(v.ntnPolarization.value()));
     if (v.taDrift.has_value())

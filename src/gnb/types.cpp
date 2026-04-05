@@ -48,8 +48,84 @@ Json ToJson(const GnbStatusInfo &v)
 Json ToJson(const GnbConfig &v)
 {
     auto handoverEvents = Json::Arr({});
-    for (const auto &eventType : v.handover.eventTypes)
-        handoverEvents.push(eventType);
+    for (const auto &event : v.handover.events)
+    {
+        Json eventJson = Json::Obj({
+            {"event-type", event.eventType},
+            {"a2-threshold-dbm", event.a2ThresholdDbm},
+            {"a3-offset-db", event.a3OffsetDb},
+            {"a5-threshold1-dbm", event.a5Threshold1Dbm},
+            {"a5-threshold2-dbm", event.a5Threshold2Dbm},
+            {"distance-threshold", event.distanceThreshold},
+            {"hysteresis-db", event.hysteresisDb},
+            {"hysteresis-m", event.hysteresisM},
+            {"ttt-ms", event.tttMs},
+            {"distance-type", event.distanceType},
+        });
+
+        if (event.referencePosition)
+        {
+            eventJson.put("reference-position", Json::Obj({
+                {"latitude", std::to_string(event.referencePosition->latitude)},
+                {"longitude", std::to_string(event.referencePosition->longitude)},
+                {"altitude", std::to_string(event.referencePosition->altitude)},
+            }));
+        }
+        if (event.referencePositionEcef)
+        {
+            eventJson.put("reference-position-ecef", Json::Obj({
+                {"x", std::to_string(event.referencePositionEcef->x)},
+                {"y", std::to_string(event.referencePositionEcef->y)},
+                {"z", std::to_string(event.referencePositionEcef->z)},
+            }));
+        }
+
+        handoverEvents.push(std::move(eventJson));
+    }
+
+    auto handoverChoEvents = Json::Arr({});
+    for (const auto &choEvent : v.handover.choEvents)
+    {
+        auto choEventEntries = Json::Arr({});
+        for (const auto &event : choEvent.events)
+        {
+            Json eventJson = Json::Obj({
+                {"event-type", event.eventType},
+                {"a2-threshold-dbm", event.a2ThresholdDbm},
+                {"a3-offset-db", event.a3OffsetDb},
+                {"a5-threshold1-dbm", event.a5Threshold1Dbm},
+                {"a5-threshold2-dbm", event.a5Threshold2Dbm},
+                {"distance-threshold", event.distanceThreshold},
+                {"hysteresis-db", event.hysteresisDb},
+                {"hysteresis-m", event.hysteresisM},
+                {"ttt-ms", event.tttMs},
+                {"distance-type", event.distanceType},
+            });
+
+            if (event.referencePosition)
+            {
+                eventJson.put("reference-position", Json::Obj({
+                    {"latitude", std::to_string(event.referencePosition->latitude)},
+                    {"longitude", std::to_string(event.referencePosition->longitude)},
+                    {"altitude", std::to_string(event.referencePosition->altitude)},
+                }));
+            }
+            if (event.referencePositionEcef)
+            {
+                eventJson.put("reference-position-ecef", Json::Obj({
+                    {"x", std::to_string(event.referencePositionEcef->x)},
+                    {"y", std::to_string(event.referencePositionEcef->y)},
+                    {"z", std::to_string(event.referencePositionEcef->z)},
+                }));
+            }
+
+            choEventEntries.push(std::move(eventJson));
+        }
+
+        handoverChoEvents.push(Json::Obj({
+            {"events", std::move(choEventEntries)},
+        }));
+    }
 
     auto neighborEntries = Json::Arr({});
     for (const auto &neighbor : v.neighborList)
@@ -74,6 +150,25 @@ Json ToJson(const GnbConfig &v)
         neighborEntries.push(std::move(neighborEntry));
     }
 
+    Json sib19Json = Json::Obj({
+        {"sib19-on", v.ntn.sib19.sib19On},
+        {"sib19-timing-ms", v.ntn.sib19.sib19TimingMs},
+        {"k-offset", v.ntn.sib19.kOffset},
+        {"ta-common", v.ntn.sib19.taCommon},
+        {"ta-common-drift", v.ntn.sib19.taCommonDrift},
+    });
+
+    if (v.ntn.sib19.taCommonDriftVariation)
+        sib19Json.put("ta-common-drift-variation", *v.ntn.sib19.taCommonDriftVariation);
+    if (v.ntn.sib19.ulSyncValidityDuration)
+        sib19Json.put("ul-sync-validity-duration", *v.ntn.sib19.ulSyncValidityDuration);
+    if (v.ntn.sib19.cellSpecificKoffset)
+        sib19Json.put("cell-specific-koffset", *v.ntn.sib19.cellSpecificKoffset);
+    if (v.ntn.sib19.polarization)
+        sib19Json.put("polarization", *v.ntn.sib19.polarization);
+    if (v.ntn.sib19.taDrift)
+        sib19Json.put("ta-drift", *v.ntn.sib19.taDrift);
+
     return Json::Obj({
         {"name", v.name},
         {"nci", v.nci},
@@ -89,12 +184,9 @@ Json ToJson(const GnbConfig &v)
             {"update-mode", ToString(v.rsrp.updateMode)},
         })},
         {"handover", Json::Obj({
-            {"event-type", std::move(handoverEvents)},
-            {"a2-threshold-dbm", v.handover.a2ThresholdDbm},
-            {"a3-offset-db", v.handover.a3OffsetDb},
-            {"a5-threshold1-dbm", v.handover.a5Threshold1Dbm},
-            {"a5-threshold2-dbm", v.handover.a5Threshold2Dbm},
-            {"hysteresis-db", v.handover.hysteresisDb},
+            {"cho-enabled", v.handover.choEnabled},
+            {"events", std::move(handoverEvents)},
+            {"cho-events", std::move(handoverChoEvents)},
             {"xn", Json::Obj({
                 {"enabled", v.handover.xn.enabled},
                 {"bind-address", v.handover.xn.bindAddress},
@@ -103,6 +195,9 @@ Json ToJson(const GnbConfig &v)
                 {"context-ttl-ms", v.handover.xn.contextTtlMs},
                 {"fallback-to-n2", v.handover.xn.fallbackToN2},
             })},
+        })},
+        {"ntn", Json::Obj({
+            {"sib19", std::move(sib19Json)},
         })},
         {"neighbor-list", std::move(neighborEntries)},
     });

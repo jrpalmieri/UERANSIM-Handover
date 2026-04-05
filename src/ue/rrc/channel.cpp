@@ -16,9 +16,32 @@
 #include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
 #include <asn/rrc/ASN_RRC_UL-CCCH-Message.h>
 #include <asn/rrc/ASN_RRC_UL-DCCH-Message.h>
+#include <sstream>
+#include <iomanip>
 
 namespace nr::ue
 {
+
+static std::string pduHexPreview(const OctetString &pdu, size_t maxBytes = 16)
+{
+    const uint8_t *buf = pdu.data();
+    size_t n = static_cast<size_t>(pdu.length());
+    size_t limit = std::min(n, maxBytes);
+
+    std::ostringstream oss;
+    for (size_t i = 0; i < limit; i++)
+    {
+        if (i > 0)
+            oss << ' ';
+        oss << std::hex << std::setw(2) << std::setfill('0')
+            << static_cast<unsigned>(buf[i]);
+    }
+
+    if (n > limit)
+        oss << " ...";
+
+    return oss.str();
+}
 
 void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const OctetString &rrcPdu)
 {
@@ -63,7 +86,9 @@ void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const Oct
         {
             auto *pdu = rrc::encode::Decode<ASN_RRC_DL_DCCH_Message>(asn_DEF_ASN_RRC_DL_DCCH_Message, rrcPdu);
             if (pdu == nullptr)
-                m_logger->err("RRC DL-DCCH PDU decoding failed.");
+                m_logger->err(
+                    "RRC DL-DCCH PDU decoding failed (len=%d, preview=%s)",
+                    rrcPdu.length(), pduHexPreview(rrcPdu).c_str());
             else
                 receiveRrcMessage(pdu);
             asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
@@ -90,7 +115,7 @@ void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const Oct
     case rrc::RrcChannel::DL_CHO: {
         if (isActiveCell(cellId))
         {
-            handleChoConfiguration(rrcPdu);
+            m_logger->warn("Ignoring deprecated DL_CHO channel; use RRCReconfiguration/ConditionalReconfiguration ASN path");
         }
         break;
     }

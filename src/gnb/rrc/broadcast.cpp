@@ -14,6 +14,11 @@
 #include <lib/rrc/encode.hpp>
 #include <utils/common.hpp>
 
+#include <climits>
+#include <cstdint>
+#include <cstring>
+#include <type_traits>
+
 #include <asn/rrc/ASN_RRC_MIB.h>
 #include <asn/rrc/ASN_RRC_PLMN-IdentityInfo.h>
 #include <asn/rrc/ASN_RRC_PLMN-IdentityInfoList.h>
@@ -25,6 +30,15 @@
 
 namespace nr::gnb
 {
+
+static constexpr size_t SIB19_PDU_SIZE = 96;
+
+template <typename T>
+static void WriteLe(std::vector<uint8_t> &buffer, size_t offset, const T &value)
+{
+    static_assert(std::is_trivially_copyable_v<T>, "T must be trivially copyable");
+    std::memcpy(buffer.data() + offset, &value, sizeof(T));
+}
 
 static ASN_RRC_BCCH_BCH_Message *ConstructMibMessage(bool barred, bool intraFreqReselectAllowed)
 {
@@ -117,6 +131,53 @@ void GnbRrcTask::triggerSysInfoBroadcast()
 
     asn::Free(asn_DEF_ASN_RRC_BCCH_BCH_Message, mib);
     asn::Free(asn_DEF_ASN_RRC_BCCH_DL_SCH_Message, sib1);
+}
+
+void GnbRrcTask::triggerSib19Broadcast()
+{
+    if (!m_config->ntn.sib19.sib19On)
+        return;
+
+    if (!m_truePositionVelocity.isValid)
+        return;
+
+    int64_t nowMs = utils::CurrentTimeMillis();
+    double dtSec = static_cast<double>(nowMs - m_truePositionVelocity.epochMs) / 1000.0;
+
+    double xNow = m_truePositionVelocity.x + m_truePositionVelocity.vx * dtSec;
+    double yNow = m_truePositionVelocity.y + m_truePositionVelocity.vy * dtSec;
+    double zNow = m_truePositionVelocity.z + m_truePositionVelocity.vz * dtSec;
+
+    std::vector<uint8_t> payload(SIB19_PDU_SIZE, 0);
+    payload[0] = 0; // EEphemerisType::POSITION_VELOCITY
+
+    WriteLe(payload, 4, xNow);
+    WriteLe(payload, 12, yNow);
+    WriteLe(payload, 20, zNow);
+    WriteLe(payload, 28, m_truePositionVelocity.vx);
+    WriteLe(payload, 36, m_truePositionVelocity.vy);
+    WriteLe(payload, 44, m_truePositionVelocity.vz);
+
+    const auto &cfg = m_config->ntn.sib19;
+    int64_t epoch10ms = nowMs / 10;
+    WriteLe(payload, 52, epoch10ms);
+    WriteLe(payload, 60, cfg.kOffset);
+    WriteLe(payload, 64, cfg.taCommon);
+    WriteLe(payload, 72, cfg.taCommonDrift);
+
+    int32_t taDriftVar = cfg.taCommonDriftVariation.has_value() ? *cfg.taCommonDriftVariation : -1;
+    int32_t ulSync = cfg.ulSyncValidityDuration.has_value() ? *cfg.ulSyncValidityDuration : -1;
+    int32_t cellKOffset = cfg.cellSpecificKoffset.has_value() ? *cfg.cellSpecificKoffset : -1;
+    int32_t polarization = cfg.polarization.has_value() ? *cfg.polarization : -1;
+    int32_t taDriftTop = cfg.taDrift.has_value() ? *cfg.taDrift : INT32_MIN;
+
+    WriteLe(payload, 76, taDriftVar);
+    WriteLe(payload, 80, ulSync);
+    WriteLe(payload, 84, cellKOffset);
+    WriteLe(payload, 88, polarization);
+    WriteLe(payload, 92, taDriftTop);
+
+    sendRrcMessage(rrc::RrcChannel::DL_SIB19, OctetString(std::move(payload)));
 }
 
 } // namespace nr::gnb

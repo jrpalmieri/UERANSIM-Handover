@@ -167,6 +167,21 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         }
         break;
     }
+    case app::GnbCliCommand::LOC_PV: {
+        TruePositionVelocity position{};
+        position.isValid = true;
+        position.x = msg.cmd->locX;
+        position.y = msg.cmd->locY;
+        position.z = msg.cmd->locZ;
+        position.vx = msg.cmd->velX;
+        position.vy = msg.cmd->velY;
+        position.vz = msg.cmd->velZ;
+        position.epochMs = msg.cmd->epochMs;
+
+        m_base->rrcTask->setTruePositionVelocity(position);
+        sendResult(msg.address, "Updated true gNB position/velocity for SIB19 generation");
+        break;
+    }
     case app::GnbCliCommand::VERSION: {
         Json json = Json::Obj({
             {"gnb-version", std::string(GNB_VERSION)},

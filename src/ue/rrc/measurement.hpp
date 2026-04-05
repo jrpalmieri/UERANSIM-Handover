@@ -1,6 +1,6 @@
 //
 // UE RRC Measurement Framework
-// Supports NR measurement events A2, A3, and A5.
+// Supports NR measurement events A2, A3, A5, and D1.
 // Provides out-of-band measurement injection via UDP, Unix socket, or file.
 //
 
@@ -29,6 +29,21 @@ enum class EMeasEvent
     A2, // Serving cell becomes worse than threshold
     A3, // Neighbor cell becomes offset better than serving cell (SpCell)
     A5, // Serving cell becomes worse than threshold1 AND neighbor cell becomes better than threshold2
+    D1, // Distance to a configured reference location exceeds threshold
+};
+
+/**
+ * @brief D1 reference location selector.
+ *
+ * - Fixed: use a configured ECEF reference point.
+ * - Nadir: derive the reference point from serving-cell SIB19 ephemeris.
+ * - Unknown: invalid configuration (should be rejected by RRC Reconfiguration procedure).
+ */
+enum class ED1ReferenceType
+{
+    Fixed,
+    Nadir,
+    Unknown,
 };
 
 /* ------------------------------------------------------------------ */
@@ -43,7 +58,9 @@ struct UeMeasObject
 
 /**
  * @brief Struct to represent a report configuration, which defines the 
- *  event trigger conditions for a MeasurementReport.
+ *  event trigger conditions for a MeasurementReport.  Contains fields for
+ *  all supported event types (A2, A3, A5, D1), but only a subset will be relevant
+ *  depending on the event type.
  * 
  */
 struct UeReportConfig
@@ -51,15 +68,29 @@ struct UeReportConfig
     int           reportConfigId{}; // ID assigned to this report config
     EMeasEvent    event{EMeasEvent::A3};  // event type
 
-    int           a2Threshold{-110};   // for A2: serving < threshold (in dBm)
+    /* A2 */
+    int           a2Threshold{-110};   // serving < threshold (in dBm)
 
-    int           a3Offset{6};         // for A3: neighbor > serving + this offset (dB)
+    /* A3 */
+    int           a3Offset{6};         // neighbor > serving + this offset (dB)
 
-    int           a5Threshold1{-110};  // for A5: serving < this threshold1 (dBm)
-    int           a5Threshold2{-100};  // for A5: neighbor > this threshold2 (dBm)
+    /* A5 */
+    int           a5Threshold1{-110};  // serving < this threshold1 (dBm)
+    int           a5Threshold2{-100};  // neighbor > this threshold2 (dBm)
+
+    /* D1: distance to reference location > threshold */
+    ED1ReferenceType d1ReferenceType{ED1ReferenceType::Fixed};
+    double        d1RefX{};            // ECEF reference X (m), used when d1ReferenceType=Fixed
+    double        d1RefY{};            // ECEF reference Y (m), used when d1ReferenceType=Fixed
+    double        d1RefZ{};            // ECEF reference Z (m), used when d1ReferenceType=Fixed
+    double        d1ThresholdM{1000.0}; // distance threshold in meters
+
+    /* T1: timer  */
+    int t1DurationMs{1000};
+
 
     // common to all events:
-    int           hysteresis{2};        // hysteresis value to apply (dB)
+    int           hysteresis{2};        // hysteresis value to apply (db for RSRP, m for distance)
     int           timeToTriggerMs{640}; // how long condition must hold (ms) before triggering report
     int           maxReportCells{8};    // max number of neighbor cells to include in report (for A3/A5)
 };
@@ -144,10 +175,9 @@ enum class EChoEventType
 {
     T1,       // Timer-only: fires after t1DurationMs elapsed
     A2,       // Serving RSRP < threshold
-    A3,       // Neighbor RSRP > serving RSRP + offset − hysteresis
-    A5,       // Serving < threshold1 AND neighbor > threshold2
-    D1,       // Distance to static ECEF reference point exceeds threshold (3GPP Event D1)
-    D1_SIB19, // Distance to SIB19-derived satellite reference (nadir/satellite) exceeds threshold
+    A3,       // Neighbor RSRP > serving RSRP + offset + hysteresis
+    A5,       // Serving < threshold1 - hysteresis AND neighbor > threshold2 + hysteresis
+    D1,       // Distance to configured reference (fixed or nadir) exceeds threshold
 };
 
 /**
@@ -177,19 +207,16 @@ struct ChoCondition
     int a5Threshold2{-100};       // dBm (neighbor)
     int a5Hysteresis{2};          // dB
 
-    /* D1 parameters (static ECEF reference point + distance threshold) */
+    /* D1 parameters */
+    ED1ReferenceType d1ReferenceType{ED1ReferenceType::Fixed};
     double d1RefX{};
     double d1RefY{};
     double d1RefZ{};
     double d1ThresholdM{1000.0};
+    double d1ElevationMinDeg{-1.0};   ///< Optional log-only elevation filter hint
 
-    /* D1_SIB19 parameters (reference derived from SIB19 ephemeris) */
-    double d1sib19ThresholdM{-1.0};        ///< Threshold in meters; < 0 = use SIB19's distanceThresh
-    double d1sib19ElevationMinDeg{-1.0};   ///< Min elevation angle for logging; < 0 = ignored
-    bool   d1sib19UseNadir{true};          ///< true = distance to nadir, false = slant range to satellite
-
-    /* D1_SIB19 runtime — set by evaluateChoCandidates() each cycle */
-    double d1sib19ResolvedThreshM{0.0};    ///< Resolved threshold (from config or SIB19 distanceThresh)
+    /* D1 runtime — set by evaluateChoCandidates() each cycle */
+    double d1ResolvedThreshM{0.0};    ///< Resolved threshold used for this evaluation cycle
 
     /* Common */
     int hysteresis{2};            // general hysteresis (used where applicable)
@@ -206,7 +233,8 @@ struct ChoCondition
  *
  * Per 3GPP TS 38.331 §5.3.5.8.6 (Release 16/17), the gNB pre-configures
  * one or more CHO candidates.  Each candidate carries:
- *  - Target cell parameters (PCI, C-RNTI, T304).
+ *  - Target cell parameters (technically this is a ReconfigWithSync message, but
+ *      for simulation we only need to store the PCI, C-RNTI, T304).
  *  - A condition group: one or more ChoCondition entries evaluated with
  *    AND logic.  All conditions in the group must be simultaneously
  *    satisfied for the candidate to trigger.
@@ -229,7 +257,7 @@ struct ChoCandidate
     int targetPci{};            // Target cell PCI
     int newCRNTI{};             // C-RNTI assigned by target cell
     int t304Ms{1000};           // T304 supervision timer (ms)
-
+    int txId{0};              // ASN.1 transactionId for the ReconfigurationWithSync message to apply on trigger
     int executionPriority{0x7FFFFFFF}; // Lower = higher priority; max = unset
 
     /* Condition group – AND logic: ALL must be satisfied */

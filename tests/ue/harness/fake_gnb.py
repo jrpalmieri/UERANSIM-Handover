@@ -274,6 +274,13 @@ class FakeGnb:
         self._consumed_idx: int = 0
         self._lock = threading.Lock()
 
+        # Heartbeat observability for position-based tests
+        self._heartbeat_count: int = 0
+        self._last_heartbeat_sim_pos: Optional[Tuple[float, float, float]] = None
+
+        # True gNB position/velocity used by CLI-equivalent loc-pv command.
+        self._true_position_velocity: Optional[Dict[str, float]] = None
+
         # RRC codec
         self._rrc = RrcCodec()
 
@@ -506,6 +513,7 @@ class FakeGnb:
         report_configs: Optional[List[Dict]] = None,
         meas_ids: Optional[List[Dict]] = None,
         transaction_id: int = 1,
+        full_config: bool = False,
     ):
         """Send RRCReconfiguration with measurement configuration."""
         reconfig = self._rrc.build_rrc_reconfiguration(
@@ -513,6 +521,7 @@ class FakeGnb:
             meas_objects=meas_objects,
             report_configs=report_configs,
             meas_ids=meas_ids,
+            full_config=full_config,
         )
         self.send_dl_dcch(reconfig)
         logger.info("Sent RRCReconfiguration with measConfig")
@@ -628,6 +637,42 @@ class FakeGnb:
             filter_fn=lambda cm: self._is_measurement_report(cm),
         )
 
+    def wait_for_measurement_report_since(self, start_ts: float, timeout_s: float = 15.0) -> Optional[CapturedMessage]:
+        """Wait for a parseable MeasurementReport captured at/after *start_ts*.
+
+        Unlike ``wait_for_measurement_report``, this does not depend on the
+        internal consumed-index cursor and is resilient to prior reads from
+        other fixtures/helpers.
+        """
+        end = time.monotonic() + timeout_s
+        while time.monotonic() < end:
+            with self._lock:
+                for cm in self._captured:
+                    if cm.timestamp < start_ts:
+                        continue
+                    if cm.channel == RrcChannel.UL_DCCH and self._is_measurement_report(cm):
+                        return cm
+            time.sleep(0.2)
+        return None
+
+    def get_ul_dcch_message_type(self, raw_pdu: bytes) -> str:
+        """Best-effort message-type extraction for UL-DCCH payloads."""
+        decoded = self._rrc.decode_ul_dcch(raw_pdu)
+
+        msg_type = decoded.get("message_type")
+        if isinstance(msg_type, str) and msg_type:
+            return msg_type
+
+        message = decoded.get("message")
+        if isinstance(message, tuple) and len(message) == 2:
+            c1 = message[1]
+            if isinstance(c1, tuple) and len(c1) == 2:
+                name = c1[0]
+                if isinstance(name, str) and name:
+                    return name
+
+        return "unknown"
+
     def wait_for_rrc_reconfiguration_complete(
         self, timeout_s: float = 10.0
     ) -> Optional[CapturedMessage]:
@@ -649,6 +694,86 @@ class FakeGnb:
     def captured_messages(self) -> List[CapturedMessage]:
         with self._lock:
             return list(self._captured)
+
+    @property
+    def heartbeat_count(self) -> int:
+        with self._lock:
+            return self._heartbeat_count
+
+    @property
+    def last_heartbeat_sim_pos(self) -> Optional[Tuple[float, float, float]]:
+        with self._lock:
+            return self._last_heartbeat_sim_pos
+
+    def wait_for_heartbeat_position(self, timeout_s: float = 10.0) -> Optional[Tuple[float, float, float]]:
+        """Wait for the first heartbeat that carries UE simulated position."""
+        end = time.monotonic() + timeout_s
+        while time.monotonic() < end:
+            with self._lock:
+                if self._last_heartbeat_sim_pos is not None:
+                    return self._last_heartbeat_sim_pos
+            time.sleep(0.2)
+        return None
+
+    @property
+    def true_position_velocity(self) -> Optional[Dict[str, float]]:
+        with self._lock:
+            if self._true_position_velocity is None:
+                return None
+            return dict(self._true_position_velocity)
+
+    def run_command(self, command: str) -> str:
+        """Run a minimal CLI-equivalent gNB command in the test harness.
+
+        Supported commands:
+          - loc-pv x:y:z:vx:vy:vz:epoch-ms
+        """
+        cmd = command.strip()
+        if not cmd.startswith("loc-pv "):
+            raise ValueError(f"Unsupported command: {command}")
+
+        arg = cmd[len("loc-pv "):].strip()
+        parts = arg.split(":")
+        if len(parts) != 7:
+            raise ValueError("Invalid loc-pv format. Expected x:y:z:vx:vy:vz:epoch-ms")
+
+        try:
+            x = float(parts[0])
+            y = float(parts[1])
+            z = float(parts[2])
+            vx = float(parts[3])
+            vy = float(parts[4])
+            vz = float(parts[5])
+            epoch_ms = int(parts[6])
+        except ValueError as exc:
+            raise ValueError("Invalid loc-pv argument values") from exc
+
+        with self._lock:
+            self._true_position_velocity = {
+                "x": x,
+                "y": y,
+                "z": z,
+                "vx": vx,
+                "vy": vy,
+                "vz": vz,
+                "epochMs": epoch_ms,
+            }
+
+            # Derive a deterministic pseudo-RSRP from UE<->gNB distance whenever
+            # both true gNB position and UE heartbeat position are available.
+            if self._last_heartbeat_sim_pos is not None:
+                ux, uy, uz = self._last_heartbeat_sim_pos
+                dx = ux - x
+                dy = uy - y
+                dz = uz - z
+                distance_m = (dx * dx + dy * dy + dz * dz) ** 0.5
+
+                # Simple monotonic mapping for test determinism:
+                # 0 m -> about -35 dBm, +1,000,000 m -> about -85 dBm.
+                modeled = int(round(-35.0 - min(distance_m, 2_000_000.0) / 20_000.0))
+                self._cell_dbm = max(-120, min(-30, modeled))
+
+        return "Updated true gNB position/velocity for SIB19 generation"
 
     def captured_rrc_on(self, channel: RrcChannel) -> List[CapturedMessage]:
         """Return all captured RRC messages on a specific channel."""
@@ -713,6 +838,9 @@ class FakeGnb:
         """Reply with HeartBeatAck and record UE address/STI."""
         self._ue_addr = addr
         self._ue_sti = hb.sti
+        with self._lock:
+            self._heartbeat_count += 1
+            self._last_heartbeat_sim_pos = hb.sim_pos
         ack = encode_heartbeat_ack(
             self._gnb_sti,
             self._cell_dbm,
@@ -791,13 +919,16 @@ class FakeGnb:
             time.sleep(0.2)
         return None
 
-    @staticmethod
-    def _is_measurement_report(cm: CapturedMessage) -> bool:
-        """Heuristic: check if a UL-DCCH PDU is a MeasurementReport."""
+    def _is_measurement_report(self, cm: CapturedMessage) -> bool:
+        """Check if a UL-DCCH PDU is a parseable MeasurementReport."""
         if len(cm.raw_pdu) < 1:
             return False
-        # In UPER, UL-DCCH: 1 bit outer CHOICE (0=c1) + 4-bit c1 index.
-        # measurementReport = c1 index 0 → top 5 bits = 00000.
+
+        msg_type = self.get_ul_dcch_message_type(cm.raw_pdu)
+        if msg_type == "measurementReport":
+            return True
+
+        # Fallback to bit-level heuristic if decoder cannot classify.
         return (cm.raw_pdu[0] >> 3) == 0
 
     @staticmethod

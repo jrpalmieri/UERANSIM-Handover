@@ -75,6 +75,11 @@
 #include <asn/rrc/ASN_RRC_MeasIdToAddModList.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
+#include <asn/rrc/ASN_RRC_RRCReconfiguration-v1530-IEs.h>
+#include <asn/rrc/ASN_RRC_CellGroupConfig.h>
+#include <asn/rrc/ASN_RRC_SpCellConfig.h>
+#include <asn/rrc/ASN_RRC_ReconfigurationWithSync.h>
+#include <asn/rrc/ASN_RRC_ServingCellConfigCommon.h>
 #include <asn/rrc/ASN_RRC_ReestablishmentInfo.h>
 
 #include <optional>
@@ -90,6 +95,58 @@ static constexpr uint32_t CUSTOM_S2T_DEFAULT_BLOB_SIZE = 0;
 static constexpr uint32_t CUSTOM_T2S_MAGIC = 0x54325343; // "T2SC"
 static constexpr uint8_t CUSTOM_T2S_VERSION = 1;
 static constexpr uint32_t CUSTOM_T2S_DEFAULT_BLOB_SIZE = 0;
+static constexpr uint8_t CUSTOM_S2T_FLAG_CHO_INDICATION = 0x01;
+static constexpr int CHO_CANDIDATE_TIMEOUT_MS = 60000;
+
+static bool ExtractTargetPciFromHandoverCommandRrcContainer(const OctetString &rrcContainer, int &targetPci)
+{
+    auto *decoded =
+        rrc::encode::Decode<ASN_RRC_DL_DCCH_Message>(asn_DEF_ASN_RRC_DL_DCCH_Message, rrcContainer);
+    if (!decoded)
+        return false;
+
+    bool ok = false;
+
+    bool isReconfig = decoded->message.present == ASN_RRC_DL_DCCH_MessageType_PR_c1 &&
+                      decoded->message.choice.c1 != nullptr &&
+                      decoded->message.choice.c1->present ==
+                          ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcReconfiguration &&
+                      decoded->message.choice.c1->choice.rrcReconfiguration != nullptr;
+
+    if (isReconfig)
+    {
+        auto *reconfig = decoded->message.choice.c1->choice.rrcReconfiguration;
+        if (reconfig->criticalExtensions.present ==
+                ASN_RRC_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration &&
+            reconfig->criticalExtensions.choice.rrcReconfiguration != nullptr)
+        {
+            auto *ies = reconfig->criticalExtensions.choice.rrcReconfiguration;
+            if (ies->nonCriticalExtension != nullptr && ies->nonCriticalExtension->masterCellGroup != nullptr)
+            {
+                OctetString masterCellGroup = asn::GetOctetString(*ies->nonCriticalExtension->masterCellGroup);
+                auto *cellGroup =
+                    rrc::encode::Decode<ASN_RRC_CellGroupConfig>(asn_DEF_ASN_RRC_CellGroupConfig, masterCellGroup);
+                if (cellGroup)
+                {
+                    if (cellGroup->spCellConfig != nullptr &&
+                        cellGroup->spCellConfig->reconfigurationWithSync != nullptr &&
+                        cellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon != nullptr &&
+                        cellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon->physCellId != nullptr)
+                    {
+                        targetPci = static_cast<int>(
+                            *cellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon->physCellId);
+                        ok = true;
+                    }
+
+                    asn::Free(asn_DEF_ASN_RRC_CellGroupConfig, cellGroup);
+                }
+            }
+        }
+    }
+
+    asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, decoded);
+    return ok;
+}
 
 struct CustomS2tTransparentContainer
 {
@@ -106,6 +163,7 @@ struct CustomS2tTransparentContainer
     int sourceDownlinkStream{0};
     AggregateMaximumBitRate sourceUeAmbr{};
     HandoverPreparationInfo handoverPreparation{};
+    bool choIndication{};
 };
 
 static OctetString EncodeRrcReconfigurationMeasIds(const HandoverPreparationInfo &handoverPrep)
@@ -240,6 +298,7 @@ static std::optional<CustomS2tTransparentContainer> DecodeCustomSourceToTargetTr
 
     uint32_t magic = encoded.get4UI(0);
     uint8_t version = static_cast<uint8_t>(encoded.getI(4));
+    uint8_t flags = static_cast<uint8_t>(encoded.getI(5));
 
     if (magic != CUSTOM_S2T_MAGIC || version != CUSTOM_S2T_VERSION)
         return std::nullopt;
@@ -274,6 +333,8 @@ static std::optional<CustomS2tTransparentContainer> DecodeCustomSourceToTargetTr
 
     if (!DecodeCustomGtpContext(decoded.gtpContext, decoded))
         return std::nullopt;
+
+    decoded.choIndication = (flags & CUSTOM_S2T_FLAG_CHO_INDICATION) != 0;
 
     return decoded;
 }
@@ -407,7 +468,8 @@ static OctetString MakeRrcHandoverPreparationInformation(int sourcePci,
 
 static OctetString MakeSourceToTargetTransparentContainer(const NgapUeContext &ue, int sourceUeId,
                                                           int sourcePci, uint32_t blobSize,
-                                                          const HandoverPreparationInfo &handoverPrep)
+                                                          const HandoverPreparationInfo &handoverPrep,
+                                                          bool choIndication)
 {
     auto rrcContext = MakeRrcHandoverPreparationInformation(sourcePci, handoverPrep);
     if (rrcContext.length() == 0)
@@ -420,8 +482,12 @@ static OctetString MakeSourceToTargetTransparentContainer(const NgapUeContext &u
     OctetString encoded{};
     encoded.appendOctet4(CUSTOM_S2T_MAGIC);
     encoded.appendOctet(CUSTOM_S2T_VERSION);
-    encoded.appendOctet(0); // flags
+    // indicator that this a ConditionalHandover (CHO) request
+    uint8_t flags = choIndication ? CUSTOM_S2T_FLAG_CHO_INDICATION : 0;
+    encoded.appendOctet(flags);
     encoded.appendOctet2(0); // reserved
+
+    // relevant UE context information
     encoded.appendOctet4(static_cast<uint32_t>(rrcContext.length()));
     encoded.appendOctet4(static_cast<uint32_t>(ngapContext.length()));
     encoded.appendOctet4(static_cast<uint32_t>(gtpContext.length()));
@@ -508,7 +574,8 @@ static bool LogAndDecodeCustomSourceToTargetTransparentContainer(Logger &logger,
 
     decoded = std::move(*maybeDecoded);
     logger.info("Decoded custom SourceToTarget container: sourceUeId=%d amfUeNgapId=%ld ranUeNgapId=%ld "
-                "amfId=%d ulStream=%d dlStream=%d dlAmbr=%lu ulAmbr=%lu rrc=%dB ngap=%dB gtp=%dB blob=%dB",
+                "amfId=%d ulStream=%d dlStream=%d dlAmbr=%lu ulAmbr=%lu cho=%d rrc=%dB ngap=%dB gtp=%dB "
+                "blob=%dB",
                 decoded.sourceUeId,
                 decoded.sourceAmfUeNgapId,
                 decoded.sourceRanUeNgapId,
@@ -517,6 +584,7 @@ static bool LogAndDecodeCustomSourceToTargetTransparentContainer(Logger &logger,
                 decoded.sourceDownlinkStream,
                 static_cast<unsigned long>(decoded.sourceUeAmbr.dlAmbr),
                 static_cast<unsigned long>(decoded.sourceUeAmbr.ulAmbr),
+                decoded.choIndication ? 1 : 0,
                 decoded.rrcContext.length(),
                 decoded.ngapContext.length(),
                 decoded.gtpContext.length(),
@@ -610,6 +678,11 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
         return;
     }
 
+    if (transferredCtx.choIndication)
+    {
+        m_logger->info("receiveHandoverRequest: CHO indication detected in SourceToTarget container");
+    }
+
     // get the ueId from the transferred context
     int ueId = transferredCtx.sourceUeId;
     if (ueId <= 0)
@@ -660,8 +733,19 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
     auto *hoPending = new NGAPHandoverPending();
     hoPending->ctx = ue;
     hoPending->id = ueId;
-    hoPending->expireTime = utils::CurrentTimeMillis() + HANDOVER_TIMEOUT_MS;
+    hoPending->choCandidate = transferredCtx.choIndication;
+    // Note: expireTime is different for Conditional Handover (CHO), which is expected to happen much later than a
+    //  classical RSRP based handover
+    hoPending->expireTime =
+        utils::CurrentTimeMillis() + (transferredCtx.choIndication ? CHO_CANDIDATE_TIMEOUT_MS : HANDOVER_TIMEOUT_MS);
     m_handoverPending[ueId] = hoPending;
+
+    if (hoPending->choCandidate)
+    {
+        m_logger->info("UE[%d] Target side candidate context stored for CHO (extended timeout=%dms)",
+                       ue->ctxId,
+                       CHO_CANDIDATE_TIMEOUT_MS);
+    }
 
     // add to RRC pending handover map and obtain the target RRC container to be used in the 
     //  HandoverRequestAcknowledge message later.
@@ -887,11 +971,17 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
  * to the target PCI. The cause parameter indicates the reason for the handover and is included in the 
  * message to assist the AMF in making informed decisions during the handover process.
  * 
+ * Note: in this simulator, the HanodverRequired message includes a custom SourceToTarget-TransparentContainer 
+ * that encapsulates the RRC handover preparation information.  This is done to avoid modification of the ASN.1
+ * definitions and to simplify the implementation by reusing the existing NGAP message structure. The custom container
+ * is identified by a specific magic number in the beginning of the container payload, allowing the target
+ * gNB to recognize and decode the RRC handover preparation information.
+ * 
  * @param ueId 
  * @param targetPci 
  * @param cause 
  */
-void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause)
+void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bool hoForChoPreparation)
 {
     m_logger->info("UE[%d] Sending HandoverRequired to AMF targetPCI=%d", ueId, targetPci);
 
@@ -998,7 +1088,8 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause)
                                                                             ueId,
                                                                             sourcePci,
                                                                             CUSTOM_S2T_DEFAULT_BLOB_SIZE,
-                                                                            handoverPrep);
+                                                                            handoverPrep,
+                                                                            hoForChoPreparation);
         if (sourceToTarget.length() == 0)
         {
             m_logger->err("sendHandoverRequired: failed to encode SourceToTarget transparent container");
@@ -1014,21 +1105,16 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause)
                             sourceToTarget);
         ies.push_back(ie);
 
-        m_logger->info("UE[%d] Encoded SourceToTarget container sourcePCI=%d targetPCI=%d size=%dB",
+        m_logger->info("UE[%d] Encoded SourceToTarget container sourcePCI=%d targetPCI=%d size=%dB cho=%d",
                        ueId,
                        sourcePci,
                        targetPci,
-                       sourceToTarget.length());
+                   sourceToTarget.length(),
+                   hoForChoPreparation ? 1 : 0);
     }
 
     // IE: PDUSessionResourceListHORqd
     {
-        if (ue->pduSessions.empty())
-        {
-            m_logger->err("sendHandoverRequired: UE[%d] has no active PDU sessions; aborting handover", ueId);
-            return;
-        }
-
         OctetString hoRequiredTransfer = MakeHoRequiredTransfer();
         if (hoRequiredTransfer.length() == 0)
         {
@@ -1036,12 +1122,25 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause)
             return;
         }
 
+        std::vector<int> pduSessionIds{};
+        if (!ue->pduSessions.empty())
+        {
+            pduSessionIds.assign(ue->pduSessions.begin(), ue->pduSessions.end());
+        }
+        else
+        {
+            // Simulation fallback: allow N2 handover signaling to proceed before user-plane setup.
+            pduSessionIds.push_back(1);
+            m_logger->warn("sendHandoverRequired: UE[%d] has no active PDU sessions; using synthetic session id=1",
+                           ueId);
+        }
+
         auto *ie = asn::New<ASN_NGAP_HandoverRequiredIEs>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceListHORqd;
         ie->criticality = ASN_NGAP_Criticality_reject;
         ie->value.present = ASN_NGAP_HandoverRequiredIEs__value_PR_PDUSessionResourceListHORqd;
 
-        for (int psi : ue->pduSessions)
+        for (int psi : pduSessionIds)
         {
             auto *item = asn::New<ASN_NGAP_PDUSessionResourceItemHORqd>();
             item->pDUSessionID = static_cast<ASN_NGAP_PDUSessionID_t>(psi);
@@ -1053,13 +1152,19 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause)
 
         m_logger->info("HandoverRequired UE[%d] includes %d PDU session item(s)",
                        ueId,
-                       static_cast<int>(ue->pduSessions.size()));
+                       static_cast<int>(pduSessionIds.size()));
     }
 
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverRequired>(ies);
     sendNgapUeAssociated(ue->ctxId, pdu);
 
-    m_logger->info("UE[%d] HandoverRequired sent to AMF", ueId);
+    // Track pending CHO preparation by target PCI, so responses can be correlated per target.
+    if (hoForChoPreparation)
+        m_hoReqChoPendingByTargetPci[ueId][targetPci]++;
+
+    m_logger->info("UE[%d] HandoverRequired sent to AMF (mode=%s)",
+                   ueId,
+                   hoForChoPreparation ? "cho-prepare" : "classic");
 }
 
 /**
@@ -1106,14 +1211,53 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
                         rrcContainer.length());
     }
 
+    int targetPci = -1;
+    bool targetPciExtracted = ExtractTargetPciFromHandoverCommandRrcContainer(rrcContainer, targetPci);
+    bool hoForChoPreparation = false;
+    
+    if (!targetPciExtracted)
+    {
+        m_logger->warn("UE[%d] Could not extract targetPCI from HO command container; defaulting mode=%s",
+                       ue->ctxId,
+                       hoForChoPreparation ? "cho-prepare" : "classic");
+    }
+    else 
+    {
+
+        // check to see if this is a response to a CHO preparation we initiated for this UE and target PCI; 
+        // if so, mark it so RRC can handle accordingly, and remove from the UE's pending cho list.
+
+        auto itByUe = m_hoReqChoPendingByTargetPci.find(ue->ctxId);
+        if (itByUe != m_hoReqChoPendingByTargetPci.end())
+        {
+            auto &targetMap = itByUe->second;
+            auto itTarget = targetMap.find(targetPci);
+            if (itTarget != targetMap.end() && itTarget->second > 0)
+            {
+                hoForChoPreparation = true;
+                itTarget->second--;
+                if (itTarget->second <= 0)
+                    targetMap.erase(itTarget);
+                if (targetMap.empty())
+                    m_hoReqChoPendingByTargetPci.erase(itByUe);
+            }
+        }
+    }
+
     // Forward to RRC task
+
     auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::HANDOVER_COMMAND_DELIVERY);
     w->ueId = ue->ctxId;
     w->rrcContainer = std::move(rrcContainer);
+    w->hoTargetPci = targetPci;
+    w->hoForChoPreparation = hoForChoPreparation;
     m_base->rrcTask->push(std::move(w));
 
-    m_logger->info("UE[%d] HandoverCommand forwarded to RRC rrcContainer=%dB", ue->ctxId,
-                   rrcContainer.length());
+    m_logger->info("UE[%d] HandoverCommand forwarded to RRC rrcContainer=%dB targetPCI=%d mode=%s",
+                   ue->ctxId,
+                   rrcContainer.length(),
+                   targetPci,
+                   hoForChoPreparation ? "cho-prepare" : "classic");
 }
 
 /**
@@ -1128,10 +1272,36 @@ void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPre
     m_logger->warn("HandoverPreparationFailure received from AMF");
 
     auto *ue = findUeByNgapIdPair(amfId, ngap_utils::FindNgapIdPair(msg));
+
     if (!ue)
     {
         m_logger->err("receiveHandoverPreparationFailure: UE not found");
         return;
+    }
+
+    // remove from pending CHO list if present, so that subsequent handover attempts to the same target can be properly correlated.
+    
+    auto itByUe = m_hoReqChoPendingByTargetPci.find(ue->ctxId);
+    if (itByUe != m_hoReqChoPendingByTargetPci.end())
+    {
+        auto &targetMap = itByUe->second;
+        if (targetMap.size() == 1)
+        {
+            auto itOnly = targetMap.begin();
+            if (itOnly->second > 1)
+                itOnly->second--;
+            else
+                targetMap.clear();
+
+            if (targetMap.empty())
+                m_hoReqChoPendingByTargetPci.erase(itByUe);
+        }
+        else
+        {
+            m_logger->warn("UE[%d] HO prep failure cannot be target-correlated; keeping %zu pending target(s)",
+                           ue->ctxId,
+                           targetMap.size());
+        }
     }
 
     // Extract cause for logging
@@ -1142,7 +1312,10 @@ void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPre
                        ue->ctxId, ieCause->Cause.present);
     }
 
-    // TODO: Notify RRC that handover failed so it can reset the pending state
+    auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::HANDOVER_FAILURE);
+    w->ueId = ue->ctxId;
+    m_base->rrcTask->push(std::move(w));
+
     m_logger->warn("UE[%d] Handover preparation failed. UE remains on source cell.", ue->ctxId);
 }
 

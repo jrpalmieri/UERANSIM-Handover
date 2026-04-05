@@ -1,12 +1,6 @@
 /*
- * Hand-crafted ASN.1 type for Conditional Handover support.
- * Models CondReconfigToAddMod from TS 38.331 Release 16/17.
- *
- * CondReconfigToAddMod ::= SEQUENCE {
- *     condReconfigId          CondReconfigId,             -- INTEGER (1..8)
- *     condExecutionCond       CondReconfigExecCond,       -- SEQUENCE (SIZE(1..2)) OF MeasId  (OPTIONAL)
- *     condRRCReconfig         OCTET STRING (CONTAINING RRCReconfiguration) (OPTIONAL)
- * }
+ * ASN.1 type for Conditional Handover support.
+ * Tracks Rel-17 ordering for CondReconfigToAddMod-r16 while preserving ASN_RRC naming.
  */
 
 #ifndef	_ASN_RRC_CondReconfigToAddMod_H_
@@ -18,6 +12,7 @@
 /* Including external dependencies */
 #include <NativeInteger.h>
 #include <OCTET_STRING.h>
+#include "ASN_RRC_MeasId.h"
 #include <asn_SEQUENCE_OF.h>
 #include <constr_SEQUENCE_OF.h>
 #include <constr_SEQUENCE.h>
@@ -30,12 +25,14 @@ extern "C" {
 typedef struct ASN_RRC_CondReconfigToAddMod {
 	long	 condReconfigId;	/* INTEGER (1..8) */
 	struct ASN_RRC_CondReconfigToAddMod__condExecutionCond {
-		A_SEQUENCE_OF(long) list;   /* SEQUENCE (SIZE(1..2)) OF MeasId (INTEGER 1..64) */
+		A_SEQUENCE_OF(ASN_RRC_MeasId_t) list;	/* SEQUENCE (SIZE(1..2)) OF MeasId */
 
 		/* Context for parsing across buffer boundaries */
 		asn_struct_ctx_t _asn_ctx;
 	} *condExecutionCond;		/* OPTIONAL */
-	OCTET_STRING_t	*condRRCReconfig;	/* OPTIONAL — contains UPER-encoded RRCReconfiguration */
+	OCTET_STRING_t	*condRRCReconfig;	/* OPTIONAL */
+	/* Rel-17 extension addition. */
+	OCTET_STRING_t	*condExecutionCondSCG;	/* OPTIONAL */
 
 	/* Context for parsing across buffer boundaries */
 	asn_struct_ctx_t _asn_ctx;
@@ -44,7 +41,7 @@ typedef struct ASN_RRC_CondReconfigToAddMod {
 /* Implementation */
 extern asn_TYPE_descriptor_t asn_DEF_ASN_RRC_CondReconfigToAddMod;
 extern asn_SEQUENCE_specifics_t asn_SPC_ASN_RRC_CondReconfigToAddMod_specs_1;
-extern asn_TYPE_member_t asn_MBR_ASN_RRC_CondReconfigToAddMod_1[3];
+extern asn_TYPE_member_t asn_MBR_ASN_RRC_CondReconfigToAddMod_1[4];
 
 #ifdef __cplusplus
 }

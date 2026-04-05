@@ -11,6 +11,7 @@
 #include <optional>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
@@ -141,6 +142,34 @@ static opt::OptionsDescription DescForPsEstablish(const std::string &subCommand,
     return res;
 }
 
+static bool ParseLocPvArgument(const std::string &arg, app::GnbCliCommand &cmd)
+{
+    std::vector<std::string> tokens;
+    std::stringstream ss(arg);
+    std::string token;
+    while (std::getline(ss, token, ':'))
+        tokens.push_back(token);
+
+    if (tokens.size() != 7)
+        return false;
+
+    try
+    {
+        cmd.locX = std::stod(tokens[0]);
+        cmd.locY = std::stod(tokens[1]);
+        cmd.locZ = std::stod(tokens[2]);
+        cmd.velX = std::stod(tokens[3]);
+        cmd.velY = std::stod(tokens[4]);
+        cmd.velZ = std::stod(tokens[5]);
+        cmd.epochMs = std::stoll(tokens[6]);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
 namespace app
 {
 
@@ -153,6 +182,8 @@ static OrderedMap<std::string, CmdEntry> g_gnbCmdEntries = {
     {"ue-list", {"List all UEs associated with the gNB", "", DefaultDesc, false}},
     {"ue-count", {"Print the total number of UEs connected the this gNB", "", DefaultDesc, false}},
     {"ue-release", {"Request a UE context release for the given UE", "<ue-id>", DefaultDesc, false}},
+    {"loc-pv", {"Set true gNB location as ECEF position/velocity.  Format: x:y:z:vx:vy:vz:epoch-ms",
+                  "<x:y:z:vx:vy:vz:epoch-ms>", DefaultDesc, true}},
     {"version", {"Show gNB version information", "", DefaultDesc, false}},
 };
 
@@ -227,6 +258,19 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
     else if (subCmd == "version")
     {
         return std::make_unique<GnbCliCommand>(GnbCliCommand::VERSION);
+    }
+    else if (subCmd == "loc-pv")
+    {
+        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::LOC_PV);
+        if (options.positionalCount() == 0)
+            CMD_ERR("Position/velocity argument is expected")
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one position/velocity argument is expected")
+
+        if (!ParseLocPvArgument(options.getPositional(0), *cmd))
+            CMD_ERR("Invalid format. Expected x:y:z:vx:vy:vz:epoch-ms")
+
+        return cmd;
     }
 
     return nullptr;

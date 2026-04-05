@@ -23,6 +23,7 @@
 #include "ASN_RRC_TimeToTrigger.h"
 #include <constr_SEQUENCE.h>
 #include "ASN_RRC_MeasTriggerQuantityOffset.h"
+#include <NULL.h>
 #include <constr_CHOICE.h>
 
 #ifdef __cplusplus
@@ -37,10 +38,18 @@ typedef enum ASN_RRC_EventTriggerConfig__eventId_PR {
 	ASN_RRC_EventTriggerConfig__eventId_PR_eventA3,
 	ASN_RRC_EventTriggerConfig__eventId_PR_eventA4,
 	ASN_RRC_EventTriggerConfig__eventId_PR_eventA5,
-	ASN_RRC_EventTriggerConfig__eventId_PR_eventA6
+	ASN_RRC_EventTriggerConfig__eventId_PR_eventA6,
+	ASN_RRC_EventTriggerConfig__eventId_PR_eventD1_r17
 	/* Extensions may appear below */
 	
 } ASN_RRC_EventTriggerConfig__eventId_PR;
+typedef enum ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR {
+	ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_NOTHING,	/* No components present */
+	ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_fixedReferenceLocation_r17,
+	ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_nadirReferenceLocation_r17
+	/* Extensions may appear below */
+	
+} ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR;
 typedef enum ASN_RRC_EventTriggerConfig__reportAmount {
 	ASN_RRC_EventTriggerConfig__reportAmount_r1	= 0,
 	ASN_RRC_EventTriggerConfig__reportAmount_r2	= 1,
@@ -122,6 +131,35 @@ typedef struct ASN_RRC_EventTriggerConfig {
 				/* Context for parsing across buffer boundaries */
 				asn_struct_ctx_t _asn_ctx;
 			} *eventA6;
+			struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17 {
+				long	 distanceThresh_r17;
+				struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17 {
+					ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR present;
+					union ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_u {
+						struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17__fixedReferenceLocation_r17 {
+							long	 longitude_r17;
+							long	 latitude_r17;
+							long	 height_r17;
+							
+							/* Context for parsing across buffer boundaries */
+							asn_struct_ctx_t _asn_ctx;
+						} *fixedReferenceLocation_r17;
+						NULL_t	 *nadirReferenceLocation_r17;
+						/*
+						 * This type is extensible,
+						 * possible extensions are below.
+						 */
+					} choice;
+					
+					/* Context for parsing across buffer boundaries */
+					asn_struct_ctx_t _asn_ctx;
+				} referenceLocation_r17;
+				ASN_RRC_Hysteresis_t	 hysteresis;
+				ASN_RRC_TimeToTrigger_t	 timeToTrigger;
+				
+				/* Context for parsing across buffer boundaries */
+				asn_struct_ctx_t _asn_ctx;
+			} *eventD1_r17;
 			/*
 			 * This type is extensible,
 			 * possible extensions are below.

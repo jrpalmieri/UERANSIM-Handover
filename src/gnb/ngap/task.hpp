@@ -57,6 +57,7 @@ class NgapTask : public NtsTask
 
     std::unordered_map<int, NgapAmfContext *> m_amfCtx;
     std::unordered_map<int, NgapUeContext *> m_ueCtx;
+    std::unordered_map<int, std::unordered_map<int, int>> m_hoReqChoPendingByTargetPci;
 
     // Handover context tracker, indexed by ueId
     std::unordered_map<int, NGAPHandoverPending *> m_handoverPending;
@@ -141,7 +142,7 @@ class NgapTask : public NtsTask
 
     /* Handover (N2-based, AMF-mediated) */
 
-    void sendHandoverRequired(int ueId, int targetPci, NgapCause cause);
+    void sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bool hoForChoPreparation);
     void receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg);
     void receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg);
     void receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPreparationFailure *msg);

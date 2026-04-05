@@ -30,6 +30,7 @@ struct GnbCliCommand
         UE_LIST,
         UE_COUNT,
         UE_RELEASE_REQ,
+        LOC_PV,
         VERSION,
     } present;
 
@@ -38,6 +39,15 @@ struct GnbCliCommand
 
     // UE_RELEASE_REQ
     int ueId{};
+
+    // LOC_PV
+    double locX{};
+    double locY{};
+    double locZ{};
+    double velX{};
+    double velY{};
+    double velZ{};
+    int64_t epochMs{};
 
     explicit GnbCliCommand(PR present) : present(present)
     {

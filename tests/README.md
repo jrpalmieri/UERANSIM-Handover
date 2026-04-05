@@ -142,6 +142,38 @@ pytest -v -s --timeout=180
 
 ## Test categories
 
+### CHO implementation status
+
+- CHO evaluation is active in UE cycle processing (`evaluateChoCandidates`).
+- Candidate lifecycle semantics are covered:
+  - add/mod merge,
+  - explicit remove,
+  - remove-miss accounting,
+  - retention across non-CHO reconfiguration.
+- Arbitration tie-break is covered:
+  - lower execution priority first,
+  - greater trigger margin when priority ties.
+- Legacy fallback remains covered: without CHO config, standard A2/A3/A5
+  MeasurementReport flow is still expected and tested.
+
+### Rel-15 compatibility gate (Phase 1)
+
+Phase 1 freezes the legacy non-CHO behavior while Rel-17 CHO work evolves.
+All of the following must hold before progressing to later phases:
+
+- UE still emits MeasurementReport on legacy MeasConfig-only A2/A3/A5 paths.
+- gNB still performs measurement-report-driven handover decision and emits
+  NGAP HandoverRequired.
+- No new hard failures are introduced in active UE/gNB suites
+  (timing-sensitive cases may remain skip-safe).
+
+Recommended gate commands:
+
+```bash
+pytest -q tests/ue/test_ue_handover.py tests/gnb/test_gnb_handover.py --disable-warnings
+pytest -q tests/ue tests/gnb --disable-warnings
+```
+
 ### 1. RRC State Tests (`test_ue_rrc_states.py`)
 
 | Test | What it verifies |
@@ -242,7 +274,7 @@ This path is kept for manual/debug scenarios; the primary automated
 handover direction in `tests` is heartbeat-ACK dbm steering.
 
 ```python
-from harness.meas_injector import MeasurementInjector, CellMeas
+from ue.harness.meas_injector import MeasurementInjector, CellMeas
 
 inj = MeasurementInjector(port=7200)
 inj.set_cell(cell_id=1, rsrp=-85)   # Serving cell

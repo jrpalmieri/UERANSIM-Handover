@@ -1,6 +1,6 @@
 /*
- * Hand-crafted ASN.1 type for Conditional Handover support.
- * Models ConditionalReconfiguration from TS 38.331 Release 16/17.
+ * ASN.1 type for Conditional Handover support.
+ * Tracks Rel-17 ordering for ConditionalReconfiguration-r16 while preserving ASN_RRC naming.
  */
 
 #ifndef	_ASN_RRC_ConditionalReconfiguration_H_
@@ -23,18 +23,19 @@ struct ASN_RRC_CondReconfigToAddMod;
 
 /* ConditionalReconfiguration */
 typedef struct ASN_RRC_ConditionalReconfiguration {
-	struct ASN_RRC_ConditionalReconfiguration__condReconfigToAddModList {
-		A_SEQUENCE_OF(struct ASN_RRC_CondReconfigToAddMod) list;
-
-		/* Context for parsing across buffer boundaries */
-		asn_struct_ctx_t _asn_ctx;
-	} *condReconfigToAddModList;	/* OPTIONAL */
+	long	*attemptCondReconfig;	/* OPTIONAL, ENUMERATED { true(0) } */
 	struct ASN_RRC_ConditionalReconfiguration__condReconfigToRemoveList {
 		A_SEQUENCE_OF(long) list; /* SEQUENCE (SIZE(1..8)) OF CondReconfigId */
 
 		/* Context for parsing across buffer boundaries */
 		asn_struct_ctx_t _asn_ctx;
 	} *condReconfigToRemoveList;	/* OPTIONAL */
+	struct ASN_RRC_ConditionalReconfiguration__condReconfigToAddModList {
+		A_SEQUENCE_OF(struct ASN_RRC_CondReconfigToAddMod) list;
+
+		/* Context for parsing across buffer boundaries */
+		asn_struct_ctx_t _asn_ctx;
+	} *condReconfigToAddModList;	/* OPTIONAL */
 
 	/* Context for parsing across buffer boundaries */
 	asn_struct_ctx_t _asn_ctx;
@@ -43,7 +44,7 @@ typedef struct ASN_RRC_ConditionalReconfiguration {
 /* Implementation */
 extern asn_TYPE_descriptor_t asn_DEF_ASN_RRC_ConditionalReconfiguration;
 extern asn_SEQUENCE_specifics_t asn_SPC_ASN_RRC_ConditionalReconfiguration_specs_1;
-extern asn_TYPE_member_t asn_MBR_ASN_RRC_ConditionalReconfiguration_1[2];
+extern asn_TYPE_member_t asn_MBR_ASN_RRC_ConditionalReconfiguration_1[3];
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,48 @@
+/*
+ * Rel-16 structure referenced by RRCReconfiguration-v1610-IEs.
+ */
+
+#ifndef _OnDemandSIB_Request_r16_H_
+#define _OnDemandSIB_Request_r16_H_
+
+#include <asn_application.h>
+
+/* Including external dependencies */
+#include <NativeEnumerated.h>
+#include <constr_SEQUENCE.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Dependencies */
+typedef enum OnDemandSIB_Request_r16__onDemandSIB_RequestProhibitTimer_r16 {
+	OnDemandSIB_Request_r16__onDemandSIB_RequestProhibitTimer_r16_s0 = 0,
+	OnDemandSIB_Request_r16__onDemandSIB_RequestProhibitTimer_r16_s0dot5 = 1,
+	OnDemandSIB_Request_r16__onDemandSIB_RequestProhibitTimer_r16_s1 = 2,
+	OnDemandSIB_Request_r16__onDemandSIB_RequestProhibitTimer_r16_s2 = 3,
+	OnDemandSIB_Request_r16__onDemandSIB_RequestProhibitTimer_r16_s5 = 4,
+	OnDemandSIB_Request_r16__onDemandSIB_RequestProhibitTimer_r16_s10 = 5,
+	OnDemandSIB_Request_r16__onDemandSIB_RequestProhibitTimer_r16_s20 = 6,
+	OnDemandSIB_Request_r16__onDemandSIB_RequestProhibitTimer_r16_s30 = 7
+} e_OnDemandSIB_Request_r16__onDemandSIB_RequestProhibitTimer_r16;
+
+/* OnDemandSIB-Request-r16 */
+typedef struct OnDemandSIB_Request_r16 {
+	long onDemandSIB_RequestProhibitTimer_r16;
+
+	/* Context for parsing across buffer boundaries */
+	asn_struct_ctx_t _asn_ctx;
+} OnDemandSIB_Request_r16_t;
+
+/* Implementation */
+/* extern asn_TYPE_descriptor_t asn_DEF_onDemandSIB_RequestProhibitTimer_r16_2; */
+extern asn_TYPE_descriptor_t asn_DEF_OnDemandSIB_Request_r16;
+extern asn_SEQUENCE_specifics_t asn_SPC_OnDemandSIB_Request_r16_specs_1;
+extern asn_TYPE_member_t asn_MBR_OnDemandSIB_Request_r16_1[1];
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* _OnDemandSIB_Request_r16_H_ */

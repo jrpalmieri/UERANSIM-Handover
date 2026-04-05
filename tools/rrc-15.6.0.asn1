@@ -430,8 +430,50 @@ RRCReconfiguration-v1560-IEs ::=            SEQUENCE {
     mrdc-SecondaryCellGroupConfig               SetupRelease { MRDC-SecondaryCellGroupConfig }                    OPTIONAL,   -- Need M
     radioBearerConfig2                          OCTET STRING (CONTAINING RadioBearerConfig)                       OPTIONAL,   -- Need M
     sk-Counter                                  SK-Counter                                                        OPTIONAL,   -- Need N
-    nonCriticalExtension                        SEQUENCE {}                                                       OPTIONAL
+    nonCriticalExtension                        RRCReconfiguration-v1610-IEs                                      OPTIONAL
 }
+
+-- Minimal Rel-16 CHO support used by Python test harness encoders.
+maxNrofConditionalReconfiguration INTEGER ::= 8
+
+RRCReconfiguration-v1610-IEs ::=            SEQUENCE {
+    otherConfigV1610                          OCTET STRING                                                         OPTIONAL,
+    bapConfigR16                              OCTET STRING                                                         OPTIONAL,
+    iabIpAddressConfigurationListR16          OCTET STRING                                                         OPTIONAL,
+    conditionalReconfiguration                ConditionalReconfiguration-r16                                       OPTIONAL,
+    dapsSourceReleaseR16                      ENUMERATED {true}                                                    OPTIONAL,
+    t316R16                                   OCTET STRING                                                         OPTIONAL,
+    needForGapsConfigNrR16                    OCTET STRING                                                         OPTIONAL,
+    onDemandSibRequestR16                     OCTET STRING                                                         OPTIONAL,
+    dedicatedPosSysInfoDeliveryR16            OCTET STRING                                                         OPTIONAL,
+    slConfigDedicatedNrR16                    OCTET STRING                                                         OPTIONAL,
+    slConfigDedicatedEutraInfoR16             OCTET STRING                                                         OPTIONAL,
+    targetCellSmtcScgR16                      OCTET STRING                                                         OPTIONAL,
+    nonCriticalExtension                      SEQUENCE {}                                                          OPTIONAL
+}
+
+ConditionalReconfiguration-r16 ::=          SEQUENCE {
+    attemptCondReconfig                       ENUMERATED {true}                                                    OPTIONAL,
+    condReconfigToRemoveList                 CondReconfigToRemoveList-r16                                         OPTIONAL,
+    condReconfigToAddModList                 CondReconfigToAddModList-r16                                         OPTIONAL,
+    ...
+}
+
+CondReconfigToRemoveList-r16 ::=            SEQUENCE OF CondReconfigId-r16
+
+CondReconfigToAddModList-r16 ::=            SEQUENCE OF CondReconfigToAddMod-r16
+
+CondReconfigToAddMod-r16 ::=                SEQUENCE {
+    condReconfigId                           CondReconfigId-r16,
+    condExecutionCond                        SEQUENCE (SIZE (1..2)) OF MeasId                                     OPTIONAL,
+    condRRCReconfig                          OCTET STRING (CONTAINING RRCReconfiguration)                         OPTIONAL,
+    ...,
+    [[
+    condExecutionCondSCG                     OCTET STRING                                                          OPTIONAL
+    ]]
+}
+
+CondReconfigId-r16 ::=                      INTEGER (1..8)
 
 MRDC-SecondaryCellGroupConfig ::=       SEQUENCE {
     mrdc-ReleaseAndAdd                  ENUMERATED {true}                                                         OPTIONAL,   -- Need N

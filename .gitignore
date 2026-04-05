@@ -1,6 +1,6 @@
 # Project specific (OTHERS)
 .idea
-cmake-build-*
+build/
 CMakeLists.txt.user
 CMakeCache.txt
 CMakeFiles
@@ -32,7 +32,6 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
 develop-eggs/
 dist/
 downloads/

@@ -77,7 +77,7 @@ void NgapTask::onLoop()
         //      AMF will then notify target gNB.
         case NmGnbRrcToNgap::HANDOVER_REQUIRED: {
             m_logger->info("UE[%d] HandoverRequired received from RRC, targetPCI=%d", w.ueId, w.hoTargetPci);
-            sendHandoverRequired(w.ueId, w.hoTargetPci, w.hoCause);
+            sendHandoverRequired(w.ueId, w.hoTargetPci, w.hoCause, w.hoForChoPreparation);
             break;
         }
         }

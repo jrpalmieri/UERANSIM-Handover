@@ -17,6 +17,7 @@
 
 static constexpr const int TIMER_ID_SI_BROADCAST = 1;
 static constexpr const int TIMER_PERIOD_SI_BROADCAST = 10'000;
+static constexpr const int TIMER_ID_SIB19_BROADCAST = 2;
 
 namespace nr::gnb
 {
@@ -30,6 +31,9 @@ GnbRrcTask::GnbRrcTask(TaskBase *base) : m_base{base}, m_ueCtx{}, m_tidCountersB
 void GnbRrcTask::onStart()
 {
     setTimer(TIMER_ID_SI_BROADCAST, TIMER_PERIOD_SI_BROADCAST);
+
+    if (m_config->ntn.sib19.sib19On)
+        setTimer(TIMER_ID_SIB19_BROADCAST, m_config->ntn.sib19.sib19TimingMs);
 }
 
 void GnbRrcTask::onQuit()
@@ -56,6 +60,7 @@ void GnbRrcTask::onLoop()
         case NmGnbNgapToRrc::RADIO_POWER_ON: {
             m_isBarred = false;
             triggerSysInfoBroadcast();
+            triggerSib19Broadcast();
             break;
         }
         case NmGnbNgapToRrc::NAS_DELIVERY: {
@@ -77,7 +82,11 @@ void GnbRrcTask::onLoop()
         }
         // AMF approval of handover command (sent to source gNB). Forward to RRC to complete the handover.
         case NmGnbNgapToRrc::HANDOVER_COMMAND_DELIVERY: {
-            handleNgapHandoverCommand(w.ueId, w.rrcContainer);
+            handleNgapHandoverCommand(w.ueId, w.rrcContainer, w.hoForChoPreparation);
+            break;
+        }
+        case NmGnbNgapToRrc::HANDOVER_FAILURE: {
+            handleNgapHandoverFailure(w.ueId);
             break;
         }
         case NmGnbNgapToRrc::PATH_SWITCH_REQUEST_ACK: {
@@ -110,12 +119,22 @@ void GnbRrcTask::onLoop()
             setTimer(TIMER_ID_SI_BROADCAST, TIMER_PERIOD_SI_BROADCAST);
             onBroadcastTimerExpired();
         }
+        else if (w.timerId == TIMER_ID_SIB19_BROADCAST)
+        {
+            setTimer(TIMER_ID_SIB19_BROADCAST, m_config->ntn.sib19.sib19TimingMs);
+            triggerSib19Broadcast();
+        }
         break;
     }
     default:
         m_logger->unhandledNts(*msg);
         break;
     }
+}
+
+void GnbRrcTask::setTruePositionVelocity(const TruePositionVelocity &value)
+{
+    m_truePositionVelocity = value;
 }
 
 } // namespace nr::gnb

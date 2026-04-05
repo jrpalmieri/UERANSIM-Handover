@@ -202,6 +202,51 @@ class RrcCodec:
     def has_asn1(self) -> bool:
         return self._asn1 is not None
 
+    def supports_conditional_reconfiguration(self) -> bool:
+        """Return True when compiled ASN.1 includes Rel-16 CHO structures."""
+        if self._asn1 is None:
+            return False
+
+        required = {
+            "RRCReconfiguration-v1610-IEs",
+            "ConditionalReconfiguration-r16",
+        }
+        available = set(self._asn1.types.keys())
+        return required.issubset(available)
+
+    def conditional_reconfiguration_support_error(self) -> str:
+        """Return a deterministic diagnostics string for missing CHO schema support."""
+        if self._asn1 is None:
+            return (
+                "asn1tools codec is unavailable; cannot encode standards-based "
+                "ConditionalReconfiguration"
+            )
+
+        required = [
+            "RRCReconfiguration-v1610-IEs",
+            "ConditionalReconfiguration-r16",
+        ]
+        missing = [name for name in required if name not in self._asn1.types]
+        if not missing:
+            return ""
+
+        return (
+            "Compiled ASN.1 schema does not include Rel-16 CHO types: "
+            f"missing {', '.join(missing)}"
+        )
+
+    @staticmethod
+    def _normalize_txn_id(transaction_id: int) -> int:
+        """RRC transaction identifiers are 2-bit values (0..3)."""
+        normalized = int(transaction_id) & 0x3
+        if normalized != transaction_id:
+            logger.debug(
+                "Normalizing RRC transaction identifier %d -> %d (2-bit field)",
+                transaction_id,
+                normalized,
+            )
+        return normalized
+
     # ------------------------------------------------------------------
     #  DL message builders
     # ------------------------------------------------------------------
@@ -305,17 +350,16 @@ class RrcCodec:
         ta_common_drift_variation: int = -1,
         ul_sync_validity: int = -1,
         cell_specific_koffset: int = -1,
-        distance_thresh: float = -1.0,
         ntn_polarization: int = -1,
         ta_drift: int = -(2**31),
     ) -> bytes:
         """Build a binary SIB19 PDU for the DL_SIB19 custom channel.
 
-        Binary format (little-endian, 104 bytes total):
+                Binary format (little-endian, 96 bytes total):
           [0]     ephemeris_type (uint8: 0=posVel, 1=orbital)
           [1..3]  reserved
           [4..51] ephemeris block (48 bytes)
-          [52..103] common fields
+                    [52..95] common fields
 
         Parameters
         ----------
@@ -330,12 +374,11 @@ class RrcCodec:
         ta_common_drift_variation : T_c/s²; -1 = not present.
         ul_sync_validity : seconds; -1 = not present.
         cell_specific_koffset : -1 = not present.
-        distance_thresh : meters; <0 = not present.
         ntn_polarization : 0=RHCP, 1=LHCP, 2=LINEAR, -1=absent.
         ta_drift : T_c/s; -(2**31) = not present.
         """
         import struct
-        buf = bytearray(104)
+        buf = bytearray(96)
 
         # Header
         struct.pack_into("<B3x", buf, 0, ephemeris_type)
@@ -359,14 +402,14 @@ class RrcCodec:
         struct.pack_into("<i", buf, 76, ta_common_drift_variation)
         struct.pack_into("<i", buf, 80, ul_sync_validity)
         struct.pack_into("<i", buf, 84, cell_specific_koffset)
-        struct.pack_into("<d", buf, 88, distance_thresh)
-        struct.pack_into("<i", buf, 96, ntn_polarization)
-        struct.pack_into("<i", buf, 100, ta_drift)
+        struct.pack_into("<i", buf, 88, ntn_polarization)
+        struct.pack_into("<i", buf, 92, ta_drift)
 
         return bytes(buf)
 
     def build_rrc_setup(self, transaction_id: int = 0) -> bytes:
         """Encode an RRCSetup (DL-CCCH-Message)."""
+        transaction_id = self._normalize_txn_id(transaction_id)
         if self._asn1 is not None:
             rrc_setup = {
                 "message": (
@@ -402,6 +445,7 @@ class RrcCodec:
         transaction_id: int = 0,
     ) -> bytes:
         """Encode a DLInformationTransfer (DL-DCCH-Message) wrapping a NAS PDU."""
+        transaction_id = self._normalize_txn_id(transaction_id)
         if self._asn1 is not None:
             msg = {
                 "message": (
@@ -434,6 +478,7 @@ class RrcCodec:
         meas_objects: Optional[List[Dict]] = None,
         report_configs: Optional[List[Dict]] = None,
         meas_ids: Optional[List[Dict]] = None,
+        full_config: bool = False,
     ) -> bytes:
         """Encode an RRCReconfiguration (DL-DCCH-Message) with a measConfig.
 
@@ -459,10 +504,12 @@ class RrcCodec:
         if meas_ids is None:
             meas_ids = [{"measId": 1, "measObjectId": 1, "reportConfigId": 1}]
 
+        transaction_id = self._normalize_txn_id(transaction_id)
+
         if self._asn1 is not None:
             try:
                 return self._asn1_rrc_reconfig(
-                    transaction_id, meas_objects, report_configs, meas_ids
+                    transaction_id, meas_objects, report_configs, meas_ids, full_config
                 )
             except Exception as exc:
                 logger.debug("asn1tools RRCReconfiguration encode failed: %s", exc)
@@ -529,6 +576,8 @@ class RrcCodec:
             candidates_to_add_mod=candidates_to_add_mod,
             candidate_ids_to_remove=candidate_ids_to_remove,
         )
+
+        transaction_id = self._normalize_txn_id(transaction_id)
 
         if self._asn1 is not None:
             msg = {
@@ -637,6 +686,8 @@ class RrcCodec:
             target_pci, new_crnti, t304_ms
         )
 
+        transaction_id = self._normalize_txn_id(transaction_id)
+
         if self._asn1 is not None:
             msg = {
                 "message": (
@@ -669,8 +720,47 @@ class RrcCodec:
         )
         return b"\x04\x00\x00"
 
+    def build_conditional_rrc_reconfiguration_with_sync(
+        self,
+        transaction_id: int = 0,
+        target_pci: int = 2,
+        new_crnti: int = 0x1234,
+        t304_ms: int = 1000,
+    ) -> bytes:
+        """Build inner `RRCReconfiguration` payload for condRRCReconfig.
+
+        `condRRCReconfig` in ConditionalReconfiguration carries the inner
+        `RRCReconfiguration` type, not the outer `DL-DCCH-Message` wrapper.
+        """
+        mcg_bytes = self.build_cell_group_config_handover(target_pci, new_crnti, t304_ms)
+        transaction_id = self._normalize_txn_id(transaction_id)
+
+        if self._asn1 is not None:
+            inner = {
+                "rrc-TransactionIdentifier": transaction_id,
+                "criticalExtensions": (
+                    "rrcReconfiguration",
+                    {
+                        "nonCriticalExtension": {
+                            "masterCellGroup": mcg_bytes,
+                        }
+                    },
+                ),
+            }
+            try:
+                return self._asn1.encode("RRCReconfiguration", inner)
+            except Exception as exc:
+                logger.debug("asn1tools inner RRCReconfiguration encode failed: %s", exc)
+
+        logger.warning(
+            "Using fallback condRRCReconfig payload — install asn1tools "
+            "for proper inner RRCReconfiguration encoding"
+        )
+        return b""
+
     def build_rrc_release(self, transaction_id: int = 0) -> bytes:
         """Encode an RRCRelease (DL-DCCH-Message)."""
+        transaction_id = self._normalize_txn_id(transaction_id)
         if self._asn1 is not None:
             msg = {
                 "message": (
@@ -783,7 +873,7 @@ class RrcCodec:
             "includeBeamMeasurements": False,
         }
 
-    def _asn1_rrc_reconfig(self, txn_id, meas_objs, report_cfgs, meas_ids_list):
+    def _asn1_rrc_reconfig(self, txn_id, meas_objs, report_cfgs, meas_ids_list, full_config=False):
         meas_obj_list = []
         for mo in meas_objs:
             meas_obj_list.append({
@@ -832,6 +922,10 @@ class RrcCodec:
         if mid_list:
             meas_config["measIdToAddModList"] = mid_list
 
+        reconfig_ies = {"measConfig": meas_config}
+        if full_config:
+            reconfig_ies["nonCriticalExtension"] = {"fullConfig": "true"}
+
         msg = {
             "message": (
                 "c1", (
@@ -840,7 +934,7 @@ class RrcCodec:
                         "rrc-TransactionIdentifier": txn_id,
                         "criticalExtensions": (
                             "rrcReconfiguration",
-                            {"measConfig": meas_config},
+                            reconfig_ies,
                         ),
                     },
                 )

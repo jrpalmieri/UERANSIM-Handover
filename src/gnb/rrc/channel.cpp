@@ -107,6 +107,21 @@ void GnbRrcTask::sendRrcMessage(ASN_RRC_BCCH_DL_SCH_Message *msg)
     m_base->rlsTask->push(std::move(w));
 }
 
+void GnbRrcTask::sendRrcMessage(rrc::RrcChannel channel, OctetString &&pdu)
+{
+    if (pdu.length() == 0)
+    {
+        m_logger->err("RRC custom channel encoding failed.");
+        return;
+    }
+
+    auto w = std::make_unique<NmGnbRrcToRls>(NmGnbRrcToRls::RRC_PDU_DELIVERY);
+    w->ueId = 0;
+    w->channel = channel;
+    w->pdu = std::move(pdu);
+    m_base->rlsTask->push(std::move(w));
+}
+
 void GnbRrcTask::sendRrcMessage(int ueId, ASN_RRC_DL_CCCH_Message *msg)
 {
     OctetString pdu = rrc::encode::EncodeS(asn_DEF_ASN_RRC_DL_CCCH_Message, msg);
@@ -178,7 +193,8 @@ void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH_Message *msg)
     case ASN_RRC_UL_CCCH_MessageType__c1_PR_NOTHING:
         return;
     case ASN_RRC_UL_CCCH_MessageType__c1_PR_rrcSetupRequest:
-    // Received from UE in RRC idle mode to request RRC connection setup. First message of the RRC connection establishment procedure.
+    // Received from UE in RRC idle mode to request RRC connection setup.
+    // First message of the RRC connection establishment procedure.
         receiveRrcSetupRequest(ueId, *c1->choice.rrcSetupRequest);
         break;
     case ASN_RRC_UL_CCCH_MessageType__c1_PR_rrcResumeRequest:
@@ -209,7 +225,8 @@ void GnbRrcTask::receiveRrcMessage(int ueId, int cRnti, ASN_RRC_UL_DCCH_Message 
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_measurementReport:
         receiveMeasurementReport(ueId, cRnti, *c1->choice.measurementReport);
         break;
-    // Received from UE after RRC Reconfiguration, e.g. handover command or meas config, to indicate completion of the reconfiguration.
+    // Received from UE after RRC Reconfiguration (e.g. handover command or meas config)
+    // to indicate completion of the reconfiguration.
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_rrcReconfigurationComplete:
         receiveRrcReconfigurationComplete(ueId, cRnti, *c1->choice.rrcReconfigurationComplete);
         break;

@@ -78,6 +78,11 @@ void UeRrcTask::resumeMeasurements()
         state.enteringTimestamp = 0;
         state.reported = false;
     }
+
+    // Keep CHO candidate configuration but clear transient TTT/timer state so
+    // post-handover evaluation starts from a clean baseline.
+    resetChoRuntimeState();
+
     m_logger->debug("Handover - Measurement evaluations resumed after handover");
 }
 

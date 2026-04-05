@@ -187,9 +187,10 @@ class UeRrcTask : public NtsTask
     /* Conditional Handover (CHO) */
     void handleChoConfiguration(const OctetString &pdu);
     void parseConditionalReconfiguration(const ASN_RRC_ConditionalReconfiguration *condReconfig);
-    void evaluateChoCandidates();
+    bool evaluateChoCandidates();
     void executeChoCandidate(ChoCandidate &candidate);
     void cancelAllChoCandidates();
+    void resetChoRuntimeState();
 
     /* UE Position (for D1 distance-based events) */
     UePosition getUePosition() const;

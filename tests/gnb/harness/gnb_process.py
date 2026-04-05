@@ -35,12 +35,8 @@ import yaml
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
-# Use cmake-build-release first, fall back to build/
-_DEFAULT_BINARY = (
-    _PROJECT_ROOT / "cmake-build-release" / "nr-gnb"
-    if (_PROJECT_ROOT / "cmake-build-release" / "nr-gnb").exists()
-    else _PROJECT_ROOT / "build" / "nr-gnb"
-)
+# Use the unified build output directory.
+_DEFAULT_BINARY = _PROJECT_ROOT / "build" / "nr-gnb"
 
 
 @dataclass
@@ -292,7 +288,7 @@ class GnbProcess:
 
     def wait_for_meas_config(self, timeout_s: float = 15.0) -> Optional[str]:
         """Wait until gNB logs sending MeasConfig."""
-        return self.wait_for_log(r"Sending MeasConfig to UE", timeout_s)
+        return self.wait_for_log(r"Sending MeasConfig to UE|Sending MeasConfig with eventType\(s\)=", timeout_s)
 
     def wait_for_meas_report(self, timeout_s: float = 15.0) -> Optional[str]:
         """Wait until gNB logs receiving a MeasurementReport."""

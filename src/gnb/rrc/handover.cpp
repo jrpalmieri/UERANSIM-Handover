@@ -18,6 +18,7 @@
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/encode.hpp>
 #include <utils/common.hpp>
+#include <algorithm>
 #include <asn/rrc/ASN_RRC_MeasurementReport.h>
 #include <asn/rrc/ASN_RRC_MeasurementReport-IEs.h>
 #include <asn/rrc/ASN_RRC_MeasResults.h>
@@ -31,10 +32,15 @@
 #include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-v1530-IEs.h>
+#include <asn/rrc/ASN_RRC_RRCReconfiguration-v1540-IEs.h>
+#include <asn/rrc/ASN_RRC_RRCReconfiguration-v1560-IEs.h>
+#include <asn/rrc/ASN_RRC_RRCReconfiguration-v1610-IEs.h>
 #include <asn/rrc/ASN_RRC_CellGroupConfig.h>
 #include <asn/rrc/ASN_RRC_SpCellConfig.h>
 #include <asn/rrc/ASN_RRC_ReconfigurationWithSync.h>
 #include <asn/rrc/ASN_RRC_ServingCellConfigCommon.h>
+#include <asn/rrc/ASN_RRC_ConditionalReconfiguration.h>
+#include <asn/rrc/ASN_RRC_CondReconfigToAddMod.h>
 #include <asn/rrc/ASN_RRC_DL-DCCH-Message.h>
 #include <asn/rrc/ASN_RRC_DL-DCCH-MessageType.h>
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
@@ -50,6 +56,7 @@
 #include <asn/rrc/ASN_RRC_SSB-MTC.h>
 #include <asn/rrc/ASN_RRC_SubcarrierSpacing.h>
 #include <asn/rrc/ASN_RRC_MeasTriggerQuantityOffset.h>
+#include <utility>
 
 const int MIN_RSRP = cons::MIN_RSRP; // minimum RSRP value (in dBm) to use when no measurement is available
 const int HANDOVER_TIMEOUT_MS = 5000; // time to wait for handover completion before considering it failed
@@ -86,6 +93,25 @@ static long dbToHalfDbSteps(int db)
     return static_cast<long>(val);
 }
 
+static long tttMsToEnum(int tttMs)
+{
+    static const int kTttValuesMs[] = {
+        0, 40, 64, 80, 100, 128, 160, 256,
+        320, 480, 512, 640, 1024, 1280, 2560, 5120,
+    };
+
+    if (tttMs <= kTttValuesMs[0])
+        return 0;
+
+    for (size_t i = 1; i < sizeof(kTttValuesMs) / sizeof(kTttValuesMs[0]); i++)
+    {
+        if (tttMs <= kTttValuesMs[i])
+            return static_cast<long>(i);
+    }
+
+    return 15;
+}
+
 /* ================================================================== */
 /*  Helper: T304 milliseconds → ASN enum value                        */
 /* ================================================================== */
@@ -112,6 +138,233 @@ static int normalizeCrntiForRrc(int crnti)
     if (normalized == 0)
         normalized = 1;
     return normalized;
+}
+
+static bool isChoOnlyEventType(const std::string &eventType)
+{
+    return eventType == "D1";
+}
+
+static bool isRrcMeasEventType(const std::string &eventType)
+{
+    return eventType == "A2" || eventType == "A3" || eventType == "A5";
+}
+
+static bool isSupportedChoEventType(const std::string &eventType)
+{
+    return eventType == "A2" || eventType == "A3" || eventType == "A5" || eventType == "D1";
+}
+
+static std::vector<const GnbHandoverConfig::GnbHandoverEventConfig *> selectRrcMeasEvents(
+    const GnbHandoverConfig &config, Logger *logger)
+{
+    std::vector<const GnbHandoverConfig::GnbHandoverEventConfig *> selected{};
+
+    for (const auto &event : config.events)
+    {
+        if (isRrcMeasEventType(event.eventType))
+        {
+            selected.push_back(&event);
+            continue;
+        }
+
+        if (isChoOnlyEventType(event.eventType))
+        {
+            logger->debug("handover.events: ignoring CHO-only event %s in classic MeasConfig",
+                          event.eventType.c_str());
+            continue;
+        }
+
+        logger->warn("handover.events: unsupported event type %s, skipping", event.eventType.c_str());
+    }
+
+    return selected;
+}
+
+static std::vector<const GnbHandoverConfig::GnbChoEventConfig *> selectChoEventGroups(
+    const GnbHandoverConfig &config, Logger *logger)
+{
+    std::vector<const GnbHandoverConfig::GnbChoEventConfig *> selected{};
+
+    if (!config.choEnabled)
+        return selected;
+
+    for (const auto &group : config.choEvents)
+    {
+        if (group.events.empty())
+            continue;
+
+        bool valid = true;
+        for (const auto &event : group.events)
+        {
+            if (!isSupportedChoEventType(event.eventType))
+            {
+                logger->warn("handover.choEvents: unsupported event type %s, skipping group",
+                             event.eventType.c_str());
+                valid = false;
+                break;
+            }
+        }
+
+        if (valid)
+            selected.push_back(&group);
+    }
+
+    return selected;
+}
+
+static const GnbHandoverConfig::GnbHandoverEventConfig *findEventConfigByType(
+    const GnbHandoverConfig &config, const std::string &eventType)
+{
+    for (const auto &event : config.events)
+    {
+        if (event.eventType == eventType)
+            return &event;
+    }
+    return nullptr;
+}
+
+static int getServingPciFromNci(int64_t nci)
+{
+    return static_cast<int>(nci & 0x3FF);
+}
+
+using ScoredNeighbor = std::pair<const GnbNeighborConfig *, int>;
+
+/**
+ * @brief creates a vector of candidate neighbor cells to use for handover.  Criteria
+ * can be defined here to generate a score for each candidate (lower is better)
+ * 
+ * @param config 
+ * @param servingPci 
+ * @return std::vector<ScoredNeighbor> 
+ */
+static std::vector<ScoredNeighbor> prioritizeNeighbors(const GnbConfig &config, int servingPci)
+{
+    std::vector<ScoredNeighbor> prioritized{};
+
+    // Default logic, just prioritize the first non-serving neighbor in the list (if any).  
+    // This can be enhanced with more complex criteria.
+    const GnbNeighborConfig *firstNonServing = nullptr;
+    for (const auto &neighbor : config.neighborList)
+    {
+        if (neighbor.getPci() != servingPci)
+        {
+            firstNonServing = &neighbor;
+            break;
+        }
+    }
+
+    if (firstNonServing)
+    {
+        prioritized.emplace_back(firstNonServing, 1);
+        return prioritized;
+    }
+
+    if (!config.neighborList.empty())
+        prioritized.emplace_back(&config.neighborList.front(), 1);
+
+    // sort the vector by the score value
+    std::sort(prioritized.begin(), prioritized.end(),              [](const ScoredNeighbor &a, const ScoredNeighbor &b) {
+                  return a.second < b.second; // sort in ascending order of score
+              });
+
+    return prioritized;
+}
+
+static std::vector<long> resolveChoMeasIdsForGroup(const RrcUeContext &ue,
+                                                   const GnbHandoverConfig::GnbChoEventConfig &group)
+{
+    std::vector<long> measIds{};
+    std::set<long> seen{};
+
+    for (const auto &event : group.events)
+    {
+        bool found = false;
+        for (const auto &identity : ue.sentMeasIdentities)
+        {
+            if (identity.eventType != event.eventType)
+                continue;
+
+            if (seen.insert(identity.measId).second)
+                measIds.push_back(identity.measId);
+
+            found = true;
+            break;
+        }
+
+        if (!found)
+            return {};
+    }
+
+    return measIds;
+}
+
+static bool extractNestedRrcReconfiguration(const OctetString &rrcContainer,
+                                            OctetString &nestedRrcReconfiguration)
+{
+    auto *decoded = rrc::encode::Decode<ASN_RRC_DL_DCCH_Message>(asn_DEF_ASN_RRC_DL_DCCH_Message, rrcContainer);
+    if (!decoded)
+        return false;
+
+    bool isReconfig = decoded->message.present == ASN_RRC_DL_DCCH_MessageType_PR_c1 &&
+                      decoded->message.choice.c1 != nullptr &&
+                      decoded->message.choice.c1->present ==
+                          ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcReconfiguration &&
+                      decoded->message.choice.c1->choice.rrcReconfiguration != nullptr;
+
+    if (!isReconfig)
+    {
+        asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, decoded);
+        return false;
+    }
+
+    auto *innerReconfig = decoded->message.choice.c1->choice.rrcReconfiguration;
+    nestedRrcReconfiguration = rrc::encode::EncodeS(asn_DEF_ASN_RRC_RRCReconfiguration, innerReconfig);
+    asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, decoded);
+
+    return nestedRrcReconfiguration.length() > 0;
+}
+
+static bool extractTargetPciFromNestedRrcReconfiguration(const OctetString &nestedRrcReconfiguration,
+                                                         int &targetPci)
+{
+    auto *reconfig = rrc::encode::Decode<ASN_RRC_RRCReconfiguration>(asn_DEF_ASN_RRC_RRCReconfiguration,
+                                                                      nestedRrcReconfiguration);
+    if (!reconfig)
+        return false;
+
+    bool ok = false;
+
+    if (reconfig->criticalExtensions.present ==
+            ASN_RRC_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration &&
+        reconfig->criticalExtensions.choice.rrcReconfiguration != nullptr)
+    {
+        auto *ies = reconfig->criticalExtensions.choice.rrcReconfiguration;
+        if (ies->nonCriticalExtension != nullptr && ies->nonCriticalExtension->masterCellGroup != nullptr)
+        {
+            OctetString masterCellGroup = asn::GetOctetString(*ies->nonCriticalExtension->masterCellGroup);
+            auto *cellGroup = rrc::encode::Decode<ASN_RRC_CellGroupConfig>(asn_DEF_ASN_RRC_CellGroupConfig,
+                                                                            masterCellGroup);
+            if (cellGroup)
+            {
+                if (cellGroup->spCellConfig != nullptr &&
+                    cellGroup->spCellConfig->reconfigurationWithSync != nullptr &&
+                    cellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon != nullptr &&
+                    cellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon->physCellId != nullptr)
+                {
+                    targetPci = static_cast<int>(
+                        *cellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon->physCellId);
+                    ok = true;
+                }
+
+                asn::Free(asn_DEF_ASN_RRC_CellGroupConfig, cellGroup);
+            }
+        }
+    }
+
+    asn::Free(asn_DEF_ASN_RRC_RRCReconfiguration, reconfig);
+    return ok;
 }
 
 /**
@@ -169,7 +422,8 @@ void GnbRrcTask::receiveRrcReconfigurationComplete(int ueId, int cRnti,
         }
     }
 
-    // matchedPending is True if there is pending handover, so complete it by moving the pending context to the main UE context map
+    // matchedPending is True if there is pending handover, so complete it by moving the pending
+    // context to the main UE context map.
     if (matchedPending)
     {
 
@@ -446,18 +700,19 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
         ue->sentMeasIdentities.clear();
     }
 
-    if (m_config->handover.eventTypes.empty())
+    auto selectedEvents = selectRrcMeasEvents(m_config->handover, m_logger.get());
+    if (selectedEvents.empty())
     {
-        m_logger->warn("UE[%d] No handover.eventType configured; skipping MeasConfig", ue->ueId);
+        m_logger->warn("UE[%d] No non-CHO handover events configured; skipping MeasConfig", ue->ueId);
         return;
     }
 
     std::string eventList{};
-    for (size_t i = 0; i < m_config->handover.eventTypes.size(); i++)
+    for (size_t i = 0; i < selectedEvents.size(); i++)
     {
         if (i != 0)
             eventList += ",";
-        eventList += m_config->handover.eventTypes[i];
+        eventList += selectedEvents[i]->eventType;
     }
 
     m_logger->info("UE[%d] Sending MeasConfig with eventType(s)=%s", ue->ueId, eventList.c_str());
@@ -520,9 +775,10 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
     mc->measIdToAddModList = asn::New<ASN_RRC_MeasIdToAddModList>();
     ue->sentMeasIdentities.clear();
 
-    for (size_t i = 0; i < m_config->handover.eventTypes.size(); i++)
+    for (size_t i = 0; i < selectedEvents.size(); i++)
     {
-        const auto &eventType = m_config->handover.eventTypes[i];
+        const auto &event = *selectedEvents[i];
+        const auto &eventType = event.eventType;
         const long reportConfigId = static_cast<long>(i + 1);
         const long measId = static_cast<long>(i + 1);
 
@@ -543,18 +799,17 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
 
             auto *a2 = et->eventId.choice.eventA2;
             a2->a2_Threshold.present = ASN_RRC_MeasTriggerQuantity_PR_rsrp;
-            a2->a2_Threshold.choice.rsrp = rsrpDbmToRange(m_config->handover.a2ThresholdDbm);
-            a2->hysteresis = dbToHalfDbSteps(m_config->handover.hysteresisDb);
-            a2->timeToTrigger = 4; // TTT enum 4 = 100ms
+            a2->a2_Threshold.choice.rsrp = rsrpDbmToRange(event.a2ThresholdDbm);
+            a2->hysteresis = dbToHalfDbSteps(event.hysteresisDb);
+            a2->timeToTrigger = tttMsToEnum(event.tttMs);
             a2->reportOnLeave = false;
 
             // Ask UE to include neighbor measurements in A2 reports where possible.
             et->reportAddNeighMeas = asn::New<long>();
             *et->reportAddNeighMeas = ASN_RRC_EventTriggerConfig__reportAddNeighMeas_setup;
 
-            m_logger->debug("UE[%d] MeasConfig measId=%ld event=A2 threshold=%ddBm hysteresis=%ddB ttt=100ms",
-                            ue->ueId, measId, m_config->handover.a2ThresholdDbm,
-                            m_config->handover.hysteresisDb);
+            m_logger->debug("UE[%d] MeasConfig measId=%ld event=A2 threshold=%ddBm hysteresis=%ddB ttt=%dms",
+                            ue->ueId, measId, event.a2ThresholdDbm, event.hysteresisDb, event.tttMs);
         }
         else if (eventType == "A5")
         {
@@ -563,18 +818,18 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
 
             auto *a5 = et->eventId.choice.eventA5;
             a5->a5_Threshold1.present = ASN_RRC_MeasTriggerQuantity_PR_rsrp;
-            a5->a5_Threshold1.choice.rsrp = rsrpDbmToRange(m_config->handover.a5Threshold1Dbm);
+            a5->a5_Threshold1.choice.rsrp = rsrpDbmToRange(event.a5Threshold1Dbm);
             a5->a5_Threshold2.present = ASN_RRC_MeasTriggerQuantity_PR_rsrp;
-            a5->a5_Threshold2.choice.rsrp = rsrpDbmToRange(m_config->handover.a5Threshold2Dbm);
-            a5->hysteresis = dbToHalfDbSteps(m_config->handover.hysteresisDb);
-            a5->timeToTrigger = 4; // TTT enum 4 = 100ms
+            a5->a5_Threshold2.choice.rsrp = rsrpDbmToRange(event.a5Threshold2Dbm);
+            a5->hysteresis = dbToHalfDbSteps(event.hysteresisDb);
+            a5->timeToTrigger = tttMsToEnum(event.tttMs);
             a5->reportOnLeave = false;
             a5->useWhiteCellList = false;
 
             m_logger->debug("UE[%d] MeasConfig measId=%ld event=A5 threshold1=%ddBm threshold2=%ddBm "
-                            "hysteresis=%ddB ttt=100ms",
-                            ue->ueId, measId, m_config->handover.a5Threshold1Dbm,
-                            m_config->handover.a5Threshold2Dbm, m_config->handover.hysteresisDb);
+                            "hysteresis=%ddB ttt=%dms",
+                            ue->ueId, measId, event.a5Threshold1Dbm,
+                            event.a5Threshold2Dbm, event.hysteresisDb, event.tttMs);
         }
         else
         {
@@ -583,15 +838,14 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
 
             auto *a3 = et->eventId.choice.eventA3;
             a3->a3_Offset.present = ASN_RRC_MeasTriggerQuantityOffset_PR_rsrp;
-            a3->a3_Offset.choice.rsrp = m_config->handover.a3OffsetDb * 2;
-            a3->hysteresis = dbToHalfDbSteps(m_config->handover.hysteresisDb);
-            a3->timeToTrigger = 4; // TTT enum 4 = 100ms
+            a3->a3_Offset.choice.rsrp = event.a3OffsetDb * 2;
+            a3->hysteresis = dbToHalfDbSteps(event.hysteresisDb);
+            a3->timeToTrigger = tttMsToEnum(event.tttMs);
             a3->reportOnLeave = false;
             a3->useWhiteCellList = false;
 
-            m_logger->debug("UE[%d] MeasConfig measId=%ld event=A3 offset=%ddB hysteresis=%ddB ttt=100ms",
-                            ue->ueId, measId, m_config->handover.a3OffsetDb,
-                            m_config->handover.hysteresisDb);
+            m_logger->debug("UE[%d] MeasConfig measId=%ld event=A3 offset=%ddB hysteresis=%ddB ttt=%dms",
+                            ue->ueId, measId, event.a3OffsetDb, event.hysteresisDb, event.tttMs);
         }
 
         et->rsType = ASN_RRC_NR_RS_Type_ssb;
@@ -621,7 +875,12 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
     sendRrcMessage(ue->ueId, pdu);
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
 
-    m_logger->info("UE[%d] MeasConfig (%zu measId entries) sent, txId=%ld", ue->ueId, ue->sentMeasIdentities.size(), txId);
+    m_logger->info("UE[%d] MeasConfig (%zu measId entries) sent, txId=%ld",
+                   ue->ueId, ue->sentMeasIdentities.size(), txId);
+
+    // if conditional handover enabled, generate a CHO RRC message
+    if (m_config->handover.choEnabled)
+        processConditionalHandover(ue->ueId, "post-measconfig");
 }
 
 /**
@@ -643,44 +902,54 @@ void GnbRrcTask::evaluateHandoverDecision(int ueId, const std::string &eventType
     int bestNeighRsrp = ue->lastMeasReportRsrp;
     int servingRsrp = ue->lastServingRsrp;
 
+    const auto *eventConfig = findEventConfigByType(m_config->handover, eventType);
+    if (!eventConfig)
+    {
+        m_logger->warn("UE[%d] HandoverEval: no config found for event=%s", ue->ueId, eventType.c_str());
+        return;
+    }
+
+    if (isChoOnlyEventType(eventType))
+        return;
+
     bool shouldHandover = false;
-    const int hysteresisDb = m_config->handover.hysteresisDb;
+    const int hysteresisDb = eventConfig->hysteresisDb;
 
     if (eventType == "A2")
     {
         // A2: serving RSRP < threshold - hysteresis
-        shouldHandover = servingRsrp < (m_config->handover.a2ThresholdDbm - hysteresisDb);
+        shouldHandover = servingRsrp < (eventConfig->a2ThresholdDbm - hysteresisDb);
         m_logger->debug("UE[%d] HandoverEval: event=A2 measId serving=%ddBm threshold=%ddBm hysteresis=%ddB "
                         "condition=(%d < %d) result=%s",
-                        ue->ueId, servingRsrp, m_config->handover.a2ThresholdDbm, hysteresisDb,
-                        servingRsrp, m_config->handover.a2ThresholdDbm - hysteresisDb,
+                        ue->ueId, servingRsrp, eventConfig->a2ThresholdDbm, hysteresisDb,
+                        servingRsrp, eventConfig->a2ThresholdDbm - hysteresisDb,
                         shouldHandover ? "true" : "false");
     }
     else if (eventType == "A3")
     {
         // A3: neighbor RSRP > serving RSRP + offset + hysteresis
         shouldHandover = bestNeighPci >= 0 &&
-                         bestNeighRsrp > (servingRsrp + m_config->handover.a3OffsetDb + hysteresisDb);
+                         bestNeighRsrp > (servingRsrp + eventConfig->a3OffsetDb + hysteresisDb);
         m_logger->debug("UE[%d] HandoverEval: event=A3 serving=%ddBm bestNeighPci=%d bestNeigh=%ddBm "
                         "offset=%ddB hysteresis=%ddB condition=(%d > %d) result=%s",
                         ue->ueId, servingRsrp, bestNeighPci, bestNeighRsrp,
-                        m_config->handover.a3OffsetDb, hysteresisDb,
-                        bestNeighRsrp, servingRsrp + m_config->handover.a3OffsetDb + hysteresisDb,
+                        eventConfig->a3OffsetDb, hysteresisDb,
+                        bestNeighRsrp, servingRsrp + eventConfig->a3OffsetDb + hysteresisDb,
                         shouldHandover ? "true" : "false");
     }
     else if (eventType == "A5")
     {
         // A5: serving RSRP < threshold1 - hysteresis AND neighbor RSRP > threshold2 + hysteresis
         shouldHandover = bestNeighPci >= 0 &&
-                         servingRsrp < (m_config->handover.a5Threshold1Dbm - hysteresisDb) &&
-                         bestNeighRsrp > (m_config->handover.a5Threshold2Dbm + hysteresisDb);
+                         servingRsrp < (eventConfig->a5Threshold1Dbm - hysteresisDb) &&
+                         bestNeighRsrp > (eventConfig->a5Threshold2Dbm + hysteresisDb);
         m_logger->debug("UE[%d] HandoverEval: event=A5 serving=%ddBm bestNeighPci=%d bestNeigh=%ddBm "
                         "thr1=%ddBm thr2=%ddBm hysteresis=%ddB cond1=(%d < %d) cond2=(%d > %d) result=%s",
                         ue->ueId, servingRsrp, bestNeighPci, bestNeighRsrp,
-                        m_config->handover.a5Threshold1Dbm, m_config->handover.a5Threshold2Dbm,
+                        eventConfig->a5Threshold1Dbm, eventConfig->a5Threshold2Dbm,
                         hysteresisDb,
-                        servingRsrp, m_config->handover.a5Threshold1Dbm - hysteresisDb,
-                        bestNeighRsrp, m_config->handover.a5Threshold2Dbm + hysteresisDb,
+                        servingRsrp, eventConfig->a5Threshold1Dbm - hysteresisDb,
+                        bestNeighRsrp, eventConfig->a5Threshold2Dbm + hysteresisDb,
                         shouldHandover ? "true" : "false");
     }
 
@@ -711,13 +980,143 @@ void GnbRrcTask::evaluateHandoverDecision(int ueId, const std::string &eventType
 }
 
 /**
+ * @brief initiates creation of conditional handover (CHO) RRC reconfiguration messages to UE.
+ * Uses the configured CHO event groups to determine which CHO event(s) to prepare for.
+ * Selects target cell(s) based on selection criteria, and requests handover preparation
+ * to prepare the target gNB(s) in advance of a handover trigger event.  Because completion of the
+ * CHO message required a response form the target gnb (the transparent container with a ReconfigWithSync message)
+ * this function only starts the process and sets the CHO preparation flag.  When the AMF responds with the 
+ * transparent container, the CHO RRC Reconfiguration message is generated and sent to the UE 
+ * (see the RRCTask handleNgapHandoverCommand function).
+ * 
+ * @param ueId 
+ * @param eventType 
+ */
+void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventType)
+{
+    // ue RRC context
+    auto *ue = tryFindUeByUeId(ueId);
+    if (!ue)
+        return;
+
+    // if we're still waiting to complete a prior CHO process, don't start another one
+    if (ue->choPreparationPending)
+        return;
+
+    // cho event groups from the config
+    auto choGroups = selectChoEventGroups(m_config->handover, m_logger.get());
+    if (choGroups.empty())
+    {
+        m_logger->warn("UE[%d] CHO prepare skipped (%s): no CHO event groups configured", ueId, eventType.c_str()); 
+        return;
+    }
+
+    if (ue->sentMeasIdentities.empty())
+    {
+        m_logger->warn("UE[%d] CHO prepare skipped (%s): no active MeasConfig identities",
+                       ueId,
+                       eventType.c_str());
+        return;
+    }
+
+    // Step 1 - identify neighbor cells that are possible handover targets.
+    // For NTN operation, we want targets that are prioritized by a matching criteria, such as
+    // duration of time in serving area when we expect a handover will happen.
+    //  For now, we just select a neighbor that is different from the serving cell.
+
+    const int servingPci = getServingPciFromNci(m_config->nci);
+    // prioritizedNeighbors is sorted vector of (neighborCell, score) pairs,
+    //   where score is an integer representing the priority of that neighbor as a handover target (lower is better).
+    auto prioritizedNeighbors = prioritizeNeighbors(*m_config, servingPci);
+    if (prioritizedNeighbors.empty())
+    {
+        m_logger->warn("UE[%d] CHO prepare skipped (%s): neighbor list is empty", ueId, eventType.c_str());
+        return;
+    }
+
+    // Step 2 - map the cho event groups to stored MeasIds
+
+    const GnbHandoverConfig::GnbChoEventConfig *selectedGroup = nullptr;
+    std::vector<long> selectedMeasIds{};
+
+    for (const auto *group : choGroups)
+    {
+        auto measIds = resolveChoMeasIdsForGroup(*ue, *group);
+        if (!measIds.empty())
+        {
+            selectedGroup = group;
+            selectedMeasIds = std::move(measIds);
+            break;
+        }
+    }
+
+    if (!selectedGroup)
+    {
+        m_logger->warn("UE[%d] CHO prepare skipped (%s): no CHO group maps to configured MeasId set",
+                       ueId,
+                       eventType.c_str());
+        return;
+    }
+
+    // go for CHO message preparation - set the pending flag
+    
+    ue->choPreparationPending = true;
+    
+    // Step 3 - store the CHO target PCIs and their priority scores in UE RRC context
+
+    ue->choPreparationCandidatePcis.clear();
+    ue->choPreparationCandidateScores.clear();
+    for (const auto &[neighbor, score] : prioritizedNeighbors)
+    {
+        const int pci = neighbor->getPci();
+        ue->choPreparationCandidatePcis.push_back(pci);
+        ue->choPreparationCandidateScores[pci] = score;
+    }
+
+    if (ue->choPreparationCandidatePcis.empty())
+    {
+        ue->choPreparationPending = false;
+        m_logger->warn("UE[%d] CHO prepare skipped (%s): prioritized neighbors have no valid score", ueId,
+                       eventType.c_str());
+        return;
+    }
+
+    ue->choPreparationMeasIds = std::move(selectedMeasIds);
+    int firstCandidatePci = ue->choPreparationCandidatePcis.front();
+    int firstCandidatePriority = ue->choPreparationCandidateScores[firstCandidatePci];
+
+    // Step 4 - send handover required to NGAP with CHO preparation flag for each candidate,
+    // so NGAP can prepare each target gNB and reply with CHO commands independently.
+
+    for (int targetPci : ue->choPreparationCandidatePcis)
+    {
+        auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_REQUIRED);
+        w->ueId = ue->ueId;
+        w->hoTargetPci = targetPci;
+        w->hoCause = NgapCause::RadioNetwork_handover_desirable_for_radio_reason;
+        w->hoForChoPreparation = true;
+        m_base->ngapTask->push(std::move(w));
+    }
+
+    m_logger->info("UE[%d] CHO prepare started (%s): measIds=%zu candidates=%zu targetPCI_1=%d  priority_1=%d ",
+                   ue->ueId,
+                   eventType.c_str(),
+                   ue->choPreparationMeasIds.size(),
+                   ue->choPreparationCandidatePcis.size(),
+                   firstCandidatePci,
+                   firstCandidatePriority);
+}
+
+/**
  * @brief Handles a handover command from NGAP, including an RRC container
  * that carries the RRCReconfiguration for handover.
  * 
  * @param ueId 
  * @param rrcContainer 
  */
-void GnbRrcTask::handleNgapHandoverCommand(int ueId, const OctetString &rrcContainer)
+void GnbRrcTask::handleNgapHandoverCommand(int ueId,
+                                           const OctetString &rrcContainer,
+                                           bool hoForChoPreparation)
 {
     auto *ue = findCtxByUeId(ueId);
     if (!ue)
@@ -726,8 +1125,151 @@ void GnbRrcTask::handleNgapHandoverCommand(int ueId, const OctetString &rrcConta
         return;
     }
 
-    m_logger->info("UE[%d] Received NGAP Handover Command with RRC container of %zu bytes",
-                   ueId, rrcContainer.length());
+    m_logger->info("UE[%d] Received NGAP Handover Command with RRC container of %zu bytes (mode=%s)",
+                   ueId,
+                   rrcContainer.length(),
+                   hoForChoPreparation ? "cho-prepare" : "classic");
+
+    // If this handover command is from a CHO preparation request, complete and send
+    // a CHO RRCReconfiguration for one candidate as soon as its response arrives.
+    if (hoForChoPreparation)
+    {
+        // sanity check - cho prep must be pending
+        if (!ue->choPreparationPending)
+        {
+            m_logger->warn("UE[%d] CHO prepare response arrived with no pending CHO state; ignoring", ueId);
+            return;
+        }
+
+        if (ue->choPreparationCandidatePcis.empty())
+        {
+            ue->choPreparationPending = false;
+            m_logger->warn("UE[%d] CHO prepare response arrived with no pending CHO candidates; ignoring", ueId);
+            return;
+        }
+
+        // extract the nested RRCReconfiguration container from the NGAP message
+        
+        OctetString nestedRrcReconfig{};
+        if (!extractNestedRrcReconfiguration(rrcContainer, nestedRrcReconfig))
+        {
+            m_logger->err("UE[%d] Failed to extract nested RRCReconfiguration for CHO candidate", ueId);
+
+            if (ue->choPreparationCandidatePcis.empty())
+            {
+                ue->choPreparationPending = false;
+                ue->choPreparationMeasIds.clear();
+                ue->choPreparationCandidateScores.clear();
+            }
+            return;
+        }
+
+        // determine the target gnb PCI from the nested RRCReconfiguration
+
+        int candidatePci = -1;
+        if (!extractTargetPciFromNestedRrcReconfiguration(nestedRrcReconfig, candidatePci))
+        {
+            m_logger->err("UE[%d] Failed to extract target PCI from nested RRCReconfiguration", ueId);
+            return;
+        }
+
+        // locate the candidate PCI in the pending CHO list
+
+        auto itPendingPci = std::find(ue->choPreparationCandidatePcis.begin(),
+                                      ue->choPreparationCandidatePcis.end(),
+                                      candidatePci);
+        if (itPendingPci == ue->choPreparationCandidatePcis.end())
+        {
+            m_logger->warn("UE[%d] CHO prepare response targetPCI=%d not found in pending candidate list; ignoring",
+                           ueId,
+                           candidatePci);
+            return;
+        }
+
+        // remove it from the pending list
+        ue->choPreparationCandidatePcis.erase(itPendingPci);
+
+        // get its priority from the priority map
+        
+        int candidatePriority = 1;
+        auto itScore = ue->choPreparationCandidateScores.find(candidatePci);
+        if (itScore != ue->choPreparationCandidateScores.end())
+            candidatePriority = itScore->second;
+
+
+        // Create RRCReconfiguration message with the nested RRCReconfiguration from the target gNB, 
+        //  and include the CHO conditional reconfiguration IEs with the candidate PCI and the MeasIds that 
+        //  should trigger execution of this candidate's CHO config.
+        
+        auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
+        pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
+        pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
+        pdu->message.choice.c1->present = ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcReconfiguration;
+
+        auto &reconfig = pdu->message.choice.c1->choice.rrcReconfiguration =
+            asn::New<ASN_RRC_RRCReconfiguration>();
+        reconfig->rrc_TransactionIdentifier = getNextTid(ueId);
+        reconfig->criticalExtensions.present =
+            ASN_RRC_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration;
+
+        auto &ies = reconfig->criticalExtensions.choice.rrcReconfiguration =
+            asn::New<ASN_RRC_RRCReconfiguration_IEs>();
+
+        ies->nonCriticalExtension = asn::New<ASN_RRC_RRCReconfiguration_v1530_IEs>();
+        ies->nonCriticalExtension->nonCriticalExtension = asn::New<ASN_RRC_RRCReconfiguration_v1540_IEs>();
+        ies->nonCriticalExtension->nonCriticalExtension->nonCriticalExtension =
+            asn::New<ASN_RRC_RRCReconfiguration_v1560_IEs>();
+        auto *v1610 = asn::New<ASN_RRC_RRCReconfiguration_v1610_IEs>();
+        ies->nonCriticalExtension->nonCriticalExtension->nonCriticalExtension->nonCriticalExtension = v1610;
+
+        v1610->conditionalReconfiguration = asn::New<ASN_RRC_ConditionalReconfiguration>();
+        v1610->conditionalReconfiguration->condReconfigToAddModList =
+            asn::New<ASN_RRC_ConditionalReconfiguration::
+                     ASN_RRC_ConditionalReconfiguration__condReconfigToAddModList>();
+
+        auto *addMod = asn::New<ASN_RRC_CondReconfigToAddMod>();
+
+        int condReconfigId = candidatePriority;
+        if (condReconfigId < 1)
+            condReconfigId = 1;
+        if (condReconfigId > 8)
+            condReconfigId = 8;
+
+        addMod->condReconfigId = condReconfigId;
+        addMod->condExecutionCond =
+            asn::New<ASN_RRC_CondReconfigToAddMod::ASN_RRC_CondReconfigToAddMod__condExecutionCond>();
+        for (long measId : ue->choPreparationMeasIds)
+        {
+            auto *entry = asn::New<ASN_RRC_MeasId_t>();
+            *entry = measId;
+            asn::SequenceAdd(*addMod->condExecutionCond, entry);
+        }
+
+        addMod->condRRCReconfig = asn::New<OCTET_STRING_t>();
+        asn::SetOctetString(*addMod->condRRCReconfig, nestedRrcReconfig);
+        asn::SequenceAdd(*v1610->conditionalReconfiguration->condReconfigToAddModList, addMod);
+
+        sendRrcMessage(ueId, pdu);
+        asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
+
+        m_logger->info("UE[%d] CHO RRCReconfiguration sent with 1 candidate targetPCI=%d condReconfigId=%d "
+                       "measIds=%zu pendingCandidates=%zu",
+                       ueId,
+                       candidatePci,
+                       condReconfigId,
+                       ue->choPreparationMeasIds.size(),
+                       ue->choPreparationCandidatePcis.size());
+
+        ue->choPreparationCandidateScores.erase(candidatePci);
+        if (ue->choPreparationCandidatePcis.empty())
+        {
+            ue->choPreparationPending = false;
+            ue->choPreparationCandidateScores.clear();
+            ue->choPreparationMeasIds.clear();
+        }
+
+        return;
+    }  // end of CHO preparation response handling
 
     auto *pdu = rrc::encode::Decode<ASN_RRC_DL_DCCH_Message>(asn_DEF_ASN_RRC_DL_DCCH_Message, rrcContainer);
     if (!pdu)
@@ -751,8 +1293,40 @@ void GnbRrcTask::handleNgapHandoverCommand(int ueId, const OctetString &rrcConta
     sendRrcMessage(ueId, pdu);
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
 
-    m_logger->info("Forwarded decoded handover RRCReconfiguration UE[%d] ", ueId);
+    m_logger->info("Forwarded decoded handover RRCReconfiguration UE[%d]", ueId);
 
+}
+
+void GnbRrcTask::handleNgapHandoverFailure(int ueId)
+{
+    bool cleared = false;
+
+    auto itPending = m_handoversPending.find(ueId);
+    if (itPending != m_handoversPending.end() && itPending->second != nullptr)
+    {
+        if (itPending->second->ctx != nullptr)
+            delete itPending->second->ctx;
+
+        delete itPending->second;
+        m_handoversPending.erase(itPending);
+        cleared = true;
+    }
+
+    auto *ue = findCtxByUeId(ueId);
+    if (ue)
+    {
+        ue->handoverDecisionPending = false;
+        ue->choPreparationPending = false;
+        ue->choPreparationCandidatePcis.clear();
+        ue->choPreparationCandidateScores.clear();
+        ue->choPreparationMeasIds.clear();
+        cleared = true;
+    }
+
+    if (cleared)
+        m_logger->info("UE[%d] Cleared RRC pending handover state after NGAP handover failure", ueId);
+    else
+        m_logger->warn("UE[%d] NGAP handover failure received with no RRC pending handover state", ueId);
 }
 
 
@@ -830,8 +1404,22 @@ OctetString GnbRrcTask::getHandoverMeasConfigRrcReconfiguration(int ueId) const
     mc->reportConfigToAddModList = asn::New<ASN_RRC_ReportConfigToAddModList>();
     mc->measIdToAddModList = asn::New<ASN_RRC_MeasIdToAddModList>();
 
+    auto selectedEvents = selectRrcMeasEvents(m_config->handover, m_logger.get());
+
     for (const auto &item : ctx->sentMeasIdentities)
     {
+        const GnbHandoverConfig::GnbHandoverEventConfig *eventConfig = nullptr;
+        if (item.reportConfigId > 0)
+        {
+            size_t eventIndex = static_cast<size_t>(item.reportConfigId - 1);
+            if (eventIndex < selectedEvents.size())
+                eventConfig = selectedEvents[eventIndex];
+        }
+        if (!eventConfig)
+            eventConfig = findEventConfigByType(m_config->handover, item.eventType);
+        if (!eventConfig || !isRrcMeasEventType(eventConfig->eventType))
+            continue;
+
         auto *rcMod = asn::New<ASN_RRC_ReportConfigToAddMod>();
         rcMod->reportConfigId = item.reportConfigId;
         rcMod->reportConfig.present = ASN_RRC_ReportConfigToAddMod__reportConfig_PR_reportConfigNR;
@@ -848,9 +1436,9 @@ OctetString GnbRrcTask::getHandoverMeasConfigRrcReconfiguration(int ueId) const
             asn::MakeNew(et->eventId.choice.eventA2);
             auto *a2 = et->eventId.choice.eventA2;
             a2->a2_Threshold.present = ASN_RRC_MeasTriggerQuantity_PR_rsrp;
-            a2->a2_Threshold.choice.rsrp = rsrpDbmToRange(m_config->handover.a2ThresholdDbm);
-            a2->hysteresis = dbToHalfDbSteps(m_config->handover.hysteresisDb);
-            a2->timeToTrigger = 4;
+            a2->a2_Threshold.choice.rsrp = rsrpDbmToRange(eventConfig->a2ThresholdDbm);
+            a2->hysteresis = dbToHalfDbSteps(eventConfig->hysteresisDb);
+            a2->timeToTrigger = tttMsToEnum(eventConfig->tttMs);
             a2->reportOnLeave = false;
             et->reportAddNeighMeas = asn::New<long>();
             *et->reportAddNeighMeas = ASN_RRC_EventTriggerConfig__reportAddNeighMeas_setup;
@@ -861,11 +1449,11 @@ OctetString GnbRrcTask::getHandoverMeasConfigRrcReconfiguration(int ueId) const
             asn::MakeNew(et->eventId.choice.eventA5);
             auto *a5 = et->eventId.choice.eventA5;
             a5->a5_Threshold1.present = ASN_RRC_MeasTriggerQuantity_PR_rsrp;
-            a5->a5_Threshold1.choice.rsrp = rsrpDbmToRange(m_config->handover.a5Threshold1Dbm);
+            a5->a5_Threshold1.choice.rsrp = rsrpDbmToRange(eventConfig->a5Threshold1Dbm);
             a5->a5_Threshold2.present = ASN_RRC_MeasTriggerQuantity_PR_rsrp;
-            a5->a5_Threshold2.choice.rsrp = rsrpDbmToRange(m_config->handover.a5Threshold2Dbm);
-            a5->hysteresis = dbToHalfDbSteps(m_config->handover.hysteresisDb);
-            a5->timeToTrigger = 4;
+            a5->a5_Threshold2.choice.rsrp = rsrpDbmToRange(eventConfig->a5Threshold2Dbm);
+            a5->hysteresis = dbToHalfDbSteps(eventConfig->hysteresisDb);
+            a5->timeToTrigger = tttMsToEnum(eventConfig->tttMs);
             a5->reportOnLeave = false;
             a5->useWhiteCellList = false;
         }
@@ -875,9 +1463,9 @@ OctetString GnbRrcTask::getHandoverMeasConfigRrcReconfiguration(int ueId) const
             asn::MakeNew(et->eventId.choice.eventA3);
             auto *a3 = et->eventId.choice.eventA3;
             a3->a3_Offset.present = ASN_RRC_MeasTriggerQuantityOffset_PR_rsrp;
-            a3->a3_Offset.choice.rsrp = m_config->handover.a3OffsetDb * 2;
-            a3->hysteresis = dbToHalfDbSteps(m_config->handover.hysteresisDb);
-            a3->timeToTrigger = 4;
+            a3->a3_Offset.choice.rsrp = eventConfig->a3OffsetDb * 2;
+            a3->hysteresis = dbToHalfDbSteps(eventConfig->hysteresisDb);
+            a3->timeToTrigger = tttMsToEnum(eventConfig->tttMs);
             a3->reportOnLeave = false;
             a3->useWhiteCellList = false;
         }
