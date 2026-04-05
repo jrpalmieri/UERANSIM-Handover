@@ -39,6 +39,11 @@ fast: FORCE
 
 	@printf "${GREEN}UERANSIM incremental build completed.${NC}\n"
 
+# Generate/refresh compile_commands.json for IDE IntelliSense.
+intellisense: FORCE
+	cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+	@printf "${GREEN}compile_commands.json generated at build/compile_commands.json.${NC}\n"
+
 FORCE:
 
 clean:
