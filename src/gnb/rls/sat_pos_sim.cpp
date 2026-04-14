@@ -19,6 +19,33 @@ static double FreeSpacePathLossDb(double distanceM,
          - 147.55;
 }
 
+
+/// Urban Macro path loss in dB based on 3GPP TS 38.901, for frequencies 0.5-6 GHz.
+///  PL = 22*log10(d) + 28 + 20*log10(f)
+/// distance: meters,  frequencyHz: Hz.
+static double UrbanMacroPathLossDb(double distanceM,
+                                  double frequencyHz)
+{
+    // min distance is 1m
+    if (distanceM <= 0.0)
+        distanceM = 1.0;
+
+    // convert to GHz
+    double freqGHz = frequencyHz / 1e9;
+    
+    double pl = 22.0 * std::log10(distanceM) + 28.0 + 20.0 * std::log10(freqGHz);
+    return pl;
+}
+
+/**
+ * @brief Generates a simulated RSRP value (dBm) for a satellite link based on the positions of the gNB and UE, and the link parameters.
+ * The RSRP is calculated using a free-space path loss model.
+ * 
+ * @param gnbEcef 
+ * @param ueGeo 
+ * @param link 
+ * @return int 
+ */
 int SatelliteSimulatedDbm(const EcefPosition &gnbEcef,
                           const GeoPosition &ueGeo,
                           const SatelliteLinkConfig &link)
@@ -26,18 +53,27 @@ int SatelliteSimulatedDbm(const EcefPosition &gnbEcef,
     EcefPosition ueEcef = GeoToEcef(ueGeo);
     double dist = EcefDistance(gnbEcef, ueEcef);
 
+    // calculate free space path loss
     double fspl = FreeSpacePathLossDb(dist, link.frequencyHz);
 
-    // Link budget: Prx = Ptx(dBW) + Gtx + Grx - FSPL
-    // Convert result to dBm (dBW + 30 = dBm)
-    double rxDbm = (link.txPowerDbW + 30.0)
+    // Link budget: Prx(dBm) = Ptx(dBm) + Gtx + Grx - FSPL
+    double rxDbm = link.txPowerDbm
                  + link.txGainDbi
-                 + link.rxGainDbi
+                 + link.ueRxGainDbi
                  - fspl;
 
     return static_cast<int>(std::round(rxDbm));
 }
 
+/**
+ * @brief Generated a simulated RSRP value (dBm) for a terrestrial link based on the positions of the gNB and UE, and the link parameters.
+ * The RSRP is calculated using the urban macro (Uma) model from TS 38.901.
+ * 
+ * @param gnbGeo 
+ * @param ueGeo 
+ * @param link 
+ * @return int 
+ */
 int TerrestrialSimulatedDbm(const GeoPosition &gnbGeo,
                             const GeoPosition &ueGeo,
                             const SatelliteLinkConfig &link)
@@ -46,12 +82,12 @@ int TerrestrialSimulatedDbm(const GeoPosition &gnbGeo,
     EcefPosition ueEcef  = GeoToEcef(ueGeo);
     double dist = EcefDistance(gnbEcef, ueEcef);
 
-    double fspl = FreeSpacePathLossDb(dist, link.frequencyHz);
+    double uma_pl = UrbanMacroPathLossDb(dist, link.frequencyHz);
 
-    double rxDbm = (link.txPowerDbW + 30.0)
+    double rxDbm = link.txPowerDbm
                  + link.txGainDbi
-                 + link.rxGainDbi
-                 - fspl;
+                 + link.ueRxGainDbi
+                 - uma_pl;
 
     return static_cast<int>(std::round(rxDbm));
 }

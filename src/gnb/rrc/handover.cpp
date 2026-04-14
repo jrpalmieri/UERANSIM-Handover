@@ -224,6 +224,25 @@ static const GnbHandoverConfig::GnbHandoverEventConfig *findEventConfigByType(
     return nullptr;
 }
 
+static const GnbHandoverConfig &getActiveHandoverConfig(const GnbConfig &config)
+{
+    if (config.ntn.ntnEnabled)
+        return config.ntn.ntnHandover;
+
+    return config.handover;
+}
+
+static const GnbNeighborConfig *findNeighborByNci(const GnbConfig &config, int64_t nci)
+{
+    for (const auto &neighbor : config.neighborList)
+    {
+        if (neighbor.nci == nci)
+            return &neighbor;
+    }
+
+    return nullptr;
+}
+
 static int getServingPciFromNci(int64_t nci)
 {
     return static_cast<int>(nci & 0x3FF);
@@ -265,9 +284,11 @@ static std::vector<ScoredNeighbor> prioritizeNeighbors(const GnbConfig &config, 
         prioritized.emplace_back(&config.neighborList.front(), 1);
 
     // sort the vector by the score value
-    std::sort(prioritized.begin(), prioritized.end(),              [](const ScoredNeighbor &a, const ScoredNeighbor &b) {
-                  return a.second < b.second; // sort in ascending order of score
-              });
+    std::sort(
+        prioritized.begin(), prioritized.end(),
+        [](const ScoredNeighbor &a, const ScoredNeighbor &b) {
+            return a.second < b.second; // sort in ascending order of score
+        });
 
     return prioritized;
 }
@@ -700,7 +721,8 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
         ue->sentMeasIdentities.clear();
     }
 
-    auto selectedEvents = selectRrcMeasEvents(m_config->handover, m_logger.get());
+    const auto &activeHandover = getActiveHandoverConfig(*m_config);
+    auto selectedEvents = selectRrcMeasEvents(activeHandover, m_logger.get());
     if (selectedEvents.empty())
     {
         m_logger->warn("UE[%d] No non-CHO handover events configured; skipping MeasConfig", ue->ueId);
@@ -879,7 +901,7 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
                    ue->ueId, ue->sentMeasIdentities.size(), txId);
 
     // if conditional handover enabled, generate a CHO RRC message
-    if (m_config->handover.choEnabled)
+    if (activeHandover.choEnabled)
         processConditionalHandover(ue->ueId, "post-measconfig");
 }
 
@@ -902,7 +924,8 @@ void GnbRrcTask::evaluateHandoverDecision(int ueId, const std::string &eventType
     int bestNeighRsrp = ue->lastMeasReportRsrp;
     int servingRsrp = ue->lastServingRsrp;
 
-    const auto *eventConfig = findEventConfigByType(m_config->handover, eventType);
+    const auto &activeHandover = getActiveHandoverConfig(*m_config);
+    const auto *eventConfig = findEventConfigByType(activeHandover, eventType);
     if (!eventConfig)
     {
         m_logger->warn("UE[%d] HandoverEval: no config found for event=%s", ue->ueId, eventType.c_str());
@@ -1003,8 +1026,10 @@ void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventTy
     if (ue->choPreparationPending)
         return;
 
-    // cho event groups from the config
-    auto choGroups = selectChoEventGroups(m_config->handover, m_logger.get());
+    const auto &activeHandover = getActiveHandoverConfig(*m_config);
+
+    // cho event groups from the active profile config
+    auto choGroups = selectChoEventGroups(activeHandover, m_logger.get());
     if (choGroups.empty())
     {
         m_logger->warn("UE[%d] CHO prepare skipped (%s): no CHO event groups configured", ueId, eventType.c_str()); 
@@ -1019,22 +1044,7 @@ void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventTy
         return;
     }
 
-    // Step 1 - identify neighbor cells that are possible handover targets.
-    // For NTN operation, we want targets that are prioritized by a matching criteria, such as
-    // duration of time in serving area when we expect a handover will happen.
-    //  For now, we just select a neighbor that is different from the serving cell.
-
-    const int servingPci = getServingPciFromNci(m_config->nci);
-    // prioritizedNeighbors is sorted vector of (neighborCell, score) pairs,
-    //   where score is an integer representing the priority of that neighbor as a handover target (lower is better).
-    auto prioritizedNeighbors = prioritizeNeighbors(*m_config, servingPci);
-    if (prioritizedNeighbors.empty())
-    {
-        m_logger->warn("UE[%d] CHO prepare skipped (%s): neighbor list is empty", ueId, eventType.c_str());
-        return;
-    }
-
-    // Step 2 - map the cho event groups to stored MeasIds
+    // Step 1 - map the cho event groups to stored MeasIds.
 
     const GnbHandoverConfig::GnbChoEventConfig *selectedGroup = nullptr;
     std::vector<long> selectedMeasIds{};
@@ -1055,6 +1065,47 @@ void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventTy
         m_logger->warn("UE[%d] CHO prepare skipped (%s): no CHO group maps to configured MeasId set",
                        ueId,
                        eventType.c_str());
+        return;
+    }
+
+    // Step 2 - identify neighbor cells that are possible handover targets.
+    
+    const int servingPci = getServingPciFromNci(m_config->nci);
+
+    // prioritizeNeighbors is a sorted vector of (neighborCell, score) pairs, where score is an integer
+    //  indicating priority of as a handover target (lower is better)
+    auto prioritizedNeighbors = prioritizeNeighbors(*m_config, servingPci);
+
+    // if the config has specified a specific targetCellId, then filter the prioritized neighbors to only that cell (if it's in the neighbor list)
+    std::optional<int64_t> explicitTargetNci{};
+    for (const auto &event : selectedGroup->events)
+    {
+        if (event.eventType == "D1" && !event.targetCellCalculated && event.targetCellId.has_value())
+        {
+            explicitTargetNci = event.targetCellId;
+            break;
+        }
+    }
+
+    if (explicitTargetNci.has_value())
+    {
+        const auto *targetNeighbor = findNeighborByNci(*m_config, *explicitTargetNci);
+        if (!targetNeighbor)
+        {
+            m_logger->warn("UE[%d] CHO prepare skipped (%s): targetCellId=0x%llx not in neighborList",
+                           ueId,
+                           eventType.c_str(),
+                           static_cast<long long>(*explicitTargetNci));
+            return;
+        }
+
+        prioritizedNeighbors.clear();
+        prioritizedNeighbors.emplace_back(targetNeighbor, 1);
+    }
+
+    if (prioritizedNeighbors.empty())
+    {
+        m_logger->warn("UE[%d] CHO prepare skipped (%s): neighbor list is empty", ueId, eventType.c_str());
         return;
     }
 
@@ -1404,7 +1455,8 @@ OctetString GnbRrcTask::getHandoverMeasConfigRrcReconfiguration(int ueId) const
     mc->reportConfigToAddModList = asn::New<ASN_RRC_ReportConfigToAddModList>();
     mc->measIdToAddModList = asn::New<ASN_RRC_MeasIdToAddModList>();
 
-    auto selectedEvents = selectRrcMeasEvents(m_config->handover, m_logger.get());
+    const auto &activeHandover = getActiveHandoverConfig(*m_config);
+    auto selectedEvents = selectRrcMeasEvents(activeHandover, m_logger.get());
 
     for (const auto &item : ctx->sentMeasIdentities)
     {
@@ -1416,7 +1468,7 @@ OctetString GnbRrcTask::getHandoverMeasConfigRrcReconfiguration(int ueId) const
                 eventConfig = selectedEvents[eventIndex];
         }
         if (!eventConfig)
-            eventConfig = findEventConfigByType(m_config->handover, item.eventType);
+            eventConfig = findEventConfigByType(activeHandover, item.eventType);
         if (!eventConfig || !isRrcMeasEventType(eventConfig->eventType))
             continue;
 

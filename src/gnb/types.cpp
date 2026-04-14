@@ -61,11 +61,16 @@ Json ToJson(const GnbConfig &v)
             {"hysteresis-m", event.hysteresisM},
             {"ttt-ms", event.tttMs},
             {"distance-type", event.distanceType},
+            {"target-cell-calculated", event.targetCellCalculated},
         });
+
+        if (event.targetCellId)
+            eventJson.put("target-cell-id", *event.targetCellId);
 
         if (event.referencePosition)
         {
             eventJson.put("reference-position", Json::Obj({
+                {"use-current-position", event.referencePosition->useCurrPosition},
                 {"latitude", std::to_string(event.referencePosition->latitude)},
                 {"longitude", std::to_string(event.referencePosition->longitude)},
                 {"altitude", std::to_string(event.referencePosition->altitude)},
@@ -100,11 +105,16 @@ Json ToJson(const GnbConfig &v)
                 {"hysteresis-m", event.hysteresisM},
                 {"ttt-ms", event.tttMs},
                 {"distance-type", event.distanceType},
+                {"target-cell-calculated", event.targetCellCalculated},
             });
+
+            if (event.targetCellId)
+                eventJson.put("target-cell-id", *event.targetCellId);
 
             if (event.referencePosition)
             {
                 eventJson.put("reference-position", Json::Obj({
+                    {"use-current-position", event.referencePosition->useCurrPosition},
                     {"latitude", std::to_string(event.referencePosition->latitude)},
                     {"longitude", std::to_string(event.referencePosition->longitude)},
                     {"altitude", std::to_string(event.referencePosition->altitude)},
@@ -179,9 +189,13 @@ Json ToJson(const GnbConfig &v)
         {"gtp-ip", v.gtpIp},
         {"paging-drx", ToJson(v.pagingDrx)},
         {"ignore-sctp-id", v.ignoreStreamIds},
-        {"rsrp", Json::Obj({
-            {"db-value", v.rsrp.dbValue},
-            {"update-mode", ToString(v.rsrp.updateMode)},
+        {"rf-link", Json::Obj({
+            {"update-mode", ToString(v.rfLink.updateMode)},
+            {"rsrp-db-value", v.rfLink.rsrpDbValue},
+            {"carrier-frequency-hz", std::to_string(v.rfLink.carrFrequencyHz)},
+            {"tx-power-dbm", std::to_string(v.rfLink.txPowerDbm)},
+            {"tx-gain-dbi", std::to_string(v.rfLink.txGainDbi)},
+            {"ue-rx-gain-dbi", std::to_string(v.rfLink.ueRxGainDbi)},
         })},
         {"handover", Json::Obj({
             {"cho-enabled", v.handover.choEnabled},
@@ -197,6 +211,7 @@ Json ToJson(const GnbConfig &v)
             })},
         })},
         {"ntn", Json::Obj({
+            {"ntn-enabled", v.ntn.ntnEnabled},
             {"sib19", std::move(sib19Json)},
         })},
         {"neighbor-list", std::move(neighborEntries)},

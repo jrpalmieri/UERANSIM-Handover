@@ -23,12 +23,13 @@ slices:
 # Indicates whether or not SCTP stream number errors should be ignored.
 ignoreStreamIds: true
 
-# RSRP configuration:
-#   dbValue: initial RSRP value (dBm) used in Fixed mode and as the starting fixed value
-#   updateMode: Calculated (distance/path-loss based) or Fixed (ignore distance)
-rsrp:
-  dbValue: -60
-  updateMode: Fixed
+# RF link configuration.
+rfLink:
+  updateMode: Calculated
+  carrFrequencyHz: 10.7e9
+  txPowerDbm: 43.0
+  txGainDbi: 35.0
+  ueRxGainDbi: 25.0
 
 # RLS loop/timer settings (ms).
 # HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT.
@@ -60,20 +61,9 @@ position:
 #  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
   altitude: 800.0      # meters above ellipsoid (typical for terrestrial gNB)
 
-
-
-# Satellite simulation: set to true to enable NTN satellite mode
-satSim: true
-
-# Satellite link budget parameters (used when satSim is true)
-satLink:
-  frequencyHz: 10.7e9   # Ku-band carrier frequency (Hz)
-  txPowerDbW: 43.0       # Radiated (transmit) power (dBW)
-  txGainDbi: 35.0        # Transmit antenna gain (dBi)
-  rxGainDbi: 25.0        # Receive antenna gain (dBi)
-
 # NTN configuration
 ntn:
+  ntnEnabled: true
   # controls how SIB19 is configured/sent
   sib19:
     # sib19on must be true to enable SIB19 transmissions

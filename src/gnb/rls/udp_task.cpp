@@ -34,7 +34,7 @@ RlsUdpTask::RlsUdpTask(TaskBase *base, uint64_t sti,
       m_cellId{static_cast<uint32_t>(base->config->getCellId())},
       m_phyLocation{phyLocation}, m_lastLoop{},
     m_stiToUe{}, m_ueMap{}, m_newIdCounter{},
-        m_fixedRsrp{base->config->rsrp.dbValue},
+                m_fixedRsrp{base->config->rfLink.rsrpDbValue},
         m_loopCounter{base->config->rls.loopCounter},
         m_receiveTimeout{base->config->rls.receiveTimeout},
         m_heartbeatThreshold{base->config->rls.getHeartbeatThreshold()}
@@ -89,6 +89,8 @@ void RlsUdpTask::receiveRlsPdu(
     const InetAddress &addr,
     std::unique_ptr<rls::RlsMessage> &&msg)
 {
+    // DEPRECATED - Satellite position updates are received through the command interface, not the UE-GNB UDP interface, so this message type is no longer used.  
+    //      However, we keep the handling code here for now in case we want to re-enable satellite position updates through the UDP interface in the future.
     // Satellite position updates are handled internally and not forwarded to the control task
     if (msg->msgType == rls::EMessageType::SATELLITE_POSITION_UPDATE)
     {
@@ -96,6 +98,8 @@ void RlsUdpTask::receiveRlsPdu(
         return;
     }
 
+    // DEPRECATED - RSRP updates from the gNB are received through the command interface, not the UE-GNB UDP interface, so this message type is no longer used.
+    //      However, we keep the handling code here for now in case we want to re-enable RSRP updates through the UDP interface in the future.
     // RF data messages are handled internally and not forwarded to the control task
     if (msg->msgType == rls::EMessageType::GNB_RF_DATA)
     {
@@ -103,11 +107,12 @@ void RlsUdpTask::receiveRlsPdu(
         return;
     }
 
-    // UEs provide heartbeat messages to on-net gnbs with their STI and simulated position.
+    // UEs provide heartbeat messages to on-net GNBs with their STI and simulated position.
     //   The gNB responds with a simulated RSRP value. The gNB also tracks the UE's address 
     //   and last seen time.
     // Note that in this implementation, heartbeats do NOT cause registration.  UEs must send
-    //   an RRCSetupRequest to cause a registration.
+    //   an RRCSetupRequest to cause a registration.  Instead, heartbeats allow for simulation of RF conditions
+    //   experienced by UEs, and allow for setup of the UDP connections between UEs and GNBs.
     if (msg->msgType == rls::EMessageType::HEARTBEAT)
     {
         auto &hb = static_cast<const rls::RlsHeartBeat &>(*msg);
@@ -134,8 +139,7 @@ void RlsUdpTask::receiveRlsPdu(
                     m_ueMap[ueId].cRnti = static_cast<int>(msg->senderId2);
                 m_ueMap[ueId].lastSeen = utils::CurrentTimeMillis();
             }
-            // if the STI is not in the stiToUE Map, add it and assign it a UE ID.
-            // push a SIGNAL_DETECTED message to the control task with the new UE ID.
+            // If the STI is not in the stiToUE Map, add it and assign it a UE ID.
             else
             {
                 // although this ternary allows for a gnb-generated UEID, in practice this should
@@ -151,8 +155,11 @@ void RlsUdpTask::receiveRlsPdu(
             }
         }
 
-        // only send the SIGNAL_DETECTED message when the UE is newly detected.
-        //  SIGNAL_DETECTED only sends the MIB/SIB, so this is OK for now to reduce traffic.
+        // For newly seen UEs, push a SIGNAL_DETECTED message to the control task with the new UE ID, which will
+        //    trigger sending of the MIB/SIB1 to the UE.
+        //    Note that in real networks, the MIB/SIB1 are sent periodically to handle UE movement and RF channel variability.
+        //      In this implementation, we only send them once upon initial detection to simplify the implementation and 
+        //      reduce unnecessary message sending, since the simulated RF channel is stable.
         if (isNewUe)
         {
             auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::SIGNAL_DETECTED);
@@ -161,7 +168,7 @@ void RlsUdpTask::receiveRlsPdu(
             m_ctlTask->push(std::move(w));
         }
 
-        // send a HEARTBEAT_ACK back to the sender with the simulated signal strength in dBm
+        // Send a HEARTBEAT_ACK back to the sender with the simulated signal strength in dBm
         rls::RlsHeartBeatAck ack{m_sti, m_cellId};
         ack.dbm = dbm;
 
@@ -169,6 +176,7 @@ void RlsUdpTask::receiveRlsPdu(
         return;
     }
 
+    // Derive the UeID and C-RNTI from the message's STI and senderId2, respectively, and update the UE info with the new C-RNTI if provided.
     int ueId = 0;
     int cRnti = static_cast<int>(msg->senderId2);
     {
@@ -186,7 +194,8 @@ void RlsUdpTask::receiveRlsPdu(
             m_ueMap[ueId].cRnti = cRnti;
     }
 
-    // forward the message to the control task
+    // If we get here, this is a non-heartbeat message from a known UE. 
+    //  Forward it to the control task for processing, including the UE ID and C-RNTI in the forwarded message.
     auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RECEIVE_RLS_MESSAGE);
     w->ueId = ueId;
     w->msg = std::move(msg);
@@ -269,21 +278,32 @@ void RlsUdpTask::send(int ueId, const rls::RlsMessage &msg)
     sendRlsPdu(peer, msg);
 }
 
+/**
+ * @brief Calculates the RSRP value in dBm for a given UE position based on the gNB's configuration.
+ * For non-NTN configurations, this is the path loss based on the locations of the UE and gnb using 
+ * terrestrial network path loss models.
+ * For NTN configurations, this is the path loss based on the locations of the UE and the GNB's satellite using
+ * satellite path loss models.
+ * 
+ * @param uePos UE's current position in lat/lon/alt, which is provided by the UE in the heartbeat message
+ * @return int 
+ */
 int RlsUdpTask::computeDbm(const GeoPosition &uePos)
 {
     auto *cfg = m_base->config;
+    auto rfLink = cfg->rfLink.toSatelliteLinkConfig();
 
-    if (cfg->rsrp.updateMode == EGnbRsrpMode::Fixed)
+    if (cfg->rfLink.updateMode == EGnbRsrpMode::Fixed)
         return m_fixedRsrp;
 
-    if (cfg->satSim && m_base->satState)
+    if (cfg->ntn.ntnEnabled && m_base->satState)
     {
         EcefPosition satEcef{};
         int64_t posTime{};
         if (m_base->satState->getPosition(satEcef, posTime))
         {
             return SatelliteSimulatedDbm(
-                satEcef, uePos, cfg->satLink);
+                satEcef, uePos, rfLink);
         }
         // No TLE received yet - fall back to static position
     }
@@ -291,17 +311,17 @@ int RlsUdpTask::computeDbm(const GeoPosition &uePos)
 
     // Terrestrial mode (or satellite fallback)
     return TerrestrialSimulatedDbm(
-        cfg->geoLocation, uePos, cfg->satLink);
+        cfg->geoLocation, uePos, rfLink);
 }
 
 void RlsUdpTask::handleSatPositionUpdate(
     const rls::RlsMessage &msg)
 {
-    if (!m_base->config->satSim || !m_base->satState)
+    if (!m_base->config->ntn.ntnEnabled || !m_base->satState)
     {
         m_logger->warn(
             "Received SATELLITE_POSITION_UPDATE but "
-            "satSim is disabled — ignoring");
+            "ntn.ntnEnabled is false — ignoring");
         return;
     }
 
@@ -340,7 +360,7 @@ void RlsUdpTask::handleRsrpUpdate(
 
     m_fixedRsrp = clampedRsrp;
 
-    if (m_base->config->rsrp.updateMode == EGnbRsrpMode::Fixed)
+    if (m_base->config->rfLink.updateMode == EGnbRsrpMode::Fixed)
     {
         m_logger->debug(
             "Updated fixed RSRP to %d dBm from GNB_RF_DATA",
@@ -349,7 +369,7 @@ void RlsUdpTask::handleRsrpUpdate(
     else
     {
         m_logger->debug(
-            "Stored GNB_RF_DATA rsrp=%d dBm but rsrp.updateMode=Calculated keeps path loss active",
+            "Stored GNB_RF_DATA rsrp=%d dBm but rfLink.updateMode=Calculated keeps path loss active",
             m_fixedRsrp);
     }
 }

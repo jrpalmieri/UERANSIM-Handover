@@ -23,12 +23,14 @@ slices:
 # Indicates whether or not SCTP stream number errors should be ignored.
 ignoreStreamIds: true
 
-# RSRP configuration:
-#   dbValue: initial RSRP value (dBm) used in Fixed mode and as the starting fixed value
-#   updateMode: Calculated (distance/path-loss based) or Fixed (ignore distance)
-rsrp:
-  dbValue: -60
+# RF link configuration.
+rfLink:
   updateMode: Fixed
+  rsrpDbValue: -60
+  carrFrequencyHz: 3.5e9
+  txPowerDbm: 15.0
+  txGainDbi: 15.0
+  ueRxGainDbi: 0.0
 
 # RLS loop/timer settings (ms).
 #  If these are omitted, default values will be used:
@@ -65,17 +67,14 @@ position:
 #  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
   altitude: 800.0      # meters above ellipsoid (typical for terrestrial gNB)
 
-
-
-# Satellite simulation: set to true to enable NTN satellite mode
-satSim: false
-
-# Satellite link budget parameters (used when satSim is true)
-satLink:
-  frequencyHz: 10.7e9   # Ku-band carrier frequency (Hz)
-  txPowerDbW: 43.0       # Radiated (transmit) power (dBW)
-  txGainDbi: 35.0        # Transmit antenna gain (dBi)
-  rxGainDbi: 25.0        # Receive antenna gain (dBi)
+# Xn interface configuration (used for handover signaling with neighbor cells that support Xn handover)
+xn:
+  enabled: false
+  bindAddress: 127.0.0.1
+  bindPort: 9487
+  requestTimeoutMs: 1000
+  contextTtlMs: 5000
+  fallbackToN2: true
 
 # Handover measurement/CHO configuration.
 # events: classic (non-CHO) events always sent to UEs.
@@ -104,16 +103,9 @@ handover:
           a3OffsetDb: 3
           hysteresisDb: 1
           tttMs: 1000
-  xn:
-    enabled: false
-    bindAddress: 127.0.0.1
-    bindPort: 9487
-    requestTimeoutMs: 1000
-    contextTtlMs: 5000
-    fallbackToN2: true
-        
 # NTN configuration
 ntn:
+  ntnEnabled: false
   # controls how SIB19 is configured/sent
   sib19:
     # sib19on must be true to enable SIB19 transmissions

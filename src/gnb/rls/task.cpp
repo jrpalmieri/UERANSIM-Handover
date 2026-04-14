@@ -27,7 +27,7 @@ GnbRlsTask::GnbRlsTask(TaskBase *base) : m_base{base}
     m_ctlTask = new RlsControlTask(base, m_sti);
 
     m_satPosTask = nullptr;
-    if (base->config->satSim && base->satState)
+    if (base->config->ntn.ntnEnabled && base->satState)
     {
         m_satPosTask = new SatPositionTask(
             base->logBase, base->satState);

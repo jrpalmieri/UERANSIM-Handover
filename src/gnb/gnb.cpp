@@ -30,7 +30,7 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     base->nodeListener = nodeListener;
     base->cliCallbackTask = cliCallbackTask;
 
-    if (config->satSim)
+    if (config->ntn.ntnEnabled)
         base->satState = new SatelliteState();
 
     base->appTask = new GnbAppTask(base);

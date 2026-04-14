@@ -419,9 +419,10 @@ struct GnbAmfConfig
 struct SatelliteLinkConfig
 {
     double frequencyHz{10.7e9};  // carrier frequency in Hz
-    double txPowerDbW{43.0};     // radiated power in dBW
+    double txPowerDbm{43.0};     // radiated power in dBm
     double txGainDbi{35.0};      // transmit antenna gain in dBi
-    double rxGainDbi{25.0};      // receive antenna gain in dBi
+    double ueRxGainDbi{25.0};    // UE receive antenna gain in dBi
+    
 };
 
 struct SIB19Config
@@ -437,11 +438,6 @@ struct SIB19Config
     std::optional<int32_t> cellSpecificKoffset{};
     std::optional<int32_t> polarization{};
     std::optional<int32_t> taDrift{};
-};
-
-struct NtnConfig
-{
-    SIB19Config sib19{};
 };
 
 struct TruePositionVelocity
@@ -466,6 +462,26 @@ enum class EHandoverInterface
 {
     N2,
     Xn,
+};
+
+struct GnbRfLinkConfig
+{
+    EGnbRsrpMode updateMode{EGnbRsrpMode::Calculated};
+    int rsrpDbValue{-120};
+    double carrFrequencyHz{10.7e9};
+    double txPowerDbm{43.0};
+    double txGainDbi{35.0};
+    double ueRxGainDbi{25.0};
+
+    [[nodiscard]] SatelliteLinkConfig toSatelliteLinkConfig() const
+    {
+        SatelliteLinkConfig cfg{};
+        cfg.frequencyHz = carrFrequencyHz;
+        cfg.txPowerDbm = txPowerDbm;
+        cfg.txGainDbi = txGainDbi;
+        cfg.ueRxGainDbi = ueRxGainDbi;
+        return cfg;
+    }
 };
 
 struct GnbNeighborConfig
@@ -514,6 +530,7 @@ struct GnbHandoverConfig
 {
     struct GnbHandoverReferencePosition
     {
+        bool useCurrPosition{false};
         double latitude{};
         double longitude{};
         double altitude{};
@@ -531,6 +548,8 @@ struct GnbHandoverConfig
         int hysteresisM{0};
         int tttMs{100};
         std::string distanceType{"nadir"};
+        bool targetCellCalculated{true};
+        std::optional<int64_t> targetCellId{};
         std::optional<GnbHandoverReferencePosition> referencePosition{};
         std::optional<EcefPosition> referencePositionEcef{};
     };
@@ -554,6 +573,13 @@ struct GnbHandoverConfig
     std::vector<GnbHandoverEventConfig> events{{}};
     std::vector<GnbChoEventConfig> choEvents{};
     GnbXnConfig xn{};
+};
+
+struct NtnConfig
+{
+    bool ntnEnabled{false};
+    SIB19Config sib19{};
+    GnbHandoverConfig ntnHandover{};
 };
 
 struct GnbRlsConfig
@@ -583,14 +609,11 @@ struct GnbConfig
     std::string gtpIp{};
     std::optional<std::string> gtpAdvertiseIp{};
     bool ignoreStreamIds{};
-    GnbRsrpConfig rsrp{};
+    GnbRfLinkConfig rfLink{};
     GnbRlsConfig rls{};
     GnbHandoverConfig handover{};
     std::vector<GnbNeighborConfig> neighborList{};
 
-    /* Satellite simulation config */
-    bool satSim{false};
-    SatelliteLinkConfig satLink{};
     NtnConfig ntn{};
 
     /* Assigned by program */
@@ -639,7 +662,7 @@ struct TaskBase
     GnbRlsTask *rlsTask{};
     XnTask *xnTask{};
 
-    SatelliteState *satState{};  // nullptr when satSim=false
+    SatelliteState *satState{};  // nullptr when NTN satellite mode is disabled
 };
 
 Json ToJson(const GnbStatusInfo &v);

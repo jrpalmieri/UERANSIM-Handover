@@ -22,12 +22,31 @@ slices:
 # Indicates whether or not SCTP stream number errors should be ignored.
 ignoreStreamIds: true
 
-# RSRP configuration:
+# RSRP configuration:  (DEPRECATED)
 #   dbValue: initial RSRP value (dBm) used in Fixed mode and as the starting fixed value
 #   updateMode: Calculated (distance/path-loss based) or Fixed (ignore distance)
-rsrp:
-  dbValue: -120
+#rsrp:
+#  dbValue: -120
+#  updateMode: Calculated
+
+# rf link parameters to calculate RSRP values sent to UEs
+#   if updateMode is "Fixed", only the provided rsrpDbValue is used and the other parameters are ignored.
+#     Note: this value can be manually changed during operation through the command interface to simulate changes in RF conditions.
+#   if updateMode is "Calculated", the RSRP is calculated  using the carrier frequency, tx power, and antenna gains.
+rfLink:
+  # updateMode: Fixed
+  # rsrpDbValue: -120
   updateMode: Calculated
+  # typical values for a LEO satellite gNB, which can be adjusted as needed for different scenarios
+  carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
+  txPowerDbm: 43.0          # Radiated (transmit) power (dBm)
+  txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
+  ueRxGainDbi: 25.0         # UE Receive antenna gain (dBi)
+  # typical values for a terrestrial gNB (macro), which can be adjusted as needed for different scenarios
+  # carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
+  # txPowerDbm: 15.0          # Radiated (transmit) power (dBm)
+  # txGainDbi: 15.0           # gNB Transmit antenna gain (dBi)
+  # ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
 
 # RLS loop/timer settings (ms).
 #  If these are omitted, default values will be used:
@@ -36,49 +55,95 @@ rsrp:
 #   TIMER_PERIOD_ACK_SEND: 1500
 #   TIMER_PERIOD_ACK_CONTROL: 2250
 # (HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT).
+# Ensure these values match the values set for the UE, otherwise there will be timeout issues causing UE registration flapping.
 rls:
   LOOP_COUNTER: 200
   RECEIVE_TIMEOUT: 100
   TIMER_PERIOD_ACK_SEND: 300
   TIMER_PERIOD_ACK_CONTROL: 500
 
+# gNB geographic position (lat/lon/alt, WGS-84)
+# Used as the static terrestrial position or as fallback
+#     when no position information has been received in satellite (NTN) mode
+position:
+  latitude: 33.7490     # degrees North
+  longitude: -84.3880   # degrees East
+#  altitude: 550000.0    # meters above Earth surface ellipsoid (typical LEO orbit - 550km)
+  altitude: 500.0      # meters above Earth surface ellipsoid (typical for terrestrial gNB macro cell)
+
+
+# Neighbor cells for handover
+#   Note: these can be updated at runtime through the command interface to simulate changes in neighbor cells.
+neighborList:
+  - nci: '0x000000020'
+    idLength: 32
+    tac: 1
+    ipAddress: 127.0.0.2
+    # interface to use for handover signaling with this neighbor (N2 or Xn).
+    handoverInterface: N2
+  - nci: '0x000000030'
+    idLength: 32
+    tac: 1
+    ipAddress: 127.0.0.3
+    # interface to use for handover signaling with this neighbor (N2 or Xn).
+    handoverInterface: N2
+
+# Xn interface configuration (used for handover signaling with neighbor cells that support Xn handover)
+xn:
+  enabled: false
+  bindAddress: 127.0.0.1
+  bindPort: 9487
+  requestTimeoutMs: 1000
+  contextTtlMs: 5000
+  fallbackToN2: true
+
+
 # Handover measurement/CHO configuration.
 # events: classic (non-CHO) events always sent to UEs.
+# if choEnbaled is true, then Conditional Handover (CHO) events in choEvents will also be sent to UEs.
 # choEvents: CHO condition groups (AND within group).
 # CHO priority is derived from target candidate ranking (best=1).
 handover:
-  choEnabled: false
   events:
     - eventType: A3
       a3OffsetDb: 3
       hysteresisDb: 1
       tttMs: 200
+  choEnabled: false
   choEvents:
     - events:
-        - eventType: D1
-          distanceThreshold: 1200
-          distanceType: nadir
-          hysteresisM: 100
-          tttMs: 1000
-          # Required when distanceType is fixed.
-          referencePosition:
-            latitude: 37.7749
-            longitude: -122.4194
-            altitude: 100
-        - eventType: A3
-          a3OffsetDb: 3
-          hysteresisDb: 1
-          tttMs: 1000
-  xn:
-    enabled: false
-    bindAddress: 127.0.0.1
-    bindPort: 9487
-    requestTimeoutMs: 1000
-    contextTtlMs: 5000
-    fallbackToN2: true
+      - eventType: D1
+        distanceThreshold: 1200
+        # can be "fixed" (absolute distance to reference position) or "nadir" (distance to satellite nadir point)
+        #   nadir requires satellite position information at the UE, which is provided in SIB19 messages
+        distanceType: fixed
+        hysteresisM: 100
+        tttMs: 1000
+        # targetCellId is either a specific cell ID (e.g. '0x000000020') which must be on the neighbor list
+        #   or "calculated", which causes the gNB to use the cell ID of the best candidate neighbor cell based on distance
+        targetCellId: '0x000000020'
+        # Required when distanceType is fixed.
+        referencePosition:
+          # set this to true to use the gNB's current position as the reference position for D1 event.
+          #    (any lat/long/alt values provided here will be ignored)
+          # if false, the reference position will be set to the provided latitude/longitude/altitude values.
+          useCurrPosition: true
+          latitude: 37.7749
+          longitude: -122.4194
+          altitude: 100
+      - eventType: A3
+        a3OffsetDb: 3
+        hysteresisDb: 1
+        tttMs: 1000
         
 # NTN configuration
 ntn:
+  # setting ntnEnabled to false will ignore all other ntn parameters
+  # set to true to enable NTN satellite mode, which will:
+  #   - cause the gNB to calculate RSRP based on satellite link budget
+  #   - send SIB19 messages to the UE so it can use the satellite position
+  #   - send CHO measurement events based on satellite-specific conditions (e.g. distance to satellite)
+  ntnEnabled: false
   # controls how SIB19 is configured/sent
   sib19:
     # sib19on must be true to enable SIB19 transmissions
@@ -94,3 +159,36 @@ ntn:
     # cellSpecificKoffset: 0
     # polarization: 0          # 0: RHCP, 1: LHCP, 2: LINEAR
     # taDrift: 0
+  ntnHandover:
+    events:
+      - eventType: A3
+        a3OffsetDb: 3
+        hysteresisDb: 1
+        tttMs: 200
+    choEnabled: false
+    choEvents:
+      - events:
+        - eventType: D1
+          distanceThreshold: 1200
+          # can be "fixed" (absolute distance to reference position) or "nadir" (distance to satellite nadir point)
+          #   nadir requires satellite position information at the UE, which is provided in SIB19 messages
+          distanceType: nadir
+          hysteresisM: 100
+          tttMs: 1000
+          # targetCellId is either a specific cell ID (e.g. '0x000000020') which must be on the neighbor list
+          #   or "calculated", which causes the gNB to use the cell ID of the best candidate neighbor cell based on distance
+          #   for NTN, this always be calculated, since the target cell will change based on satellite movement
+          targetCellId: calculated
+          # Required when distanceType is fixed.
+          referencePosition:
+            # set this to true to use the gNB's current position as the reference position for D1 event.
+            #    (any lat/long/alt values provided here will be ignored)
+            # if false, the reference position will be set to the provided latitude/longitude/altitude values.
+            useCurrPosition: true
+            latitude: 37.7749
+            longitude: -122.4194
+            altitude: 100
+        - eventType: A3
+          a3OffsetDb: 3
+          hysteresisDb: 1
+          tttMs: 1000

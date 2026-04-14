@@ -116,6 +116,17 @@ class GnbProcess:
             "amfConfigs": [{"address": amf_addr, "port": amf_port}],
             "slices": slices,
             "ignoreStreamIds": ignore_stream_ids,
+            "rfLink": {
+                "updateMode": "Fixed",
+                "rsrpDbValue": -60,
+                "carrFrequencyHz": 3.5e9,
+                "txPowerDbm": 15.0,
+                "txGainDbi": 15.0,
+                "ueRxGainDbi": 0.0,
+            },
+            "ntn": {
+                "ntnEnabled": False,
+            },
         }
 
         self._tmp_dir = tempfile.mkdtemp(prefix="ueransim_gnb_test_")

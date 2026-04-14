@@ -22,12 +22,19 @@ slices:
 # Indicates whether or not SCTP stream number errors should be ignored.
 ignoreStreamIds: true
 
-# RSRP configuration:
-#   dbValue: initial RSRP value (dBm) used in Fixed mode and as the starting fixed value
-#   updateMode: Calculated (distance/path-loss based) or Fixed (ignore distance)
-rsrp:
-  dbValue: -60
+# RF link configuration.
+# In Fixed mode only rsrpDbValue is used.
+rfLink:
   updateMode: Fixed
+  rsrpDbValue: -60
+  carrFrequencyHz: 3.5e9
+  txPowerDbm: 15.0
+  txGainDbi: 15.0
+  ueRxGainDbi: 0.0
+
+# NTN configuration
+ntn:
+  ntnEnabled: false
 
 # RLS loop/timer settings (ms).
 # HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT.

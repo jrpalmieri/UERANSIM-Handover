@@ -33,20 +33,6 @@ tunNetmask: '255.255.255.0'
 gnbSearchList:
   - 127.0.0.1
 
-# RLS loop/timer settings (ms).
-# If not specified, default values will be used:
-#   LOOP_COUNTER: 1000
-#   RECEIVE_TIMEOUT: 200
-#   TIMER_PERIOD_ACK_SEND: 1500
-#   TIMER_PERIOD_ACK_CONTROL: 2250
-# If these are omitted, default values will be used.
-# HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT.
-rls:
-  LOOP_COUNTER: 200
-  RECEIVE_TIMEOUT: 100
-  TIMER_PERIOD_ACK_SEND: 300
-  TIMER_PERIOD_ACK_CONTROL: 500
-
 # UAC Access Identities Configuration
 uacAic:
   mps: false
@@ -91,6 +77,34 @@ ciphering:
   EA2: true
   EA3: true
 
+# Integrity protection maximum data rate for user plane
+integrityMaxRate:
+  uplink: 'full'
+  downlink: 'full'
+
+
+# RLS loop/timer settings (ms).
+# If not specified, default values will be used:
+#   LOOP_COUNTER: 1000
+#   RECEIVE_TIMEOUT: 200
+#   TIMER_PERIOD_ACK_SEND: 1500
+#   TIMER_PERIOD_ACK_CONTROL: 2250
+# If these are omitted, default values will be used.
+# HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT.
+rls:
+  LOOP_COUNTER: 200
+  RECEIVE_TIMEOUT: 100
+  TIMER_PERIOD_ACK_SEND: 300
+  TIMER_PERIOD_ACK_CONTROL: 500
+
+# UE position, specified in WGS-84 geographic coordinates (latitude, longitude, altitude).
+#   Sent to gNBs in RLS heartbeat messages.  Used to calculate RSRP returned in ACks (if enabled in gNB config)
+position:
+  latitude: 33.7490    # degrees North
+  longitude: -84.3880  # degrees East
+  altitude: 320.0      # meters above WGS-84 ellipsoid
+
+
 # Measurement Source Configuration (optional)
 # If not specified, the UE will use its internal RLS-simulated measurements by default
 measSource:
@@ -99,14 +113,5 @@ measSource:
   # For UDP measurement source: specify the local port to listen on for measurement messages
   udpPort: 7200
 
-# UE position (optional, for D1 distance-based CHO events)
-# Specified in WGS-84 geographic coordinates; automatically converted to ECEF.
-position:
-  latitude: 33.7490    # degrees North
-  longitude: -84.3880  # degrees East
-  altitude: 320.0      # meters above WGS-84 ellipsoid
 
-# Integrity protection maximum data rate for user plane
-integrityMaxRate:
-  uplink: 'full'
-  downlink: 'full'
+
