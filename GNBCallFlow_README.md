@@ -672,7 +672,7 @@ onLoop()
 │
 └─ NtsMessageType::GNB_CLI_COMMAND
    └─ GnbCmdHandler::handleCmd()           [cmd_handler.cpp]
-      └─ Dispatch CLI commands (status, info, amf-list, ue-list, etc.)
+   └─ Dispatch CLI commands (status, info, amf-list, ue-list, loc-pv, neighbors, etc.)
 ```
 
 ---

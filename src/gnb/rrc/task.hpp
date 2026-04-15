@@ -60,6 +60,7 @@ class GnbRrcTask : public NtsTask
     UacAiBarringSet m_aiBarringSet = {};
     bool m_intraFreqReselectAllowed = true;
     TruePositionVelocity m_truePositionVelocity{};
+    std::unordered_map<int, SatellitePositionVelocityEntry> m_satellitePvByPci{};
 
     friend class GnbCmdHandler;
 
@@ -74,6 +75,7 @@ class GnbRrcTask : public NtsTask
     bool addPendingHandover(int ueId, const HandoverPreparationInfo &handoverPrep,
                 OctetString &rrcContainer);
     void setTruePositionVelocity(const TruePositionVelocity &value);
+    void upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value);
 
   protected:
     void onStart() override;

@@ -429,6 +429,7 @@ struct SIB19Config
 {
     bool sib19On{false};
     int sib19TimingMs{1000};
+    int satLocUpdateThresholdMs{5000};
 
     int32_t kOffset{0};
     int64_t taCommon{0};
@@ -450,6 +451,19 @@ struct TruePositionVelocity
     double vy{};
     double vz{};
     int64_t epochMs{};
+};
+
+struct SatellitePositionVelocityEntry
+{
+    int pci{};
+    double x{};
+    double y{};
+    double z{};
+    double vx{};
+    double vy{};
+    double vz{};
+    int64_t epochMs{};
+    int64_t lastUpdatedMs{};
 };
 
 enum class EGnbRsrpMode

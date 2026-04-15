@@ -110,6 +110,93 @@ Before the gNB can serve any UE it must: read its configuration, instantiate all
 | 7 | CLI server begins accepting commands (unless `--disable-cmd`) | `src/gnb.cpp` |
 | 8 | `main()` enters infinite `Loop()` dispatching CLI messages | `src/gnb.cpp` |
 
+### Runtime CLI Example: Neighbor Updates
+
+The gNB supports runtime neighbor changes through:
+
+`neighbors <json-payload>`
+
+`mode` must be one of `replace`, `add`, or `remove`.
+
+- `replace`: replace all current neighbors with the provided list.
+- `add`: add neighbors from the provided list.
+- `remove`: remove neighbors that match by PCI (PCI is derived from `nci` and `idLength`).
+
+JSON fields for each neighbor entry align with config file fields:
+
+- Required for `replace` and `add`: `nci`, `idLength`, `tac`, `ipAddress`
+- Optional: `handoverInterface` (`N2` or `Xn`), `xnAddress`, `xnPort`
+- For `remove`, only `nci` and `idLength` are required.
+
+Examples with `nr-cli`:
+
+```bash
+# Replace full neighbor list
+nr-cli UERANSIM-gnb-286-1-1 -e \
+       'neighbors {"mode":"replace","neighbors":[{"nci":2,"idLength":32,"tac":1,"ipAddress":"127.0.0.2","handoverInterface":"N2"}]}'
+
+# Add one neighbor
+nr-cli UERANSIM-gnb-286-1-1 -e \
+       'neighbors {"mode":"add","neighbors":[{"nci":3,"idLength":32,"tac":1,"ipAddress":"127.0.0.3","handoverInterface":"Xn","xnAddress":"127.0.0.3","xnPort":9487}]}'
+
+# Remove one neighbor by PCI identity derived from nci/idLength
+nr-cli UERANSIM-gnb-286-1-1 -e 'neighbors {"mode":"remove","neighbors":[{"nci":2,"idLength":32}]}'
+```
+
+Quoting guidance:
+
+- Prefer wrapping the full CLI expression in single quotes on Linux/macOS shells.
+- Keep JSON compact (no unescaped inner single quotes).
+- If generating commands from Python, pass the full `-e` argument string directly via `subprocess.run`.
+
+### Runtime CLI Example: Multi-Satellite SIB19 Updates
+
+The gNB supports runtime satellite ephemeris updates for SIB19 through:
+
+`sat-loc-pv <json-payload>`
+
+`sat-loc-pv` semantics:
+
+- Upsert by PCI: if `pci` exists, overwrite it; otherwise insert a new record.
+- Fields in payload are required: `pci`, `x`, `y`, `z`, `vx`, `vy`, `vz`, `epochMs`.
+- Position is ECEF meters, velocity is ECEF m/s, and `epochMs` is Unix time in milliseconds.
+
+SIB19 broadcast behavior:
+
+- On each SIB19 timer tick, all satellite entries updated within the configured threshold are broadcast.
+- Entries older than threshold are removed before encoding.
+- Threshold is configured in YAML under `ntn.sib19.satLocUpdateThresholdMs`.
+
+Example YAML:
+
+```yaml
+ntn:
+       sib19:
+              sib19on: true
+              sib19timing: 200
+              satLocUpdateThresholdMs: 1000
+```
+
+Examples with `nr-cli`:
+
+```bash
+# Insert or update PCI 101
+nr-cli UERANSIM-gnb-286-1-1 -e \
+       'sat-loc-pv {"pci":101,"x":6871000,"y":100,"z":50,"vx":0,"vy":7450,"vz":0,"epochMs":1713091200000}'
+
+# Insert or update PCI 202
+nr-cli UERANSIM-gnb-286-1-1 -e \
+       'sat-loc-pv {"pci":202,"x":6871500,"y":120,"z":60,"vx":0,"vy":7445,"vz":0,"epochMs":1713091200100}'
+
+# Alternative: read payload from a file
+nr-cli UERANSIM-gnb-286-1-1 -e "sat-loc-pv $(cat sat-entry.json)"
+```
+
+Quoting guidance:
+
+- Prefer single quotes around the whole `-e` expression in Linux/macOS shells.
+- Keep JSON keys and string values in double quotes.
+
 ### Per-Task `onStart()` Actions
 
 | Task | `onStart()` Action |

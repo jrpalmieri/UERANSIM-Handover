@@ -31,6 +31,8 @@ struct GnbCliCommand
         UE_COUNT,
         UE_RELEASE_REQ,
         LOC_PV,
+        SAT_LOC_PV,
+        NEIGHBORS,
         VERSION,
     } present;
 
@@ -48,6 +50,12 @@ struct GnbCliCommand
     double velY{};
     double velZ{};
     int64_t epochMs{};
+
+    // SAT_LOC_PV
+    std::string satLocPvJson{};
+
+    // NEIGHBORS
+    std::string neighborsJson{};
 
     explicit GnbCliCommand(PR present) : present(present)
     {

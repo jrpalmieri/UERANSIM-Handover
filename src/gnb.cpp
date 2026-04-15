@@ -10,12 +10,12 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cctype>
-#include <unordered_set>
 #include <unordered_map>
 
 #include <unistd.h>
 
 #include <gnb/gnb.hpp>
+#include <gnb/neighbors.hpp>
 #include <lib/app/base_app.hpp>
 #include <lib/app/cli_base.hpp>
 #include <lib/app/cli_cmd.hpp>
@@ -262,22 +262,6 @@ ReadChoEvents(const YAML::Node &handoverNode,
     return out;
 }
 
-static nr::gnb::EHandoverInterface ReadHandoverInterface(const YAML::Node &node)
-{
-    auto value = node.as<std::string>();
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::toupper(ch));
-    });
-
-    if (value == "N2")
-        return nr::gnb::EHandoverInterface::N2;
-    if (value == "XN")
-        return nr::gnb::EHandoverInterface::Xn;
-
-    throw std::runtime_error(
-        "Field neighborList[].handoverInterface has invalid value, expected N2 or Xn");
-}
-
 static void ReadXnConfig(const YAML::Node &xn, nr::gnb::GnbHandoverConfig::GnbXnConfig &out)
 {
     if (yaml::HasField(xn, "enabled"))
@@ -470,32 +454,15 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
 
     if (yaml::HasField(config, "neighborList"))
     {
-        std::unordered_set<int> seenNeighborPci{};
-
-        for (const auto &neighborNode : yaml::GetSequence(config, "neighborList"))
+        auto sequence = yaml::GetSequence(config, "neighborList");
+        for (size_t i = 0; i < sequence.size(); i++)
         {
-            nr::gnb::GnbNeighborConfig neighbor{};
-            neighbor.nci = yaml::GetInt64(neighborNode, "nci", 0, 0xFFFFFFFFFll);
-            neighbor.idLength = yaml::GetInt32(neighborNode, "idLength", 22, 32);
-            neighbor.tac = yaml::GetInt32(neighborNode, "tac", 0, 0xFFFFFF);
-            neighbor.ipAddress = yaml::GetIpAddress(neighborNode, "ipAddress");
-
-            if (yaml::HasField(neighborNode, "handoverInterface"))
-                neighbor.handoverInterface = ReadHandoverInterface(neighborNode["handoverInterface"]);
-
-            if (yaml::HasField(neighborNode, "xnAddress"))
-                neighbor.xnAddress = yaml::GetIpAddress(neighborNode, "xnAddress");
-
-            if (yaml::HasField(neighborNode, "xnPort"))
-                neighbor.xnPort = static_cast<uint16_t>(yaml::GetInt32(neighborNode, "xnPort", 1, 65535));
-
-            auto pci = neighbor.getPci();
-            if (seenNeighborPci.count(pci) != 0)
-                throw std::runtime_error("neighborList contains duplicate PCI=" + std::to_string(pci));
-
-            seenNeighborPci.insert(pci);
-            result->neighborList.push_back(neighbor);
+            auto entryPath = "neighborList[" + std::to_string(i) + "]";
+            auto neighbor = nr::gnb::ReadNeighborConfig(sequence[i], true, entryPath);
+            result->neighborList.push_back(std::move(neighbor));
         }
+
+        nr::gnb::ValidateUniqueNeighborPci(result->neighborList, "neighborList");
     }
 
     if (yaml::HasField(config, "handover"))
@@ -528,6 +495,12 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
                 if (yaml::HasField(sib19, "sib19timing"))
                     result->ntn.sib19.sib19TimingMs =
                         yaml::GetInt32(sib19, "sib19timing", 50, std::nullopt);
+
+                if (yaml::HasField(sib19, "satLocUpdateThresholdMs"))
+                {
+                    result->ntn.sib19.satLocUpdateThresholdMs =
+                        yaml::GetInt32(sib19, "satLocUpdateThresholdMs", 1, std::nullopt);
+                }
 
                 if (yaml::HasField(sib19, "kOffset"))
                     result->ntn.sib19.kOffset =

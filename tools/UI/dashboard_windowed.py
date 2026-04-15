@@ -529,6 +529,7 @@ class WindowedDashboard:
         menubar.add_cascade(label="File", menu=file_menu)
 
         handover_menu = tk.Menu(menubar, tearoff=0)
+        handover_menu.add_command(label="Send gNB Position/Velocity", command=self._open_gnb_loc_pv_dialog)
         handover_menu.add_command(label="Program", command=self._open_handover_program_dialog)
         handover_menu.add_command(label="Stop Program", command=self._stop_handover_program)
         menubar.add_cascade(label="Handover", menu=handover_menu)
@@ -1828,6 +1829,143 @@ class WindowedDashboard:
             return
 
         self._inject_rsrp_value(key, dbm, source="manual")
+
+    @staticmethod
+    def _format_cli_float(value: float) -> str:
+        return f"{value:.12g}"
+
+    def _send_gnb_loc_pv(
+        self,
+        target_key: str,
+        x: float,
+        y: float,
+        z: float,
+        vx: float,
+        vy: float,
+        vz: float,
+        epoch_ms: int,
+    ) -> None:
+        node = self.node_names.get(target_key)
+        if not node:
+            msg = f"Unknown gNB target '{target_key}'"
+            self.inject_status_var.set(msg)
+            self.panes[target_key].append_log("[loc-pv] " + msg)
+            return
+
+        arg = ":".join(
+            [
+                self._format_cli_float(x),
+                self._format_cli_float(y),
+                self._format_cli_float(z),
+                self._format_cli_float(vx),
+                self._format_cli_float(vy),
+                self._format_cli_float(vz),
+                str(epoch_ms),
+            ]
+        )
+        cmd = f"loc-pv {arg}"
+        out = self._cli_exec(node, cmd)
+        if "error" in out:
+            msg = f"loc-pv failed for {target_key} ({node}): {out['error']}"
+            self.inject_status_var.set(msg)
+            self.panes[target_key].append_log("[loc-pv] " + msg)
+            return
+
+        msg = (
+            f"Sent loc-pv to {target_key} ({node}): "
+            f"pos=({self._format_cli_float(x)}, {self._format_cli_float(y)}, {self._format_cli_float(z)}) "
+            f"vel=({self._format_cli_float(vx)}, {self._format_cli_float(vy)}, {self._format_cli_float(vz)}) "
+            f"epoch={epoch_ms}"
+        )
+        self.inject_status_var.set(msg)
+        self.panes[target_key].append_log("[loc-pv] " + msg)
+
+    def _open_gnb_loc_pv_dialog(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Send gNB Position/Velocity")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frm = ttk.Frame(dialog, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        target_var = tk.StringVar(value=self.inject_target_var.get())
+        x_var = tk.StringVar(value="0")
+        y_var = tk.StringVar(value="0")
+        z_var = tk.StringVar(value="0")
+        vx_var = tk.StringVar(value="0")
+        vy_var = tk.StringVar(value="0")
+        vz_var = tk.StringVar(value="0")
+        epoch_var = tk.StringVar(value=str(int(time.time() * 1000)))
+
+        ttk.Label(frm, text="Target gNB:").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Combobox(
+            frm,
+            width=12,
+            state="readonly",
+            textvariable=target_var,
+            values=["gnb1", "gnb2"],
+        ).grid(row=0, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frm, text="X (m):").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=x_var, width=24).grid(row=1, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frm, text="Y (m):").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=y_var, width=24).grid(row=2, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frm, text="Z (m):").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=z_var, width=24).grid(row=3, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frm, text="Vx (m/s):").grid(row=4, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=vx_var, width=24).grid(row=4, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frm, text="Vy (m/s):").grid(row=5, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=vy_var, width=24).grid(row=5, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frm, text="Vz (m/s):").grid(row=6, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=vz_var, width=24).grid(row=6, column=1, sticky="ew", pady=4)
+
+        ttk.Label(frm, text="Epoch (ms):").grid(row=7, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=epoch_var, width=24).grid(row=7, column=1, sticky="ew", pady=4)
+
+        frm.grid_columnconfigure(1, weight=1)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=8, column=0, columnspan=2, sticky="e", pady=(10, 0))
+
+        def _on_now() -> None:
+            epoch_var.set(str(int(time.time() * 1000)))
+
+        def _on_send() -> None:
+            try:
+                x = float(x_var.get().strip())
+                y = float(y_var.get().strip())
+                z = float(z_var.get().strip())
+                vx = float(vx_var.get().strip())
+                vy = float(vy_var.get().strip())
+                vz = float(vz_var.get().strip())
+                epoch_ms = int(epoch_var.get().strip())
+                if epoch_ms < 0:
+                    raise ValueError("epoch")
+            except ValueError:
+                self.inject_status_var.set("Invalid gNB position/velocity inputs")
+                return
+
+            self._send_gnb_loc_pv(
+                target_key=target_var.get(),
+                x=x,
+                y=y,
+                z=z,
+                vx=vx,
+                vy=vy,
+                vz=vz,
+                epoch_ms=epoch_ms,
+            )
+            dialog.destroy()
+
+        ttk.Button(btns, text="Now", command=_on_now).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btns, text="Send", command=_on_send).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btns, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
 
     def _open_handover_program_dialog(self) -> None:
         dialog = tk.Toplevel(self.root)

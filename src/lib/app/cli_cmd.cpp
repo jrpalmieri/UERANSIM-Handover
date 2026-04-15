@@ -184,6 +184,9 @@ static OrderedMap<std::string, CmdEntry> g_gnbCmdEntries = {
     {"ue-release", {"Request a UE context release for the given UE", "<ue-id>", DefaultDesc, false}},
     {"loc-pv", {"Set true gNB location as ECEF position/velocity.  Format: x:y:z:vx:vy:vz:epoch-ms",
                   "<x:y:z:vx:vy:vz:epoch-ms>", DefaultDesc, true}},
+    {"sat-loc-pv", {"Upsert one satellite SIB19 position/velocity entry from JSON payload",
+                     "<json-payload>", DefaultDesc, true}},
+    {"neighbors", {"Update gNB neighbor list from JSON payload", "<json-payload>", DefaultDesc, true}},
     {"version", {"Show gNB version information", "", DefaultDesc, false}},
 };
 
@@ -270,6 +273,28 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
         if (!ParseLocPvArgument(options.getPositional(0), *cmd))
             CMD_ERR("Invalid format. Expected x:y:z:vx:vy:vz:epoch-ms")
 
+        return cmd;
+    }
+    else if (subCmd == "neighbors")
+    {
+        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::NEIGHBORS);
+        if (options.positionalCount() == 0)
+            CMD_ERR("JSON payload is expected")
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one JSON payload argument is expected")
+
+        cmd->neighborsJson = options.getPositional(0);
+        return cmd;
+    }
+    else if (subCmd == "sat-loc-pv")
+    {
+        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::SAT_LOC_PV);
+        if (options.positionalCount() == 0)
+            CMD_ERR("JSON payload is expected")
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one JSON payload argument is expected")
+
+        cmd->satLocPvJson = options.getPositional(0);
         return cmd;
     }
 

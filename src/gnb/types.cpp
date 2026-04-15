@@ -163,6 +163,7 @@ Json ToJson(const GnbConfig &v)
     Json sib19Json = Json::Obj({
         {"sib19-on", v.ntn.sib19.sib19On},
         {"sib19-timing-ms", v.ntn.sib19.sib19TimingMs},
+        {"sat-loc-update-threshold-ms", v.ntn.sib19.satLocUpdateThresholdMs},
         {"k-offset", v.ntn.sib19.kOffset},
         {"ta-common", v.ntn.sib19.taCommon},
         {"ta-common-drift", v.ntn.sib19.taCommonDrift},

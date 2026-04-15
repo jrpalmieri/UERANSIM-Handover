@@ -137,4 +137,9 @@ void GnbRrcTask::setTruePositionVelocity(const TruePositionVelocity &value)
     m_truePositionVelocity = value;
 }
 
+void GnbRrcTask::upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value)
+{
+    m_satellitePvByPci[value.pci] = value;
+}
+
 } // namespace nr::gnb

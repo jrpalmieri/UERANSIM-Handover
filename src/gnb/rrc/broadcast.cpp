@@ -28,10 +28,16 @@
 #include <asn/rrc/ASN_RRC_UAC-BarringPerCat.h>
 #include <asn/rrc/ASN_RRC_UAC-BarringPerCatList.h>
 
+#include <algorithm>
+
 namespace nr::gnb
 {
 
-static constexpr size_t SIB19_PDU_SIZE = 96;
+static constexpr uint8_t SIB19_PDU_VERSION = 2;
+static constexpr uint8_t SIB19_PDU_EPH_TYPE_POS_VEL = 0;
+static constexpr size_t SIB19_HEADER_SIZE = 8;
+static constexpr size_t SIB19_ENTRY_SIZE = 96;
+static constexpr uint32_t SIB19_MAX_ENTRIES = 256;
 
 template <typename T>
 static void WriteLe(std::vector<uint8_t> &buffer, size_t offset, const T &value)
@@ -138,44 +144,89 @@ void GnbRrcTask::triggerSib19Broadcast()
     if (!m_config->ntn.sib19.sib19On)
         return;
 
-    if (!m_truePositionVelocity.isValid)
-        return;
+    const int64_t nowMs = utils::CurrentTimeMillis();
+    const int64_t thresholdMs = std::max<int64_t>(1, m_config->ntn.sib19.satLocUpdateThresholdMs);
 
-    int64_t nowMs = utils::CurrentTimeMillis();
-    double dtSec = static_cast<double>(nowMs - m_truePositionVelocity.epochMs) / 1000.0;
+    for (auto it = m_satellitePvByPci.begin(); it != m_satellitePvByPci.end();)
+    {
+        int64_t ageMs = nowMs - it->second.lastUpdatedMs;
+        if (ageMs > thresholdMs)
+            it = m_satellitePvByPci.erase(it);
+        else
+            ++it;
+    }
 
-    double xNow = m_truePositionVelocity.x + m_truePositionVelocity.vx * dtSec;
-    double yNow = m_truePositionVelocity.y + m_truePositionVelocity.vy * dtSec;
-    double zNow = m_truePositionVelocity.z + m_truePositionVelocity.vz * dtSec;
+    std::vector<SatellitePositionVelocityEntry> entries{};
+    entries.reserve(m_satellitePvByPci.size() + 1);
+    for (const auto &item : m_satellitePvByPci)
+        entries.push_back(item.second);
 
-    std::vector<uint8_t> payload(SIB19_PDU_SIZE, 0);
-    payload[0] = 0; // EEphemerisType::POSITION_VELOCITY
+    if (entries.empty())
+    {
+        if (!m_truePositionVelocity.isValid)
+            return;
 
-    WriteLe(payload, 4, xNow);
-    WriteLe(payload, 12, yNow);
-    WriteLe(payload, 20, zNow);
-    WriteLe(payload, 28, m_truePositionVelocity.vx);
-    WriteLe(payload, 36, m_truePositionVelocity.vy);
-    WriteLe(payload, 44, m_truePositionVelocity.vz);
+        SatellitePositionVelocityEntry fallback{};
+        fallback.pci = m_config->getCellId();
+        fallback.x = m_truePositionVelocity.x;
+        fallback.y = m_truePositionVelocity.y;
+        fallback.z = m_truePositionVelocity.z;
+        fallback.vx = m_truePositionVelocity.vx;
+        fallback.vy = m_truePositionVelocity.vy;
+        fallback.vz = m_truePositionVelocity.vz;
+        fallback.epochMs = m_truePositionVelocity.epochMs;
+        fallback.lastUpdatedMs = nowMs;
+        entries.push_back(fallback);
+    }
+
+    std::sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) {
+        return a.pci < b.pci;
+    });
+
+    if (entries.size() > SIB19_MAX_ENTRIES)
+        entries.resize(SIB19_MAX_ENTRIES);
+
+    uint32_t entryCount = static_cast<uint32_t>(entries.size());
+    std::vector<uint8_t> payload(SIB19_HEADER_SIZE + entryCount * SIB19_ENTRY_SIZE, 0);
+    payload[0] = SIB19_PDU_VERSION;
+    payload[1] = SIB19_PDU_EPH_TYPE_POS_VEL;
+    WriteLe(payload, 4, entryCount);
 
     const auto &cfg = m_config->ntn.sib19;
-    int64_t epoch10ms = nowMs / 10;
-    WriteLe(payload, 52, epoch10ms);
-    WriteLe(payload, 60, cfg.kOffset);
-    WriteLe(payload, 64, cfg.taCommon);
-    WriteLe(payload, 72, cfg.taCommonDrift);
+    const int64_t epoch10ms = nowMs / 10;
+    const int32_t taDriftVar = cfg.taCommonDriftVariation.has_value() ? *cfg.taCommonDriftVariation : -1;
+    const int32_t ulSync = cfg.ulSyncValidityDuration.has_value() ? *cfg.ulSyncValidityDuration : -1;
+    const int32_t cellKOffset = cfg.cellSpecificKoffset.has_value() ? *cfg.cellSpecificKoffset : -1;
+    const int32_t polarization = cfg.polarization.has_value() ? *cfg.polarization : -1;
+    const int32_t taDriftTop = cfg.taDrift.has_value() ? *cfg.taDrift : INT32_MIN;
 
-    int32_t taDriftVar = cfg.taCommonDriftVariation.has_value() ? *cfg.taCommonDriftVariation : -1;
-    int32_t ulSync = cfg.ulSyncValidityDuration.has_value() ? *cfg.ulSyncValidityDuration : -1;
-    int32_t cellKOffset = cfg.cellSpecificKoffset.has_value() ? *cfg.cellSpecificKoffset : -1;
-    int32_t polarization = cfg.polarization.has_value() ? *cfg.polarization : -1;
-    int32_t taDriftTop = cfg.taDrift.has_value() ? *cfg.taDrift : INT32_MIN;
+    for (uint32_t i = 0; i < entryCount; i++)
+    {
+        const auto &entry = entries[i];
+        const size_t base = SIB19_HEADER_SIZE + static_cast<size_t>(i) * SIB19_ENTRY_SIZE;
 
-    WriteLe(payload, 76, taDriftVar);
-    WriteLe(payload, 80, ulSync);
-    WriteLe(payload, 84, cellKOffset);
-    WriteLe(payload, 88, polarization);
-    WriteLe(payload, 92, taDriftTop);
+        double dtSec = static_cast<double>(nowMs - entry.epochMs) / 1000.0;
+        double xNow = entry.x + entry.vx * dtSec;
+        double yNow = entry.y + entry.vy * dtSec;
+        double zNow = entry.z + entry.vz * dtSec;
+
+        WriteLe(payload, base, static_cast<int32_t>(entry.pci));
+        WriteLe(payload, base + 4, xNow);
+        WriteLe(payload, base + 12, yNow);
+        WriteLe(payload, base + 20, zNow);
+        WriteLe(payload, base + 28, entry.vx);
+        WriteLe(payload, base + 36, entry.vy);
+        WriteLe(payload, base + 44, entry.vz);
+        WriteLe(payload, base + 52, epoch10ms);
+        WriteLe(payload, base + 60, cfg.kOffset);
+        WriteLe(payload, base + 64, cfg.taCommon);
+        WriteLe(payload, base + 72, cfg.taCommonDrift);
+        WriteLe(payload, base + 76, taDriftVar);
+        WriteLe(payload, base + 80, ulSync);
+        WriteLe(payload, base + 84, cellKOffset);
+        WriteLe(payload, base + 88, polarization);
+        WriteLe(payload, base + 92, taDriftTop);
+    }
 
     sendRrcMessage(rrc::RrcChannel::DL_SIB19, OctetString(std::move(payload)));
 }

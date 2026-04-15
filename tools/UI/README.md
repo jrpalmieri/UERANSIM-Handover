@@ -50,6 +50,7 @@ The windowed dashboard keeps the same runtime behavior and adds a control bar to
 Menu bar additions:
 
 - `File` -> `Exit` performs a graceful shutdown of spawned processes.
+- `Handover` -> `Send gNB Position/Velocity` sends ECEF position/velocity to selected gNB via `loc-pv`.
 - `Handover` -> `Program` opens a dialog to run periodic signal injection.
 - `User Plane` -> `Open Demo` opens a split window for user-plane payload demo.
 - `User Plane` -> `Send Text Message` opens a dialog to send demo text traffic.

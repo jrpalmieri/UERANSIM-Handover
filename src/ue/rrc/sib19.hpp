@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 #include <utils/json.hpp>
 
@@ -249,6 +250,18 @@ struct Sib19Info
 
     /* UE-local reception timestamp (ms since UE start) */
     int64_t receivedTime{};
+
+    /* All decoded SIB19 records in the last received payload, keyed by PCI. */
+    struct PciEntry
+    {
+        NtnConfig ntnConfig{};
+        std::optional<int32_t> cellSpecificKoffset{};
+        std::optional<ENtnPolarization> ntnPolarization{};
+        std::optional<int32_t> taDrift{};
+        int64_t receivedTime{};
+    };
+
+    std::unordered_map<int, PciEntry> entriesByPci{};
 };
 
 /* ------------------------------------------------------------------ */
@@ -262,6 +275,7 @@ Json ToJson(const EphemerisInfo &v);
 Json ToJson(const TaInfo &v);
 Json ToJson(const NtnConfig &v);
 Json ToJson(ENtnPolarization v);
+Json ToJson(const Sib19Info::PciEntry &v);
 Json ToJson(const Sib19Info &v);
 
 /* ------------------------------------------------------------------ */
