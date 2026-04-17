@@ -59,7 +59,7 @@ void RlsControlTask::onLoop()
             handleSignalLost(w.ueId);
             break;
         case NmGnbRlsToRls::RECEIVE_RLS_MESSAGE:
-            handleRlsMessage(w.ueId, *w.msg);
+            handleRlsMessage(w);
             break;
         case NmGnbRlsToRls::DOWNLINK_DATA:
             handleDownlinkDataDelivery(w.ueId, w.psi, std::move(w.data));
@@ -111,8 +111,11 @@ void RlsControlTask::handleSignalLost(int ueId)
     m_mainTask->push(std::move(w));
 }
 
-void RlsControlTask::handleRlsMessage(int ueId, rls::RlsMessage &msg)
+void RlsControlTask::handleRlsMessage(NmGnbRlsToRls &w)
 {
+    int ueId       = w.ueId;
+    auto &msg      = *w.msg;
+
     if (msg.msgType == rls::EMessageType::PDU_TRANSMISSION_ACK)
     {
         auto &m = (rls::RlsPduTransmissionAck &)msg;
@@ -127,21 +130,24 @@ void RlsControlTask::handleRlsMessage(int ueId, rls::RlsMessage &msg)
 
         if (m.pduType == rls::EPduType::DATA)
         {
-            auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_DATA);
-            w->ueId = ueId;
-            w->cRnti = static_cast<int>(m.senderId2);
-            w->psi = static_cast<int>(m.payload);
-            w->data = std::move(m.pdu);
-            m_mainTask->push(std::move(w));
+            auto out = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_DATA);
+            out->ueId  = ueId;
+            out->cRnti = static_cast<int>(m.senderId2);
+            out->psi   = static_cast<int>(m.payload);
+            out->data  = std::move(m.pdu);
+            // Position not needed for data path
+            m_mainTask->push(std::move(out));
         }
         else if (m.pduType == rls::EPduType::RRC)
         {
-            auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_RRC);
-            w->ueId = ueId;
-            w->cRnti = static_cast<int>(m.senderId2);
-            w->rrcChannel = static_cast<rrc::RrcChannel>(m.payload);
-            w->data = std::move(m.pdu);
-            m_mainTask->push(std::move(w));
+            auto out = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_RRC);
+            out->ueId        = ueId;
+            out->cRnti       = static_cast<int>(m.senderId2);
+            out->rrcChannel  = static_cast<rrc::RrcChannel>(m.payload);
+            out->data        = std::move(m.pdu);
+            out->uePos       = w.uePos;
+            out->hasPosData  = w.hasPosData;
+            m_mainTask->push(std::move(out));
         }
         else
         {

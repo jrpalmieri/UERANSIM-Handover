@@ -9,7 +9,6 @@
 #pragma once
 
 #include "ctl_task.hpp"
-#include "sat_position_task.hpp"
 #include "udp_task.hpp"
 
 #include <memory>
@@ -35,7 +34,6 @@ class GnbRlsTask : public NtsTask
 
     RlsUdpTask *m_udpTask;
     RlsControlTask *m_ctlTask;
-    SatPositionTask *m_satPosTask;
 
     uint64_t m_sti;
 

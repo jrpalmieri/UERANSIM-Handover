@@ -186,6 +186,8 @@ static OrderedMap<std::string, CmdEntry> g_gnbCmdEntries = {
                   "<x:y:z:vx:vy:vz:epoch-ms>", DefaultDesc, true}},
     {"sat-loc-pv", {"Upsert one satellite SIB19 position/velocity entry from JSON payload",
                      "<json-payload>", DefaultDesc, true}},
+    {"sat-tle", {"Upsert TLE orbital elements for one or more satellite gNBs from JSON payload",
+                  "<json-payload>", DefaultDesc, true}},
     {"neighbors", {"Update gNB neighbor list from JSON payload", "<json-payload>", DefaultDesc, true}},
     {"version", {"Show gNB version information", "", DefaultDesc, false}},
 };
@@ -295,6 +297,17 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
             CMD_ERR("Only one JSON payload argument is expected")
 
         cmd->satLocPvJson = options.getPositional(0);
+        return cmd;
+    }
+    else if (subCmd == "sat-tle")
+    {
+        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::SAT_TLE);
+        if (options.positionalCount() == 0)
+            CMD_ERR("JSON payload is expected")
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one JSON payload argument is expected")
+
+        cmd->satTleJson = options.getPositional(0);
         return cmd;
     }
 

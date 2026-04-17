@@ -10,6 +10,9 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cmath>
+#include <optional>
 #include <unordered_map>
 
 #include <unistd.h>
@@ -20,7 +23,9 @@
 #include <lib/app/cli_base.hpp>
 #include <lib/app/cli_cmd.hpp>
 #include <lib/app/proc_table.hpp>
+#include <libsgp4/DateTime.h>
 #include <utils/constants.hpp>
+#include <utils/common.hpp>
 #include <utils/io.hpp>
 #include <utils/options.hpp>
 #include <utils/yaml_utils.hpp>
@@ -35,7 +40,76 @@ static struct Options
 {
     std::string configFile{};
     bool disableCmd{};
+    std::optional<int64_t> timeWarpOffsetMsOverride{};
 } g_options{};
+
+static int64_t CurrentWallTimeMillis()
+{
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    return static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+}
+
+static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch)
+{
+    if (tleEpoch.size() < 5)
+        throw std::runtime_error("ntn.timeWarp.targetTimeEpoch must be in TLE format YYDDD.DDD...");
+
+    if (!std::isdigit(static_cast<unsigned char>(tleEpoch[0])) ||
+        !std::isdigit(static_cast<unsigned char>(tleEpoch[1])))
+    {
+        throw std::runtime_error("ntn.timeWarp.targetTimeEpoch must start with a 2-digit year (YY)");
+    }
+
+    int year2 = (tleEpoch[0] - '0') * 10 + (tleEpoch[1] - '0');
+    int fullYear = year2 >= 57 ? (1900 + year2) : (2000 + year2);
+
+    double dayOfYear = 0.0;
+    try
+    {
+        dayOfYear = std::stod(tleEpoch.substr(2));
+    }
+    catch (const std::exception &)
+    {
+        throw std::runtime_error("ntn.timeWarp.targetTimeEpoch has invalid day-of-year value");
+    }
+
+    if (!(dayOfYear >= 1.0 && dayOfYear < 367.0))
+        throw std::runtime_error("ntn.timeWarp.targetTimeEpoch day-of-year must be in [1, 367)");
+
+    return libsgp4::DateTime(static_cast<unsigned int>(fullYear), dayOfYear);
+}
+
+static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
+{
+    const libsgp4::DateTime unixEpoch(1970, 1, 1, 0, 0, 0);
+    auto delta = dateTime - unixEpoch;
+    return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
+}
+
+static int64_t ResolveConfiguredTimeWarpOffsetMs(const nr::gnb::GnbConfig &config)
+{
+    const auto &tw = config.ntn.timeWarp;
+
+    if (tw.offsetMs.has_value() && tw.targetTimeEpoch.has_value())
+    {
+        throw std::runtime_error(
+            "ntn.timeWarp must define only one of offsetMs or targetTimeEpoch");
+    }
+
+    if (tw.offsetMs.has_value())
+        return *tw.offsetMs;
+
+    if (tw.targetTimeEpoch.has_value())
+    {
+        const libsgp4::DateTime target = ParseTleEpochDateTime(*tw.targetTimeEpoch);
+        const int64_t targetMs = DateTimeToUnixMillis(target);
+        return targetMs - CurrentWallTimeMillis();
+    }
+
+    return 0;
+}
+
 
 static nr::gnb::EGnbRsrpMode ReadRsrpMode(const YAML::Node &node, const std::string &fieldPath)
 {
@@ -54,7 +128,7 @@ static nr::gnb::EGnbRsrpMode ReadRsrpMode(const YAML::Node &node, const std::str
 
 static void ReadTargetCellSelector(
     const YAML::Node &entry,
-    nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig &item,
+    nr::gnb::GnbHandoverConfig::GnbChoCandidateProfileConfig &item,
     const std::string &pathForErrors)
 {
     if (!yaml::HasField(entry, "targetCellId"))
@@ -138,10 +212,14 @@ static nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig ReadHandoverEvent(
         item.hysteresisM = yaml::GetInt32(entry, "hysteresisM", 0, 10000000);
     if (yaml::HasField(entry, "tttMs"))
         item.tttMs = yaml::GetInt32(entry, "tttMs", 0, 60000);
+    if (yaml::HasField(entry, "ntnTriggerEnabled"))
+        item.ntnTriggerEnabled = yaml::GetBool(entry, "ntnTriggerEnabled");
+    if (yaml::HasField(entry, "useTimer"))
+        item.timerSec = yaml::GetBool(entry, "useTimer");
+    if (yaml::HasField(entry, "timerSec"))
+        item.timerSec = yaml::GetInt32(entry, "timerSec", 0, 5400);
     if (yaml::HasField(entry, "distanceType"))
         item.distanceType = ReadDistanceType(entry["distanceType"]);
-
-    ReadTargetCellSelector(entry, item, pathForErrors);
 
     if (yaml::HasField(entry, "referencePosition"))
     {
@@ -223,40 +301,86 @@ ReadHandoverEvents(const YAML::Node &handoverNode,
     return events;
 }
 
-static std::vector<nr::gnb::GnbHandoverConfig::GnbChoEventConfig>
-ReadChoEvents(const YAML::Node &handoverNode,
+static std::vector<nr::gnb::GnbHandoverConfig::GnbChoCandidateProfileConfig>
+ReadChoCandidateProfiles(const YAML::Node &handoverNode,
     const nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig &defaults,
     const std::string &basePath)
 {
-    std::vector<nr::gnb::GnbHandoverConfig::GnbChoEventConfig> out{};
-    auto choEventsNode = handoverNode["choEvents"];
-    if (!choEventsNode)
+    std::vector<nr::gnb::GnbHandoverConfig::GnbChoCandidateProfileConfig> out{};
+
+    YAML::Node profilesNode{};
+    std::string profilesPath{};
+    if (yaml::HasField(handoverNode, "choCandidateProfiles"))
+    {
+        profilesNode = handoverNode["choCandidateProfiles"];
+        profilesPath = basePath + ".choCandidateProfiles";
+    }
+    else if (yaml::HasField(handoverNode, "ChoCandidateteProfiles"))
+    {
+        // Keep compatibility for transitional naming/typo variants.
+        profilesNode = handoverNode["ChoCandidateteProfiles"];
+        profilesPath = basePath + ".ChoCandidateteProfiles";
+    }
+    else if (yaml::HasField(handoverNode, "candidateProfiles"))
+    {
+        // Backward-compatible alias for prior schema.
+        profilesNode = handoverNode["candidateProfiles"];
+        profilesPath = basePath + ".candidateProfiles";
+    }
+    else if (yaml::HasField(handoverNode, "choEvents"))
+    {
+        // Backward-compatible alias for older configs.
+        profilesNode = handoverNode["choEvents"];
+        profilesPath = basePath + ".choEvents";
+    }
+
+    if (!profilesNode)
         return out;
 
-    if (!choEventsNode.IsSequence())
-        throw std::runtime_error("Field " + basePath + ".choEvents must be a YAML sequence");
+    if (!profilesNode.IsSequence())
+        throw std::runtime_error("Field " + profilesPath + " must be a YAML sequence");
 
-    for (const auto &entry : choEventsNode)
+    for (const auto &entry : profilesNode)
     {
         if (!entry.IsMap())
-            throw std::runtime_error("Each " + basePath + ".choEvents[] entry must be a map");
+            throw std::runtime_error("Each " + profilesPath + "[] entry must be a map");
 
-        nr::gnb::GnbHandoverConfig::GnbChoEventConfig cho{};
+        nr::gnb::GnbHandoverConfig::GnbChoCandidateProfileConfig profile{};
 
-        auto eventsNode = entry["events"];
-        if (!eventsNode)
-            throw std::runtime_error("Each " + basePath + ".choEvents[] entry must define an events list");
-        if (!eventsNode.IsSequence())
-            throw std::runtime_error("Field " + basePath + ".choEvents[].events must be a YAML sequence");
+        if (yaml::HasField(entry, "candidateProfileId"))
+            profile.candidateProfileId = yaml::GetInt32(entry, "candidateProfileId", 0, std::nullopt);
 
-        for (const auto &conditionEvent : eventsNode)
+        ReadTargetCellSelector(entry, profile, profilesPath + "[]");
+
+        YAML::Node conditionsNode{};
+        std::string conditionsPath{};
+        if (yaml::HasField(entry, "conditions"))
         {
-            cho.events.push_back(
-                ReadHandoverEvent(conditionEvent, defaults, basePath + ".choEvents[].events[]"));
+            conditionsNode = entry["conditions"];
+            conditionsPath = profilesPath + "[].conditions";
+        }
+        else if (yaml::HasField(entry, "events"))
+        {
+            // Backward-compatible alias for older configs.
+            conditionsNode = entry["events"];
+            conditionsPath = profilesPath + "[].events";
         }
 
-        if (!cho.events.empty())
-            out.push_back(std::move(cho));
+        if (!conditionsNode)
+            throw std::runtime_error("Each " + profilesPath + "[] entry must define a conditions list");
+        if (!conditionsNode.IsSequence())
+            throw std::runtime_error("Field " + conditionsPath + " must be a YAML sequence");
+
+        for (const auto &conditionEvent : conditionsNode)
+        {
+            profile.conditions.push_back(
+                ReadHandoverEvent(conditionEvent, defaults, conditionsPath + "[]"));
+        }
+
+        if (profile.conditions.empty())
+            throw std::runtime_error("Each " + profilesPath + "[] entry must define one or more conditions");
+
+        out.push_back(std::move(profile));
     }
 
     return out;
@@ -305,11 +429,20 @@ static void ReadHandoverConfigSection(
         defaults.hysteresisM = yaml::GetInt32(handover, "hysteresisM", 0, 10000000);
     if (yaml::HasField(handover, "tttMs"))
         defaults.tttMs = yaml::GetInt32(handover, "tttMs", 0, 60000);
+    if (yaml::HasField(handover, "ntnTriggerEnabled"))
+        defaults.ntnTriggerEnabled = yaml::GetBool(handover, "ntnTriggerEnabled");
+    if (yaml::HasField(handover, "timerSec"))
+        defaults.timerSec = yaml::GetInt32(handover, "timerSec", 0, 5400);
+    if (yaml::HasField(handover, "useTimer"))
+        defaults.useTimer = yaml::GetBool(handover, "useTimer");
     if (yaml::HasField(handover, "distanceType"))
         defaults.distanceType = ReadDistanceType(handover["distanceType"]);
 
     if (yaml::HasField(handover, "choEnabled"))
         out.choEnabled = yaml::GetBool(handover, "choEnabled");
+
+    if (yaml::HasField(handover, "choDefaultProfileId"))
+        out.choDefaultProfileId = yaml::GetInt32(handover, "choDefaultProfileId", 0, std::nullopt);
 
     auto events = ReadHandoverEvents(handover, defaults, basePath);
     if (events.empty() && basePath == "handover")
@@ -317,9 +450,9 @@ static void ReadHandoverConfigSection(
     if (!events.empty())
         out.events = std::move(events);
 
-    auto choEvents = ReadChoEvents(handover, defaults, basePath);
-    if (!choEvents.empty())
-        out.choEvents = std::move(choEvents);
+    auto candidateProfiles = ReadChoCandidateProfiles(handover, defaults, basePath);
+    if (!candidateProfiles.empty())
+        out.candidateProfiles = std::move(candidateProfiles);
 }
 
 static void ResolveEventReferencePosition(
@@ -347,16 +480,17 @@ static void ResolveEventReferencePosition(
 }
 
 static void ValidateHandoverTargetCellId(
-    const nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig &event,
+    bool targetCellCalculated,
+    const std::optional<int64_t> &targetCellId,
     const std::vector<nr::gnb::GnbNeighborConfig> &neighbors,
     const std::string &pathForErrors)
 {
-    if (event.targetCellCalculated || !event.targetCellId.has_value())
+    if (targetCellCalculated || !targetCellId.has_value())
         return;
 
     for (const auto &neighbor : neighbors)
     {
-        if (neighbor.nci == *event.targetCellId)
+        if (neighbor.nci == *targetCellId)
             return;
     }
 
@@ -373,16 +507,20 @@ static void NormalizeHandoverConfig(
     {
         auto eventPath = basePath + ".events[" + std::to_string(i) + "]";
         ResolveEventReferencePosition(cfg.events[i], geoLocation, eventPath);
-        ValidateHandoverTargetCellId(cfg.events[i], neighbors, eventPath);
+        ValidateHandoverTargetCellId(cfg.events[i].targetCellCalculated, cfg.events[i].targetCellId,
+                                     neighbors, eventPath);
     }
 
-    for (size_t i = 0; i < cfg.choEvents.size(); i++)
+    for (size_t i = 0; i < cfg.candidateProfiles.size(); i++)
     {
-        for (size_t j = 0; j < cfg.choEvents[i].events.size(); j++)
+        auto profilePath = basePath + ".choCandidateProfiles[" + std::to_string(i) + "]";
+        ValidateHandoverTargetCellId(cfg.candidateProfiles[i].targetCellCalculated,
+                                     cfg.candidateProfiles[i].targetCellId, neighbors, profilePath);
+
+        for (size_t j = 0; j < cfg.candidateProfiles[i].conditions.size(); j++)
         {
-            auto eventPath = basePath + ".choEvents[" + std::to_string(i) + "].events[" + std::to_string(j) + "]";
-            ResolveEventReferencePosition(cfg.choEvents[i].events[j], geoLocation, eventPath);
-            ValidateHandoverTargetCellId(cfg.choEvents[i].events[j], neighbors, eventPath);
+            auto eventPath = profilePath + ".conditions[" + std::to_string(j) + "]";
+            ResolveEventReferencePosition(cfg.candidateProfiles[i].conditions[j], geoLocation, eventPath);
         }
     }
 }
@@ -480,8 +618,50 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
         if (yaml::HasField(ntn, "ntnEnabled"))
             result->ntn.ntnEnabled = yaml::GetBool(ntn, "ntnEnabled");
 
-        if (yaml::HasField(ntn, "ntnHandover"))
-            ReadHandoverConfigSection(ntn["ntnHandover"], "ntn.ntnHandover", result->ntn.ntnHandover);
+        if (yaml::HasField(ntn, "timeWarp"))
+        {
+            auto timeWarp = ntn["timeWarp"];
+            if (!timeWarp.IsMap())
+                throw std::runtime_error("Field ntn.timeWarp must be a map");
+
+            if (yaml::HasField(timeWarp, "offsetMs"))
+            {
+                result->ntn.timeWarp.offsetMs =
+                    yaml::GetInt64(timeWarp, "offsetMs", std::nullopt, std::nullopt);
+            }
+
+            if (yaml::HasField(timeWarp, "targetTimeEpoch"))
+            {
+                auto targetTimeEpoch = yaml::GetString(timeWarp, "targetTimeEpoch");
+                utils::Trim(targetTimeEpoch);
+                if (targetTimeEpoch.empty())
+                    throw std::runtime_error("ntn.timeWarp.targetTimeEpoch cannot be empty");
+                result->ntn.timeWarp.targetTimeEpoch = std::move(targetTimeEpoch);
+            }
+        }
+
+        if (yaml::HasField(ntn, "tle"))
+        {
+            auto tle = ntn["tle"];
+            if (!tle.IsMap())
+                throw std::runtime_error("Field ntn.tle must be a map");
+            if (!yaml::HasField(tle, "line1") || !yaml::HasField(tle, "line2"))
+                throw std::runtime_error("Fields ntn.tle.line1 and ntn.tle.line2 are required");
+
+            nr::gnb::SatTleEntry entry{};
+            entry.pci = cons::getPciFromNci(result->nci);
+            entry.line1 = tle["line1"].as<std::string>();
+            entry.line2 = tle["line2"].as<std::string>();
+            entry.lastUpdatedMs = 0; // 0 = loaded from config, not a CLI upsert
+
+            if (entry.line1.size() < 69 || entry.line2.size() < 69)
+                throw std::runtime_error("ntn.tle lines must be at least 69 characters (standard TLE format)");
+
+            result->ntn.ownTle = entry;
+        }
+
+        if (yaml::HasField(ntn, "elevationMinDeg"))
+            result->ntn.elevationMinDeg = yaml::GetInt32(ntn, "elevationMinDeg", 0, 90);
 
         if (yaml::HasField(ntn, "sib19"))
         {
@@ -543,13 +723,20 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
                     result->ntn.sib19.taDrift =
                         yaml::GetInt32(sib19, "taDrift", std::nullopt, std::nullopt);
                 }
+
+                if (yaml::HasField(sib19, "ephType"))
+                {
+                    result->ntn.sib19.ephType =
+                        yaml::GetInt32(sib19, "ephType", 0, 1);
+                }
             }
         }
     }
 
     NormalizeHandoverConfig(result->handover, result->geoLocation, result->neighborList, "handover");
-    NormalizeHandoverConfig(result->ntn.ntnHandover, result->geoLocation, result->neighborList,
-                            "ntn.ntnHandover");
+
+    // Consolidated hierarchy: NTN uses the same handover parameter set.
+    result->ntn.ntnHandover = result->handover;
 
     result->pagingDrx = EPagingDrx::V128;
     result->name = "UERANSIM-gnb-" + std::to_string(result->plmn.mcc) + "-" + std::to_string(result->plmn.mnc) + "-" +
@@ -583,7 +770,8 @@ static void ReadOptions(int argc, char **argv)
                                  "5G-SA gNB implementation",
                                  cons::Owner,
                                  "nr-gnb",
-                                 {"-c <config-file> [option...]"},
+                                 {"-c <config-file> [option...]",
+                                  "-c <config-file> --time-warp-ms <offset-ms> [option...]"},
                                  {},
                                  true,
                                  false};
@@ -591,15 +779,35 @@ static void ReadOptions(int argc, char **argv)
     opt::OptionItem itemConfigFile = {'c', "config", "Use specified configuration file for gNB", "config-file"};
     opt::OptionItem itemDisableCmd = {'l', "disable-cmd", "Disable command line functionality for this instance",
                                       std::nullopt};
+    opt::OptionItem itemTimeWarpMs = {
+        'w',
+        "time-warp-ms",
+        "Override NTN time warp offset in milliseconds (negative shifts time backwards)",
+        "offset-ms"
+    };
 
     desc.items.push_back(itemConfigFile);
     desc.items.push_back(itemDisableCmd);
+    desc.items.push_back(itemTimeWarpMs);
 
     opt::OptionsResult opt{argc, argv, desc, false, nullptr};
 
     if (opt.hasFlag(itemDisableCmd))
         g_options.disableCmd = true;
     g_options.configFile = opt.getOption(itemConfigFile);
+
+    if (opt.hasFlag(itemTimeWarpMs))
+    {
+        try
+        {
+            g_options.timeWarpOffsetMsOverride = std::stoll(opt.getOption(itemTimeWarpMs));
+        }
+        catch (const std::exception &)
+        {
+            std::cerr << "ERROR: invalid --time-warp-ms value" << std::endl;
+            exit(1);
+        }
+    }
 
     try
     {
@@ -701,7 +909,18 @@ int main(int argc, char **argv)
     app::Initialize();
     ReadOptions(argc, argv);
 
+    // adjust the base time to align with a desired starting epoch if configured, to enable deterministic time warping for NTN testing
+
+    const int64_t effectiveTimeWarpOffsetMs = g_options.timeWarpOffsetMsOverride.has_value()
+                                                  ? *g_options.timeWarpOffsetMsOverride
+                                                  : ResolveConfiguredTimeWarpOffsetMs(*g_refConfig);
+    utils::SetTimeWarpOffsetMillis(effectiveTimeWarpOffsetMs);
+
     std::cout << cons::Name << std::endl;
+    if (effectiveTimeWarpOffsetMs != 0)
+    {
+        std::cout << "NTN time warp offset (ms): " << effectiveTimeWarpOffsetMs << std::endl;
+    }
 
     if (!g_options.disableCmd)
     {

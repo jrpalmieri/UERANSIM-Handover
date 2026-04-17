@@ -140,6 +140,53 @@ static NeighborsUpdateRequest ParseNeighborsRequest(const std::string &jsonPaylo
     return request;
 }
 
+static std::vector<SatTleEntry> ParseSatTleRequest(const std::string &jsonPayload)
+{
+    YAML::Node root;
+    try
+    {
+        root = YAML::Load(jsonPayload);
+    }
+    catch (const std::exception &e)
+    {
+        throw std::runtime_error(std::string("Invalid JSON payload: ") + e.what());
+    }
+
+    if (!root.IsMap())
+        throw std::runtime_error("Payload must be a JSON object.");
+
+    auto satellitesNode = root["satellites"];
+    if (!satellitesNode || !satellitesNode.IsSequence())
+        throw std::runtime_error("Field 'satellites' must be an array.");
+
+    std::vector<SatTleEntry> entries;
+    entries.reserve(satellitesNode.size());
+
+    size_t i = 0;
+    for (const auto &node : satellitesNode)
+    {
+        auto path = "satellites[" + std::to_string(i) + "]";
+        if (!node.IsMap())
+            throw std::runtime_error(path + " must be an object.");
+
+        SatTleEntry entry{};
+        entry.pci = yaml::GetInt32(node, "pci", 0, 1007);
+
+        if (!node["line1"] || !node["line1"].IsScalar())
+            throw std::runtime_error(path + ".line1 is required.");
+        if (!node["line2"] || !node["line2"].IsScalar())
+            throw std::runtime_error(path + ".line2 is required.");
+
+        entry.line1 = node["line1"].as<std::string>();
+        entry.line2 = node["line2"].as<std::string>();
+
+        entries.push_back(std::move(entry));
+        ++i;
+    }
+
+    return entries;
+}
+
 static SatLocPvRequest ParseSatLocPvRequest(const std::string &jsonPayload)
 {
     YAML::Node root;
@@ -194,17 +241,17 @@ static std::vector<std::string> CollectStaleTargetWarnings(const GnbConfig &conf
     };
 
     checkEventList(config.handover.events, "handover.events");
-    for (size_t i = 0; i < config.handover.choEvents.size(); i++)
+    for (size_t i = 0; i < config.handover.candidateProfiles.size(); i++)
     {
-        checkEventList(config.handover.choEvents[i].events,
-                       "handover.choEvents[" + std::to_string(i) + "].events");
-    }
+        const auto &profile = config.handover.candidateProfiles[i];
+        if (!profile.targetCellCalculated && profile.targetCellId.has_value() && !hasNeighborNci(*profile.targetCellId))
+        {
+            warnings.push_back("handover.choCandidateProfiles[" + std::to_string(i) + "] targetCellId=" +
+                               std::to_string(*profile.targetCellId) + " does not exist in neighbor list");
+        }
 
-    checkEventList(config.ntn.ntnHandover.events, "ntn.ntnHandover.events");
-    for (size_t i = 0; i < config.ntn.ntnHandover.choEvents.size(); i++)
-    {
-        checkEventList(config.ntn.ntnHandover.choEvents[i].events,
-                       "ntn.ntnHandover.choEvents[" + std::to_string(i) + "].events");
+        checkEventList(profile.conditions,
+                       "handover.choCandidateProfiles[" + std::to_string(i) + "].conditions");
     }
 
     return warnings;
@@ -232,12 +279,16 @@ static Json ToJsonNeighborList(const std::vector<GnbNeighborConfig> &neighbors)
     return entries;
 }
 
-static NeighborsUpdateResult ApplyNeighborsUpdate(GnbConfig &config, const NeighborsUpdateRequest &request)
+static NeighborsUpdateResult ApplyNeighborsUpdate(GnbNeighbors &neighbors,
+                                                   const GnbConfig &config,
+                                                   const NeighborsUpdateRequest &request)
 {
     NeighborsUpdateResult result{};
-    result.beforeCount = static_cast<int>(config.neighborList.size());
 
-    auto candidate = config.neighborList;
+    // Work on a local candidate list so we can validate before committing.
+    auto candidate = neighbors.getAll();
+    result.beforeCount = static_cast<int>(candidate.size());
+
     if (request.mode == ENeighborsUpdateMode::Replace)
     {
         candidate = request.neighbors;
@@ -286,9 +337,10 @@ static NeighborsUpdateResult ApplyNeighborsUpdate(GnbConfig &config, const Neigh
         result.removedCount = result.beforeCount;
     }
 
-    config.neighborList = std::move(candidate);
-    result.afterCount = static_cast<int>(config.neighborList.size());
-    result.warnings = CollectStaleTargetWarnings(config, config.neighborList);
+    // Commit the validated candidate list to the runtime neighbor store.
+    neighbors.replaceAll(candidate);
+    result.afterCount = static_cast<int>(candidate.size());
+    result.warnings = CollectStaleTargetWarnings(config, candidate);
     return result;
 }
 
@@ -435,7 +487,7 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         break;
     }
     case app::GnbCliCommand::LOC_PV: {
-        TruePositionVelocity position{};
+        PositionVelocity position{};
         position.isValid = true;
         position.x = msg.cmd->locX;
         position.y = msg.cmd->locY;
@@ -482,6 +534,27 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         sendResult(msg.address, response.dumpYaml());
         break;
     }
+    case app::GnbCliCommand::SAT_TLE: {
+        std::vector<SatTleEntry> entries;
+        try
+        {
+            entries = ParseSatTleRequest(msg.cmd->satTleJson);
+        }
+        catch (const std::exception &e)
+        {
+            sendError(msg.address, std::string("sat-tle payload error: ") + e.what());
+            break;
+        }
+
+        m_base->rrcTask->upsertSatTles(entries);
+
+        Json response = Json::Obj({
+            {"result", "ok"},
+            {"upsertedCount", static_cast<int>(entries.size())},
+        });
+        sendResult(msg.address, response.dumpYaml());
+        break;
+    }
     case app::GnbCliCommand::NEIGHBORS: {
         NeighborsUpdateRequest request{};
         try
@@ -497,7 +570,7 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         NeighborsUpdateResult result{};
         try
         {
-            result = ApplyNeighborsUpdate(*m_base->config, request);
+            result = ApplyNeighborsUpdate(*m_base->neighbors, *m_base->config, request);
         }
         catch (const std::exception &e)
         {
@@ -517,7 +590,7 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
             {"addedCount", result.addedCount},
             {"removedCount", result.removedCount},
             {"warnings", std::move(warnings)},
-            {"neighbors", ToJsonNeighborList(m_base->config->neighborList)},
+            {"neighbors", ToJsonNeighborList(m_base->neighbors->getAll())},
         });
         sendResult(msg.address, response.dumpYaml());
         break;

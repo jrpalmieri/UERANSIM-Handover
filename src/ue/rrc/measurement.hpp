@@ -85,10 +85,6 @@ struct UeReportConfig
     double        d1RefZ{};            // ECEF reference Z (m), used when d1ReferenceType=Fixed
     double        d1ThresholdM{1000.0}; // distance threshold in meters
 
-    /* T1: timer  */
-    int t1DurationMs{1000};
-
-
     // common to all events:
     int           hysteresis{2};        // hysteresis value to apply (db for RSRP, m for distance)
     int           timeToTriggerMs{640}; // how long condition must hold (ms) before triggering report
@@ -168,12 +164,10 @@ struct UeMeasConfig
  *
  * Per 3GPP TS 38.331, each MeasId in condExecutionCond resolves to a
  * ReportConfig whose event type determines the kind of check the UE
- * must perform.  We also support a T1 (timer-only) pseudo-event for
- * UERANSIM-specific timer-based triggers.
+ * must perform.
  */
 enum class EChoEventType
 {
-    T1,       // Timer-only: fires after t1DurationMs elapsed
     A2,       // Serving RSRP < threshold
     A3,       // Neighbor RSRP > serving RSRP + offset + hysteresis
     A5,       // Serving < threshold1 - hysteresis AND neighbor > threshold2 + hysteresis
@@ -190,10 +184,7 @@ enum class EChoEventType
  */
 struct ChoCondition
 {
-    EChoEventType eventType{EChoEventType::T1};
-
-    /* T1 parameters */
-    int t1DurationMs{1000};
+    EChoEventType eventType{EChoEventType::A3};
 
     /* A2 parameters */
     int a2Threshold{-110};        // dBm
@@ -219,12 +210,12 @@ struct ChoCondition
     double d1ResolvedThreshM{0.0};    ///< Resolved threshold used for this evaluation cycle
 
     /* Common */
+    int64_t triggerDelayMs{0};      // Optional timer criterion; 0 means unset/always satisfied
     int hysteresis{2};            // general hysteresis (used where applicable)
     int timeToTriggerMs{0};       // condition must hold this long (ms)
 
     /* Runtime state — managed by evaluateChoCandidates() */
-    int64_t enteringTimestamp{};  // When condition first became true (0 = not met)
-    int64_t t1StartTime{};       // When T1 was started (0 = not started)
+    int64_t tttEnteringTimestamp{};  // When condition first became true (0 = not met)
     bool satisfied{};             // true once condition has been met for TTT duration
 };
 

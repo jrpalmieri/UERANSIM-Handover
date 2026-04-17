@@ -18,6 +18,8 @@
 static constexpr const int TIMER_ID_SI_BROADCAST = 1;
 static constexpr const int TIMER_PERIOD_SI_BROADCAST = 10'000;
 static constexpr const int TIMER_ID_SIB19_BROADCAST = 2;
+static constexpr const int TIMER_ID_SAT_CACHE_CALC = 3;
+static constexpr const int TIMER_PERIOD_SAT_CACHE_CALC = 15'000;
 
 namespace nr::gnb
 {
@@ -31,6 +33,13 @@ GnbRrcTask::GnbRrcTask(TaskBase *base) : m_base{base}, m_ueCtx{}, m_tidCountersB
 void GnbRrcTask::onStart()
 {
     setTimer(TIMER_ID_SI_BROADCAST, TIMER_PERIOD_SI_BROADCAST);
+    setTimer(TIMER_ID_SAT_CACHE_CALC, TIMER_PERIOD_SAT_CACHE_CALC);
+
+    if (m_config->ntn.ownTle.has_value())
+    {
+        upsertSatTles({*m_config->ntn.ownTle});
+        m_logger->info("Loaded own TLE from config (pci=%d)", m_config->ntn.ownTle->pci);
+    }
 
     if (m_config->ntn.sib19.sib19On)
         setTimer(TIMER_ID_SIB19_BROADCAST, m_config->ntn.sib19.sib19TimingMs);
@@ -86,7 +95,7 @@ void GnbRrcTask::onLoop()
             break;
         }
         case NmGnbNgapToRrc::HANDOVER_FAILURE: {
-            handleNgapHandoverFailure(w.ueId);
+            handleNgapHandoverFailure(w.ueId, w.hoTargetPci, w.hoForChoPreparation);
             break;
         }
         case NmGnbNgapToRrc::PATH_SWITCH_REQUEST_ACK: {
@@ -124,6 +133,11 @@ void GnbRrcTask::onLoop()
             setTimer(TIMER_ID_SIB19_BROADCAST, m_config->ntn.sib19.sib19TimingMs);
             triggerSib19Broadcast();
         }
+        else if (w.timerId == TIMER_ID_SAT_CACHE_CALC)
+        {
+            setTimer(TIMER_ID_SAT_CACHE_CALC, TIMER_PERIOD_SAT_CACHE_CALC);
+            roughNeighborhoodSats();
+        }
         break;
     }
     default:
@@ -132,7 +146,7 @@ void GnbRrcTask::onLoop()
     }
 }
 
-void GnbRrcTask::setTruePositionVelocity(const TruePositionVelocity &value)
+void GnbRrcTask::setTruePositionVelocity(const PositionVelocity &value)
 {
     m_truePositionVelocity = value;
 }

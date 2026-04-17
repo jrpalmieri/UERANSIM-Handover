@@ -177,6 +177,21 @@ ntn:
               satLocUpdateThresholdMs: 1000
 ```
 
+Time warp configuration for NTN simulations:
+
+```yaml
+ntn:
+       timeWarp:
+              # Choose exactly one:
+              # offsetMs: -3600000
+              targetTimeEpoch: "23162.59097222"  # TLE epoch format YYDDD.DDDDDDDD (UTC)
+```
+
+Notes:
+
+- `targetTimeEpoch` is resolved once at startup into an offset from the current wall-clock time.
+- The computed offset is then used throughout the simulation to shift the internal time base.
+
 Examples with `nr-cli`:
 
 ```bash

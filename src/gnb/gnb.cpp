@@ -9,10 +9,11 @@
 #include "gnb.hpp"
 #include "app/task.hpp"
 #include "gtp/task.hpp"
+#include "neighbors.hpp"
 #include "ngap/task.hpp"
 #include "rls/task.hpp"
-#include "rls/satellite_state.hpp"
 #include "rrc/task.hpp"
+#include "sat_tle_store.hpp"
 #include "sctp/task.hpp"
 #include "xn/task.hpp"
 
@@ -30,8 +31,10 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     base->nodeListener = nodeListener;
     base->cliCallbackTask = cliCallbackTask;
 
-    if (config->ntn.ntnEnabled)
-        base->satState = new SatelliteState();
+    base->satTleStore = new SatTleStore();
+
+    base->neighbors = new GnbNeighbors();
+    base->neighbors->upsertAll(config->neighborList);
 
     base->appTask = new GnbAppTask(base);
     base->sctpTask = new SctpTask(base);
@@ -63,7 +66,7 @@ GNodeB::~GNodeB()
     delete taskBase->rlsTask;
     delete taskBase->xnTask;
 
-    delete taskBase->satState;
+    delete taskBase->satTleStore;
 
     delete taskBase->logBase;
 

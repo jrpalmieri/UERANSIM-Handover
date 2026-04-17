@@ -116,7 +116,6 @@ Json ToJson(const EChoEventType &v)
 {
     switch (v)
     {
-    case EChoEventType::T1: return "T1";
     case EChoEventType::A2: return "A2";
     case EChoEventType::A3: return "A3";
     case EChoEventType::A5: return "A5";
@@ -129,14 +128,12 @@ Json ToJson(const ChoCondition &v)
 {
     auto j = Json::Obj({
         {"eventType", ToJson(v.eventType)},
+        {"triggerDelayMs", v.triggerDelayMs},
         {"timeToTriggerMs", v.timeToTriggerMs},
         {"satisfied", v.satisfied},
     });
     switch (v.eventType)
     {
-    case EChoEventType::T1:
-        j.put("t1DurationMs", v.t1DurationMs);
-        break;
     case EChoEventType::A2:
         j.put("a2Threshold", v.a2Threshold);
         j.put("hysteresis", v.hysteresis);
@@ -497,7 +494,7 @@ void UeRrcTask::sendMeasurementReport(int measId, int servingCellId, int serving
             if (m_cellDesc.count(nb.cellId))
             {
                 int64_t nci = m_cellDesc[nb.cellId].sib1.nci;
-                pci = static_cast<int>(nci & 0x3FF);
+                pci = cons::getPciFromNci(nci);
                 measResultNR->physCellId = asn::New<long>();
                 *measResultNR->physCellId = pci;
                 m_logger->info("Reporting neighbour cellId=%d PCI=%d", nb.cellId, pci);

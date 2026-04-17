@@ -10,9 +10,15 @@
 
 #include <gnb/types.hpp>
 #include <utils/common.hpp>
+#include <utils/constants.hpp>
 
 namespace nr::gnb
 {
+
+int getPciFromNci(int64_t nci)
+{
+    return static_cast<int>(nci & cons::PCI_MASK);
+}
 
 static std::string ToString(EGnbRsrpMode mode)
 {
@@ -60,6 +66,9 @@ Json ToJson(const GnbConfig &v)
             {"hysteresis-db", event.hysteresisDb},
             {"hysteresis-m", event.hysteresisM},
             {"ttt-ms", event.tttMs},
+            {"ntn-trigger-enabled", event.ntnTriggerEnabled},
+            {"timerSec", event.timerSec},
+            {"useTimer", event.useTimer},
             {"distance-type", event.distanceType},
             {"target-cell-calculated", event.targetCellCalculated},
         });
@@ -88,11 +97,11 @@ Json ToJson(const GnbConfig &v)
         handoverEvents.push(std::move(eventJson));
     }
 
-    auto handoverChoEvents = Json::Arr({});
-    for (const auto &choEvent : v.handover.choEvents)
+    auto handoverCandidateProfiles = Json::Arr({});
+    for (const auto &profile : v.handover.candidateProfiles)
     {
-        auto choEventEntries = Json::Arr({});
-        for (const auto &event : choEvent.events)
+        auto conditionEntries = Json::Arr({});
+        for (const auto &event : profile.conditions)
         {
             Json eventJson = Json::Obj({
                 {"event-type", event.eventType},
@@ -104,12 +113,12 @@ Json ToJson(const GnbConfig &v)
                 {"hysteresis-db", event.hysteresisDb},
                 {"hysteresis-m", event.hysteresisM},
                 {"ttt-ms", event.tttMs},
+                {"ntn-trigger-enabled", event.ntnTriggerEnabled},
+                {"timerSec", event.timerSec},
+                {"useTimer", event.useTimer},
                 {"distance-type", event.distanceType},
                 {"target-cell-calculated", event.targetCellCalculated},
             });
-
-            if (event.targetCellId)
-                eventJson.put("target-cell-id", *event.targetCellId);
 
             if (event.referencePosition)
             {
@@ -129,12 +138,19 @@ Json ToJson(const GnbConfig &v)
                 }));
             }
 
-            choEventEntries.push(std::move(eventJson));
+            conditionEntries.push(std::move(eventJson));
         }
 
-        handoverChoEvents.push(Json::Obj({
-            {"events", std::move(choEventEntries)},
-        }));
+        Json profileJson = Json::Obj({
+            {"candidate-profile-id", profile.candidateProfileId},
+            {"target-cell-calculated", profile.targetCellCalculated},
+            {"conditions", std::move(conditionEntries)},
+        });
+
+        if (profile.targetCellId)
+            profileJson.put("target-cell-id", *profile.targetCellId);
+
+        handoverCandidateProfiles.push(std::move(profileJson));
     }
 
     auto neighborEntries = Json::Arr({});
@@ -180,6 +196,12 @@ Json ToJson(const GnbConfig &v)
     if (v.ntn.sib19.taDrift)
         sib19Json.put("ta-drift", *v.ntn.sib19.taDrift);
 
+    Json timeWarpJson = Json::Obj({});
+    if (v.ntn.timeWarp.offsetMs)
+        timeWarpJson.put("offset-ms", *v.ntn.timeWarp.offsetMs);
+    if (v.ntn.timeWarp.targetTimeEpoch)
+        timeWarpJson.put("target-time-epoch", *v.ntn.timeWarp.targetTimeEpoch);
+
     return Json::Obj({
         {"name", v.name},
         {"nci", v.nci},
@@ -200,8 +222,9 @@ Json ToJson(const GnbConfig &v)
         })},
         {"handover", Json::Obj({
             {"cho-enabled", v.handover.choEnabled},
+            {"cho-default-profile-id", v.handover.choDefaultProfileId},
             {"events", std::move(handoverEvents)},
-            {"cho-events", std::move(handoverChoEvents)},
+            {"cho-candidate-profiles", std::move(handoverCandidateProfiles)},
             {"xn", Json::Obj({
                 {"enabled", v.handover.xn.enabled},
                 {"bind-address", v.handover.xn.bindAddress},
@@ -213,6 +236,8 @@ Json ToJson(const GnbConfig &v)
         })},
         {"ntn", Json::Obj({
             {"ntn-enabled", v.ntn.ntnEnabled},
+            {"own-tle-set", v.ntn.ownTle.has_value()},
+            {"time-warp", std::move(timeWarpJson)},
             {"sib19", std::move(sib19Json)},
         })},
         {"neighbor-list", std::move(neighborEntries)},

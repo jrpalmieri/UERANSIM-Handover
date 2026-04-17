@@ -85,4 +85,78 @@ void ValidateUniqueNeighborPci(const std::vector<GnbNeighborConfig> &neighbors, 
     }
 }
 
+
+void GnbNeighbors::upsertLocked(const GnbNeighborConfig &entry)
+{
+    auto it = std::find_if(m_neighbors.begin(), m_neighbors.end(), [&entry](const GnbNeighborConfig &e) {
+        return e.getPci() == entry.getPci();
+    });
+    if (it != m_neighbors.end())
+        *it = entry;
+    else
+        m_neighbors.push_back(entry);
+}
+
+void GnbNeighbors::upsert(const GnbNeighborConfig &entry)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    upsertLocked(entry);
+}
+
+void GnbNeighbors::upsertAll(const std::vector<GnbNeighborConfig> &entries)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto &entry : entries)
+        upsertLocked(entry);
+}
+
+void GnbNeighbors::replaceAll(const std::vector<GnbNeighborConfig> &entries)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_neighbors = entries;
+}
+
+void GnbNeighbors::remove(int pci)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_neighbors.erase(
+        std::remove_if(m_neighbors.begin(), m_neighbors.end(),
+                       [pci](const GnbNeighborConfig &e) { return e.getPci() == pci; }),
+        m_neighbors.end());
+}
+
+std::optional<GnbNeighborConfig> GnbNeighbors::findByPci(int pci) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = std::find_if(m_neighbors.begin(), m_neighbors.end(), [pci](const GnbNeighborConfig &e) {
+        return e.getPci() == pci;
+    });
+    if (it == m_neighbors.end())
+        return std::nullopt;
+    return *it;
+}
+
+std::optional<GnbNeighborConfig> GnbNeighbors::findByNci(int64_t nci) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = std::find_if(m_neighbors.begin(), m_neighbors.end(), [nci](const GnbNeighborConfig &e) {
+        return e.nci == nci;
+    });
+    if (it == m_neighbors.end())
+        return std::nullopt;
+    return *it;
+}
+
+std::vector<GnbNeighborConfig> GnbNeighbors::getAll() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_neighbors;
+}
+
+size_t GnbNeighbors::size() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_neighbors.size();
+}
+
 } // namespace nr::gnb

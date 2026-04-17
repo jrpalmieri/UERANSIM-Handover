@@ -165,7 +165,7 @@ void UeRrcTask::receiveSib19(int cellId, const OctetString &pdu)
     if (len >= SIB19_MULTI_HEADER_SIZE && readU8(0) == SIB19_MULTI_VERSION)
     {
         uint8_t ephType = readU8(1);
-        if (ephType != 0)
+        if (ephType != 0 && ephType != 1)
         {
             m_logger->err("DL_SIB19: unsupported multi-entry ephemeris type %u", ephType);
             return;
@@ -188,13 +188,28 @@ void UeRrcTask::receiveSib19(int cellId, const OctetString &pdu)
                 continue;
 
             Sib19Info::PciEntry entry{};
-            entry.ntnConfig.ephemerisInfo.type = EEphemerisType::POSITION_VELOCITY;
-            entry.ntnConfig.ephemerisInfo.posVel.positionX = readF64(base + 4);
-            entry.ntnConfig.ephemerisInfo.posVel.positionY = readF64(base + 12);
-            entry.ntnConfig.ephemerisInfo.posVel.positionZ = readF64(base + 20);
-            entry.ntnConfig.ephemerisInfo.posVel.velocityVX = readF64(base + 28);
-            entry.ntnConfig.ephemerisInfo.posVel.velocityVY = readF64(base + 36);
-            entry.ntnConfig.ephemerisInfo.posVel.velocityVZ = readF64(base + 44);
+
+            if (ephType == 0)
+            {
+                entry.ntnConfig.ephemerisInfo.type = EEphemerisType::POSITION_VELOCITY;
+                entry.ntnConfig.ephemerisInfo.posVel.positionX  = readF64(base + 4);
+                entry.ntnConfig.ephemerisInfo.posVel.positionY  = readF64(base + 12);
+                entry.ntnConfig.ephemerisInfo.posVel.positionZ  = readF64(base + 20);
+                entry.ntnConfig.ephemerisInfo.posVel.velocityVX = readF64(base + 28);
+                entry.ntnConfig.ephemerisInfo.posVel.velocityVY = readF64(base + 36);
+                entry.ntnConfig.ephemerisInfo.posVel.velocityVZ = readF64(base + 44);
+            }
+            else // ephType == 1
+            {
+                entry.ntnConfig.ephemerisInfo.type = EEphemerisType::ORBITAL_PARAMETERS;
+                entry.ntnConfig.ephemerisInfo.orbital.semiMajorAxis = readI64(base + 4);
+                entry.ntnConfig.ephemerisInfo.orbital.eccentricity  = readI32(base + 12);
+                entry.ntnConfig.ephemerisInfo.orbital.periapsis     = readI32(base + 16);
+                entry.ntnConfig.ephemerisInfo.orbital.longitude     = readI32(base + 20);
+                entry.ntnConfig.ephemerisInfo.orbital.inclination   = readI32(base + 24);
+                entry.ntnConfig.ephemerisInfo.orbital.meanAnomaly   = readI32(base + 28);
+            }
+
             fillCommonFields(base, entry.ntnConfig, entry.cellSpecificKoffset, entry.ntnPolarization,
                              entry.taDrift);
             entry.receivedTime = receivedTime;

@@ -13,6 +13,7 @@
 #include <lib/rrc/encode.hpp>
 #include <ue/nas/task.hpp>
 #include <ue/rls/task.hpp>
+#include <utils/constants.hpp>
 
 #include <asn/rrc/ASN_RRC_RRCReconfigurationComplete.h>
 #include <asn/rrc/ASN_RRC_RRCReconfigurationComplete-IEs.h>
@@ -47,7 +48,7 @@ int UeRrcTask::findCellByPci(int physCellId)
     {
         if (id == currentCellId)
             continue;
-        int nciLowBits = static_cast<int>(desc.sib1.nci & 0x3FF);  // lower 10 bits ≈ PCI
+        int nciLowBits = cons::getPciFromNci(desc.sib1.nci);
         if (nciLowBits == physCellId)
         {
             m_logger->debug("Handover: PCI %d matched via NCI lower bits to cell[%d]", physCellId, id);

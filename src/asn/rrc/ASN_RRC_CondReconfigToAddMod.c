@@ -1,4 +1,6 @@
 #include "ASN_RRC_CondReconfigToAddMod.h"
+
+#include "ASN_RRC_CondTriggerConfig-r16.h"
 static int
 memb_ASN_RRC_condReconfigId_constraint_1(const asn_TYPE_descriptor_t *td, const void *sptr,
 			asn_app_constraint_failed_f *ctfailcb, void *app_key) {
@@ -60,6 +62,19 @@ memb_ASN_RRC_condRRCReconfig_constraint_1(const asn_TYPE_descriptor_t *td, const
 
 static int
 memb_ASN_RRC_condExecutionCondSCG_constraint_1(const asn_TYPE_descriptor_t *td, const void *sptr,
+			asn_app_constraint_failed_f *ctfailcb, void *app_key) {
+	if(!sptr) {
+		ASN__CTFAIL(app_key, td, sptr,
+			"%s: value not given (%s:%d)",
+			td->name, __FILE__, __LINE__);
+		return -1;
+	}
+
+	return td->encoding_constraints.general_constraints(td, sptr, ctfailcb, app_key);
+}
+
+static int
+memb_ASN_RRC_condTriggerConfig_r16_constraint_1(const asn_TYPE_descriptor_t *td, const void *sptr,
 			asn_app_constraint_failed_f *ctfailcb, void *app_key) {
 	if(!sptr) {
 		ASN__CTFAIL(app_key, td, sptr,
@@ -173,8 +188,17 @@ asn_TYPE_member_t asn_MBR_ASN_RRC_CondReconfigToAddMod_1[] = {
 		0, 0,
 		"condExecutionCondSCG"
 		},
+	{ ATF_POINTER, 0, offsetof(struct ASN_RRC_CondReconfigToAddMod, condTriggerConfig_r16),
+		(ASN_TAG_CLASS_CONTEXT | (4 << 2)),
+		-1,
+		&asn_DEF_ASN_RRC_CondTriggerConfig_r16,
+		0,
+		{ 0, 0, memb_ASN_RRC_condTriggerConfig_r16_constraint_1 },
+		0, 0,
+		"condTriggerConfig-r16"
+		},
 };
-static const int asn_MAP_ASN_RRC_CondReconfigToAddMod_oms_1[] = { 1, 2, 3 };
+static const int asn_MAP_ASN_RRC_CondReconfigToAddMod_oms_1[] = { 1, 2, 3, 4 };
 static const ber_tlv_tag_t asn_DEF_ASN_RRC_CondReconfigToAddMod_tags_1[] = {
 	(ASN_TAG_CLASS_UNIVERSAL | (16 << 2))
 };
@@ -182,15 +206,16 @@ static const asn_TYPE_tag2member_t asn_MAP_ASN_RRC_CondReconfigToAddMod_tag2el_1
     { (ASN_TAG_CLASS_CONTEXT | (0 << 2)), 0, 0, 0 }, /* condReconfigId */
     { (ASN_TAG_CLASS_CONTEXT | (1 << 2)), 1, 0, 0 }, /* condExecutionCond */
     { (ASN_TAG_CLASS_CONTEXT | (2 << 2)), 2, 0, 0 }, /* condRRCReconfig */
-    { (ASN_TAG_CLASS_CONTEXT | (3 << 2)), 3, 0, 0 }  /* condExecutionCondSCG */
+    { (ASN_TAG_CLASS_CONTEXT | (3 << 2)), 3, 0, 0 }, /* condExecutionCondSCG */
+    { (ASN_TAG_CLASS_CONTEXT | (4 << 2)), 4, 0, 0 }  /* condTriggerConfig-r16 */
 };
 asn_SEQUENCE_specifics_t asn_SPC_ASN_RRC_CondReconfigToAddMod_specs_1 = {
 	sizeof(struct ASN_RRC_CondReconfigToAddMod),
 	offsetof(struct ASN_RRC_CondReconfigToAddMod, _asn_ctx),
 	asn_MAP_ASN_RRC_CondReconfigToAddMod_tag2el_1,
-	4,	/* Count of tags in the map */
+	5,	/* Count of tags in the map */
 	asn_MAP_ASN_RRC_CondReconfigToAddMod_oms_1,	/* Optional members */
-	2, 1,	/* Root/Additions */
+	2, 2,	/* Root/Additions */
 	3,	/* First extension addition */
 };
 asn_TYPE_descriptor_t asn_DEF_ASN_RRC_CondReconfigToAddMod = {
@@ -205,6 +230,6 @@ asn_TYPE_descriptor_t asn_DEF_ASN_RRC_CondReconfigToAddMod = {
 		/sizeof(asn_DEF_ASN_RRC_CondReconfigToAddMod_tags_1[0]), /* 1 */
 	{ 0, 0, SEQUENCE_constraint },
 	asn_MBR_ASN_RRC_CondReconfigToAddMod_1,
-	4,	/* Elements count */
+	5,	/* Elements count */
 	&asn_SPC_ASN_RRC_CondReconfigToAddMod_specs_1	/* Additional specs */
 };

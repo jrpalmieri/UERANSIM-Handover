@@ -8,6 +8,8 @@ option(STATIC_BUILD "Build fully static executables for portability across Ubunt
 
 include_directories(src)
 
+include(cmake/ExternalSgp4.cmake)
+
 #################### SUB DIRECTORIES ####################
 
 add_subdirectory(src/ext)

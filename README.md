@@ -36,6 +36,43 @@ You can find the documentation on [UERANSIM Wiki](https://github.com/aligungr/UE
 And, since the project is rapidly developing, please make sure that you have always
 the [latest](https://github.com/aligungr/UERANSIM/releases) UERANSIM.
 
+## External Static Dependency (SGP4)
+
+This branch supports building and statically linking the external SGP4 library from a sibling repository.
+
+Default source location:
+
+- `../sgp4` (relative to this repository root)
+
+Configure and build:
+
+```bash
+cmake -S . -B build
+cmake --build build --target sgp4_external -j
+cmake --build build --target nr-gnb -j
+cmake --build build --target nr-ue -j
+```
+
+What this does:
+
+- Builds SGP4 via CMake `ExternalProject`.
+- Installs SGP4 headers into `build/_deps/sgp4-install/include`.
+- Stages `libsgp4.a` into `build/_deps/sgp4-install/lib` for static linking.
+- Links SGP4 through internal project targets so generated binaries pick it up automatically.
+
+Useful CMake options:
+
+```bash
+# Override source path if your sgp4 repo is somewhere else
+cmake -S . -B build -DSGP4_SOURCE_DIR=/absolute/path/to/sgp4
+
+# Override static library basename (lib<name>.a)
+cmake -S . -B build -DSGP4_LIBRARY_NAME=sgp4
+
+# Disable external SGP4 integration
+cmake -S . -B build -DENABLE_EXTERNAL_SGP4=OFF
+```
+
 ## Contributing
 
 Any contributions you make are greatly appreciated via [Pull Request](https://github.com/aligungr/UERANSIM/pulls).

@@ -4,6 +4,7 @@
 
 #include "task.hpp"
 
+#include <gnb/neighbors.hpp>
 #include <gnb/nts.hpp>
 #include <lib/udp/server_task.hpp>
 
@@ -72,12 +73,12 @@ void XnTask::onQuit()
 
 std::optional<InetAddress> XnTask::resolveNeighborXnEndpoint(int targetPci) const
 {
-    const auto *neighbor = m_config->findNeighborByPci(targetPci);
-    if (neighbor == nullptr)
+    auto neighborOpt = m_base->neighbors->findByPci(targetPci);
+    if (!neighborOpt)
         return std::nullopt;
 
-    auto address = neighbor->xnAddress ? *neighbor->xnAddress : neighbor->ipAddress;
-    auto port = neighbor->xnPort ? *neighbor->xnPort : m_config->handover.xn.bindPort;
+    auto address = neighborOpt->xnAddress ? *neighborOpt->xnAddress : neighborOpt->ipAddress;
+    auto port = neighborOpt->xnPort ? *neighborOpt->xnPort : m_config->handover.xn.bindPort;
 
     return InetAddress{address, port};
 }

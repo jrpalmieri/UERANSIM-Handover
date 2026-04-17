@@ -32,6 +32,7 @@ struct GnbCliCommand
         UE_RELEASE_REQ,
         LOC_PV,
         SAT_LOC_PV,
+        SAT_TLE,
         NEIGHBORS,
         VERSION,
     } present;
@@ -53,6 +54,9 @@ struct GnbCliCommand
 
     // SAT_LOC_PV
     std::string satLocPvJson{};
+
+    // SAT_TLE
+    std::string satTleJson{};
 
     // NEIGHBORS
     std::string neighborsJson{};

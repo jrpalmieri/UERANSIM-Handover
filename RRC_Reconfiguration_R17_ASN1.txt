@@ -54,7 +54,7 @@ CondReconfigToAddMod-r16 ::= SEQUENCE {
 -- The "Link" to SIB19 Distance Triggers
 MeasConfig ::= SEQUENCE {
     measObjectToRemoveList              MeasObjectToRemoveList                              OPTIONAL, -- Need N
-    measObjectToAddModList              MeasObjectToAddModList                              OPTIONAL, -- Need N
+    measObjectToAddModList              MeasObjectToAddModList
     reportConfigToRemoveList            ReportConfigToRemoveList                            OPTIONAL, -- Need N
     reportConfigToAddModList            ReportConfigToAddModList                            OPTIONAL, -- Need N
     measIdToRemoveList                  MeasIdToRemoveList                                  OPTIONAL, -- Need N
@@ -91,3 +91,137 @@ ReferenceLocation-r17 ::= CHOICE {
     ...
 }
 
+
+-- timing-based triggering using a "dummy" eventA3
+ReportConfigNR ::= SEQUENCE {
+    reportType SEQUENCE {
+        condTriggerConfig-r16 SEQUENCE {
+            triggerEvent SEQUENCE {
+                eventA3 SEQUENCE {
+                    a3-Offset SEQUENCE {
+                        rsrp    -30  -- The "Dummy" offset: makes condition always true
+                    },
+                    reportOnLeave          FALSE,
+                    hysteresis             0,    -- No margin needed for a dummy
+                    timeToTrigger          ms0   -- Execute immediately upon T-Exit
+                },
+                -- The actual NTN logic that gates the execution:
+                ntn-TriggerConfig-r17 SEQUENCE {
+                    t-Service-r17    300 -- 5 minutes until elevation < 10 degrees
+                }
+            }
+        }
+    }
+}
+
+-- timing-based triggering using a conditional eventD1
+ReportConfigNR ::= SEQUENCE {
+    reportType SEQUENCE {
+        condTriggerConfig-r16 SEQUENCE {
+            triggerEvent SEQUENCE {
+                -- In Rel-17, we use the NTN-specific trigger
+                condEventD1-r17 SEQUENCE {
+                    mue-Threshold-r17 SEQUENCE {
+                        timeToExit-r17 450, -- Dynamic value in units of 10ms
+                        -- Calculated as (T_exit - T_current)
+                    },
+                    hysteresis-r17 0,
+                    timeToTrigger-r17 ms100
+                }
+            }
+        }
+    }
+}
+
+
+Full Message Structure (for IEs used in this simulator):
+
+RRCReconfiguration-IEs ::= SEQUENCE {
+    radioBearerConfig                   RadioBearerConfig                                  OPTIONAL
+    secondaryCellGroup                  OCTET STRING (CONTAINING CellGroupConfig)           OPTIONAL
+    measConfig                          MeasConfig                                          OPTIONAL
+
+        -- the measurements to use
+        MeasConfig ::= SEQUENCE {
+        
+            measObjectToRemoveList              MeasObjectToRemoveList                              OPTIONAL, -- Need N
+            measObjectToAddModList              MeasObjectToAddModList                              OPTIONAL, -- Need N
+              -- since the simulator does not use RF layers, we use a single dummy measObject
+        
+            reportConfigToRemoveList            ReportConfigToRemoveList                            OPTIONAL, -- Need N
+            reportConfigToAddModList            ReportConfigToAddModList
+
+                -- list of reportConfigNR IEs
+        
+                ReportConfigNR ::= SEQUENCE {
+                    reportType SEQUENCE {
+                        condTriggerConfig-r16 SEQUENCE {
+                            triggerEvent SEQUENCE {
+                                eventA3 SEQUENCE {
+                                    a3-Offset SEQUENCE {
+                                        rsrp    -30  -- The "Dummy" offset: makes condition always true
+                                    },
+                                    reportOnLeave          FALSE,
+                                    hysteresis             0,    -- No margin needed for a dummy
+                                    timeToTrigger          ms0   -- Execute immediately upon T-Exit
+                                },
+                                -- The actual NTN logic that gates the execution:
+                                ntn-TriggerConfig-r17 SEQUENCE {
+                                    t-Service-r17    300 -- 5 minutes until elevation < 10 degrees
+                                }
+                            }
+                        }
+                    }
+                }
+
+            measIdToRemoveList                  MeasIdToRemoveList                                  OPTIONAL, -- Need N
+            measIdToAddModList                  MeasIdToAddModList                                  OPTIONAL, -- Need N
+                -- the mappings between measObjects and reportConfigs
+                
+        }
+
+    lateNonCriticalExtension            OCTET STRING                                        OPTIONAL
+    nonCriticalExtension                RRCReconfiguration-v1530-IEs                        OPTIONAL
+
+        RRCReconfiguration-v1530-IEs ::= SEQUENCE {
+            masterCellGroup                     OCTET STRING (CONTAINING CellGroupConfig)           OPTIONAL
+            fullConfig                          ENUMERATED {true}     (true = replace current configs with configs in this message)
+            dedicatedNAS-MessageList            SEQUENCE (SIZE(1..maxDRB)) OF DedicatedNAS-Message  OPTIONAL
+            masterKeyUpdate                     MasterKeyUpdate                                     OPTIONAL
+            sk-Counter                          SK-Counter                                          OPTIONAL
+            nonCriticalExtension                RRCReconfiguration-v1610-IEs                        OPTIONAL
+
+                RRCReconfiguration-v1610-IEs ::= SEQUENCE {
+                    conditionalReconfiguration-r16      ConditionalReconfiguration-r16
+
+                        ConditionalReconfiguration-r16 ::= SEQUENCE {
+                            attemptCondReconfig-r16             ENUMERATED {true}
+                            condReconfigToRemoveModList-r16     CondReconfigToRemoveModList-r16
+                            condReconfigToAddModList-r16        CondReconfigToAddModList-r16
+
+                                -- The Individual Candidate Entry (can be more than one)
+                                CondReconfigToAddMod-r16 ::= SEQUENCE {
+                                    condReconfigId-r16                  CondReconfigId-r16,  (INT)
+                                    condExecutionCond-r16               SEQUENCE (SIZE (1..2)) OF MeasId   (maps to MeasId)
+                                    condRRCReconfig-r16                 OCTET STRING (CONTAINING RRCReconfiguration)   (handover command)
+                                    ...,
+                                    -- Rel-17 NTN Specific: Priority for tie-breaking multiple satellites
+                                    condExecutionPriority-r17           INTEGER (1..128)
+                                }
+                        }
+
+                    daps-Config-r16                     DAPS-Config-r16                                     OPTIONAL, -- Need M
+                    nonCriticalExtension                RRCReconfiguration-v1700-IEs                        OPTIONAL
+
+                        RRCReconfiguration-v1700-IEs ::= SEQUENCE {
+                            scg-State-r17                       ENUMERATED {deactivated, activated}                 
+                            appLayerMeasConfig-r17              AppLayerMeasConfig-r17                              
+                            nonCriticalExtension                SEQUENCE {}                                         
+                        }
+
+
+                }
+
+        }
+
+}

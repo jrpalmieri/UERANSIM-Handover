@@ -30,6 +30,8 @@ class RlsUdpTask : public NtsTask
       int cRnti{};
       InetAddress address;
       int64_t lastSeen{};
+      GeoPosition lastPos{};       // last UE position reported in a heartbeat
+      bool        hasPosData{false}; // true once at least one heartbeat with position has been received
     };
 
   private:

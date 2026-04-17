@@ -57,6 +57,10 @@ class NgapTask : public NtsTask
 
     std::unordered_map<int, NgapAmfContext *> m_amfCtx;
     std::unordered_map<int, NgapUeContext *> m_ueCtx;
+
+    // tracks pending CHO handover preparations, so that responses can be correlated.
+    // primary index is UE ctxId, secondary index is target PCI. Third value is count of pending CHO preparations for the same target PCI
+    //  (can be >1 but unlikely in practice, since usually only 1 handover preparation per target PCI would be triggered for the same UE)
     std::unordered_map<int, std::unordered_map<int, int>> m_hoReqChoPendingByTargetPci;
 
     // Handover context tracker, indexed by ueId

@@ -12,3 +12,7 @@ target_link_libraries(common-lib asn-ngap)
 target_link_libraries(common-lib asn-rrc)
 
 target_link_libraries(common-lib sctp) # Linux SCTP
+
+if(TARGET sgp4)
+	target_link_libraries(common-lib sgp4)
+endif()

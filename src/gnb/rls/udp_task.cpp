@@ -8,15 +8,21 @@
 
 #include "udp_task.hpp"
 #include "sat_pos_sim.hpp"
-#include "satellite_state.hpp"
 
 #include <algorithm>
 #include <cmath>
+
+#include <libsgp4/DateTime.h>
+#include <libsgp4/Eci.h>
+#include <libsgp4/SGP4.h>
+#include <libsgp4/Tle.h>
 #include <cstdint>
 #include <cstring>
 #include <set>
 
 #include <gnb/nts.hpp>
+#include <gnb/sat_time.hpp>
+#include <gnb/sat_tle_store.hpp>
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
 #include <utils/libc_error.hpp>
@@ -89,14 +95,7 @@ void RlsUdpTask::receiveRlsPdu(
     const InetAddress &addr,
     std::unique_ptr<rls::RlsMessage> &&msg)
 {
-    // DEPRECATED - Satellite position updates are received through the command interface, not the UE-GNB UDP interface, so this message type is no longer used.  
-    //      However, we keep the handling code here for now in case we want to re-enable satellite position updates through the UDP interface in the future.
-    // Satellite position updates are handled internally and not forwarded to the control task
-    if (msg->msgType == rls::EMessageType::SATELLITE_POSITION_UPDATE)
-    {
-        handleSatPositionUpdate(*msg);
-        return;
-    }
+
 
     // DEPRECATED - RSRP updates from the gNB are received through the command interface, not the UE-GNB UDP interface, so this message type is no longer used.
     //      However, we keep the handling code here for now in case we want to re-enable RSRP updates through the UDP interface in the future.
@@ -137,7 +136,9 @@ void RlsUdpTask::receiveRlsPdu(
                 m_ueMap[ueId].address = addr;
                 if (msg->senderId2 != 0)
                     m_ueMap[ueId].cRnti = static_cast<int>(msg->senderId2);
-                m_ueMap[ueId].lastSeen = utils::CurrentTimeMillis();
+                m_ueMap[ueId].lastSeen    = utils::CurrentTimeMillis();
+                m_ueMap[ueId].lastPos     = hb.simPos;
+                m_ueMap[ueId].hasPosData  = true;
             }
             // If the STI is not in the stiToUE Map, add it and assign it a UE ID.
             else
@@ -147,10 +148,12 @@ void RlsUdpTask::receiveRlsPdu(
                 ueId = msg->senderId != 0 ? static_cast<int>(msg->senderId) : ++m_newIdCounter;
 
                 m_stiToUe[msg->sti] = ueId;
-                m_ueMap[ueId].sti = msg->sti;
-                m_ueMap[ueId].address = addr;
-                m_ueMap[ueId].cRnti = static_cast<int>(msg->senderId2);
-                m_ueMap[ueId].lastSeen = utils::CurrentTimeMillis();
+                m_ueMap[ueId].sti        = msg->sti;
+                m_ueMap[ueId].address    = addr;
+                m_ueMap[ueId].cRnti      = static_cast<int>(msg->senderId2);
+                m_ueMap[ueId].lastSeen   = utils::CurrentTimeMillis();
+                m_ueMap[ueId].lastPos    = hb.simPos;
+                m_ueMap[ueId].hasPosData = true;
                 isNewUe = true;
             }
         }
@@ -179,6 +182,8 @@ void RlsUdpTask::receiveRlsPdu(
     // Derive the UeID and C-RNTI from the message's STI and senderId2, respectively, and update the UE info with the new C-RNTI if provided.
     int ueId = 0;
     int cRnti = static_cast<int>(msg->senderId2);
+    GeoPosition uePos{};
+    bool hasPosData = false;
     {
         std::lock_guard<std::mutex> lock(m_ueMutex);
         if (!m_stiToUe.count(msg->sti))
@@ -192,14 +197,20 @@ void RlsUdpTask::receiveRlsPdu(
         // update the cRnti (catches the RRC assignment)
         if (msg->senderId2 != 0)
             m_ueMap[ueId].cRnti = cRnti;
+
+        // snapshot the last known UE position for this message
+        uePos      = m_ueMap[ueId].lastPos;
+        hasPosData = m_ueMap[ueId].hasPosData;
     }
 
-    // If we get here, this is a non-heartbeat message from a known UE. 
-    //  Forward it to the control task for processing, including the UE ID and C-RNTI in the forwarded message.
+    // If we get here, this is a non-heartbeat message from a known UE.
+    //  Forward it to the control task for processing, including the UE ID, C-RNTI, and last known UE position.
     auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RECEIVE_RLS_MESSAGE);
-    w->ueId = ueId;
-    w->msg = std::move(msg);
-    w->cRnti = cRnti;
+    w->ueId       = ueId;
+    w->msg        = std::move(msg);
+    w->cRnti      = cRnti;
+    w->uePos      = uePos;
+    w->hasPosData = hasPosData;
     m_ctlTask->push(std::move(w));
 }
 
@@ -285,27 +296,47 @@ void RlsUdpTask::send(int ueId, const rls::RlsMessage &msg)
  * For NTN configurations, this is the path loss based on the locations of the UE and the GNB's satellite using
  * satellite path loss models.
  * 
- * @param uePos UE's current position in lat/lon/alt, which is provided by the UE in the heartbeat message
- * @return int 
+ * @param uePos - UE's current position in lat/lon/alt, which is provided by the UE in the heartbeat message
+ * @return int - RSRP in dbm
  */
 int RlsUdpTask::computeDbm(const GeoPosition &uePos)
 {
     auto *cfg = m_base->config;
     auto rfLink = cfg->rfLink.toSatelliteLinkConfig();
 
+    // if configured for "fixed" mode, just return the fixed RSRP value
     if (cfg->rfLink.updateMode == EGnbRsrpMode::Fixed)
         return m_fixedRsrp;
 
-    if (cfg->ntn.ntnEnabled && m_base->satState)
+    // if we are in NTN mode, use the satellite position to calculate the path loss.
+    if (cfg->ntn.ntnEnabled)
     {
-        EcefPosition satEcef{};
-        int64_t posTime{};
-        if (m_base->satState->getPosition(satEcef, posTime))
+        // pull the current TLE from the TLE store
+        int ownPci = cons::getPciFromNci(cfg->nci);
+        auto ownTle = m_base->satTleStore->find(ownPci);
+        if (ownTle.has_value())
         {
-            return SatelliteSimulatedDbm(
-                satEcef, uePos, rfLink);
+            try
+            {
+                // calculate the satellite position in ECEF coordinates using the SGP4 algorithm and the TLE
+                libsgp4::Tle tle(ownTle->line1, ownTle->line2);
+                libsgp4::SGP4 sgp4(tle);
+                libsgp4::Eci eci = sgp4.FindPosition(sat_time::Now());
+                libsgp4::CoordGeodetic geo = eci.ToGeodetic();
+                EcefPosition satEcef = GeoToEcef(GeoPosition{
+                    geo.latitude  * (180.0 / M_PI),
+                    geo.longitude * (180.0 / M_PI),
+                    geo.altitude  * 1000.0
+                });
+                // calculate the RSRP
+                return SatelliteSimulatedDbm(satEcef, uePos, rfLink);
+            }
+            catch (const std::exception &)
+            {
+                // propagation failed – fall through to terrestrial
+            }
         }
-        // No TLE received yet - fall back to static position
+        // No TLE loaded yet or propagation failed – fall back to terrestrial
     }
 
 
@@ -314,34 +345,7 @@ int RlsUdpTask::computeDbm(const GeoPosition &uePos)
         cfg->geoLocation, uePos, rfLink);
 }
 
-void RlsUdpTask::handleSatPositionUpdate(
-    const rls::RlsMessage &msg)
-{
-    if (!m_base->config->ntn.ntnEnabled || !m_base->satState)
-    {
-        m_logger->warn(
-            "Received SATELLITE_POSITION_UPDATE but "
-            "ntn.ntnEnabled is false — ignoring");
-        return;
-    }
 
-    auto &spu =
-        static_cast<const rls::RlsSatellitePositionUpdate &>(
-            msg);
-
-    OrbitalElements elems{};
-    if (!ParseTle(spu.tleLine1, spu.tleLine2, elems))
-    {
-        m_logger->err("Failed to parse TLE from SPU message");
-        return;
-    }
-    // Override epoch if the SPU carries one
-    if (spu.epochMs != 0)
-        elems.epochMs = spu.epochMs;
-
-    m_base->satState->updateTle(elems);
-    m_logger->info("Satellite TLE updated from SPU message");
-}
 
 
 void RlsUdpTask::handleRsrpUpdate(

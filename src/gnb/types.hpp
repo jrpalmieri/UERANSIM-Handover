@@ -20,9 +20,12 @@
 #include <utils/network.hpp>
 #include <utils/nts.hpp>
 #include <utils/octet_string.hpp>
+#include <utils/constants.hpp>
 
 #include <asn/ngap/ASN_NGAP_QosFlowSetupRequestList.h>
 #include <asn/rrc/ASN_RRC_InitialUE-Identity.h>
+
+#include <asn/rrc/ASN_RRC_MeasConfig.h>
 
 namespace nr::gnb
 {
@@ -38,7 +41,8 @@ class XnTask;
 struct NgapUeContext;
 struct RrcUeContext;
 
-class SatelliteState;  // fwd decl (satellite_state.hpp)
+class GnbNeighbors;    // fwd decl (neighbors.hpp)
+class SatTleStore;     // fwd decl (sat_tle_store.hpp)
 
 enum class EAmfState
 {
@@ -200,6 +204,18 @@ struct NgapUeContext
     }
 };
 
+struct PositionVelocity
+{
+    bool isValid{false};
+    double x{};
+    double y{};
+    double z{};
+    double vx{};
+    double vy{};
+    double vz{};
+    int64_t epochMs{};
+};
+
 // tracks internal state of the RRC connection process for a UE
 //   NOT the same as the RRC 3GPP states
 enum UE_RRC_CONNECTION_STATE {
@@ -210,13 +226,7 @@ enum UE_RRC_CONNECTION_STATE {
 
 struct RrcUeContext
 {
-    struct SentMeasIdentity
-    {
-        long measId{};
-        long measObjectId{};
-        long reportConfigId{};
-        std::string eventType{};
-    };
+
 
     // UE's unique identifier, provided by UE in RLS messages
     int ueId{};
@@ -242,23 +252,55 @@ struct RrcUeContext
     int observedRadioUeId{};
     long handoverTxId{};
 
-    // Active Measurement Identities
-    std::vector<SentMeasIdentity> sentMeasIdentities{};
+    // Active Measurement Config IEs
+
+    struct MeasIdentityMappings
+    {
+        long measId{};
+        long measObjectId{};
+        long reportConfigId{};
+        std::string eventType{};
+        int choProfileId{};
+    };
+
+    // list of measurement identities currently configured for this UE, along with their associated object and report config IDs and event types
+    std::vector<MeasIdentityMappings> usedMeasIdentities{};
+
+    // list of measuObjectIds currently configured for this UE, to avoid conflicting reuse
+    std::vector<long> usedMeasObjectIds{};
+
+    // list of reportConfigIds currently configured for this UE, to avoid conflicting reuse
+    std::vector<long> usedReportConfigIds{};
+
+    // stores pointers to sent MeasConfig messages along with the measIds used in that config, for potential future reference (e.g. handovers)
+    std::vector<std::tuple<ASN_RRC_MeasConfig*, std::vector<long>>> sentMeasConfigs{};
+
+
+    // UE position (populated from RLS heartbeat data via UPLINK_RRC path)
+    PositionVelocity uePosition{};
 
     /* Last measurement report data */
-    
+
     int lastMeasReportPci{-1};
     int lastMeasReportRsrp{-140};
     int lastServingRsrp{-140};
     bool handoverDecisionPending{};
     bool choPreparationPending{};
+    
+    /* CHO State Tracking */
+
     std::vector<int> choPreparationCandidatePcis{};
     std::unordered_map<int, int> choPreparationCandidateScores{};
     std::vector<long> choPreparationMeasIds{};
+    std::optional<int> choPreparationCandidateProfileId{};
+    int choPreparationTriggerTimerSec{};
+    int choPreparationDistanceThreshold{};
+    ASN_RRC_MeasConfig* choPreparationMeasConfig{};
+    
 
-    [[nodiscard]] const SentMeasIdentity *findSentMeasIdentity(long measId) const
+    [[nodiscard]] const MeasIdentityMappings *findSentMeasIdentity(long measId) const
     {
-        for (const auto &entry : sentMeasIdentities)
+        for (const auto &entry : usedMeasIdentities)
         {
             if (entry.measId == measId)
                 return &entry;
@@ -431,6 +473,9 @@ struct SIB19Config
     int sib19TimingMs{1000};
     int satLocUpdateThresholdMs{5000};
 
+    // Ephemeris type transmitted in SIB19: 0 = pos/vel state vectors, 1 = Keplerian orbital elements
+    int ephType{0};
+
     int32_t kOffset{0};
     int64_t taCommon{0};
     int32_t taCommonDrift{0};
@@ -441,17 +486,6 @@ struct SIB19Config
     std::optional<int32_t> taDrift{};
 };
 
-struct TruePositionVelocity
-{
-    bool isValid{false};
-    double x{};
-    double y{};
-    double z{};
-    double vx{};
-    double vy{};
-    double vz{};
-    int64_t epochMs{};
-};
 
 struct SatellitePositionVelocityEntry
 {
@@ -464,6 +498,15 @@ struct SatellitePositionVelocityEntry
     double vz{};
     int64_t epochMs{};
     int64_t lastUpdatedMs{};
+};
+
+// TLE entry for one satellite gNB.  Keyed by PCI and shared across subsystems.
+struct SatTleEntry
+{
+    int pci{};
+    std::string line1{};
+    std::string line2{};
+    int64_t lastUpdatedMs{};  // 0 = loaded from config, otherwise millisecond timestamp of last CLI upsert
 };
 
 enum class EGnbRsrpMode
@@ -529,8 +572,7 @@ struct GnbNeighborConfig
 
     [[nodiscard]] inline int getPci() const
     {
-        // In this simulator, PCI is represented by the 10 least significant bits.
-        return static_cast<int>(nci & 0x3FF);
+        return cons::getPciFromNci(nci);
     }
 };
 
@@ -561,6 +603,9 @@ struct GnbHandoverConfig
         int hysteresisDb{1};
         int hysteresisM{0};
         int tttMs{100};
+        bool ntnTriggerEnabled{false};
+        bool useTimer{false};
+        int timerSec{300};
         std::string distanceType{"nadir"};
         bool targetCellCalculated{true};
         std::optional<int64_t> targetCellId{};
@@ -568,9 +613,12 @@ struct GnbHandoverConfig
         std::optional<EcefPosition> referencePositionEcef{};
     };
 
-    struct GnbChoEventConfig
+    struct GnbChoCandidateProfileConfig
     {
-        std::vector<GnbHandoverEventConfig> events{};
+        int candidateProfileId{0};
+        bool targetCellCalculated{true};
+        std::optional<int64_t> targetCellId{};
+        std::vector<GnbHandoverEventConfig> conditions{};
     };
 
     struct GnbXnConfig
@@ -584,16 +632,30 @@ struct GnbHandoverConfig
     };
 
     bool choEnabled{false};
+    int choDefaultProfileId{0};
     std::vector<GnbHandoverEventConfig> events{{}};
-    std::vector<GnbChoEventConfig> choEvents{};
+    std::vector<GnbChoCandidateProfileConfig> candidateProfiles{};
     GnbXnConfig xn{};
 };
 
 struct NtnConfig
 {
+    struct TimeWarpConfig
+    {
+        std::optional<int64_t> offsetMs{};
+        std::optional<std::string> targetTimeEpoch{};
+    };
+
     bool ntnEnabled{false};
+    std::optional<SatTleEntry> ownTle{};  // set when ntn.tle is present in the config file
+    TimeWarpConfig timeWarp{};
     SIB19Config sib19{};
     GnbHandoverConfig ntnHandover{};
+
+    // Minimum elevation angle (degrees, integer) below which the satellite gNB is considered
+    // at risk of going out of range from the UE.  Used to compute T_exit and to rank CHO candidates.
+    // Configurable via ntn.elevationMinDeg; defaults to 20 degrees.
+    int elevationMinDeg{20};
 };
 
 struct GnbRlsConfig
@@ -650,15 +712,7 @@ struct GnbConfig
                       (1 << (36 - gnbIdLength)) - 1));
     }
 
-    [[nodiscard]] inline const GnbNeighborConfig *findNeighborByPci(int pci) const
-    {
-        for (const auto &neighbor : neighborList)
-        {
-            if (neighbor.getPci() == pci)
-                return &neighbor;
-        }
-        return nullptr;
-    }
+
 };
 
 struct TaskBase
@@ -676,7 +730,9 @@ struct TaskBase
     GnbRlsTask *rlsTask{};
     XnTask *xnTask{};
 
-    SatelliteState *satState{};  // nullptr when NTN satellite mode is disabled
+    SatTleStore *satTleStore{};  // always non-null after GNodeB construction
+
+    GnbNeighbors *neighbors{};
 };
 
 Json ToJson(const GnbStatusInfo &v);

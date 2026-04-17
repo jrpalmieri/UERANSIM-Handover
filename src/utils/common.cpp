@@ -31,6 +31,7 @@ static_assert(sizeof(double) == sizeof(uint64_t));
 static_assert(sizeof(long long) == sizeof(uint64_t));
 
 static std::atomic<int> g_idCounter = 1;
+static std::atomic<int64_t> g_timeWarpOffsetMillis{0};
 
 static bool IPv6FromString(const char *szAddress, uint8_t *address)
 {
@@ -153,8 +154,18 @@ int64_t utils::CurrentTimeMillis()
     auto time = std::chrono::system_clock::now();
     auto sinceEpoch = time.time_since_epoch();
     auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(sinceEpoch);
-    int64_t now = millis.count();
+    int64_t now = millis.count() + g_timeWarpOffsetMillis.load(std::memory_order_relaxed);
     return now;
+}
+
+int64_t utils::GetTimeWarpOffsetMillis()
+{
+    return g_timeWarpOffsetMillis.load(std::memory_order_relaxed);
+}
+
+void utils::SetTimeWarpOffsetMillis(int64_t offsetMillis)
+{
+    g_timeWarpOffsetMillis.store(offsetMillis, std::memory_order_relaxed);
 }
 
 TimeStamp utils::CurrentTimeStamp()

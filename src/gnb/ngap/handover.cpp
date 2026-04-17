@@ -17,6 +17,7 @@
 #include "utils.hpp"
 
 #include <gnb/gtp/task.hpp>
+#include <gnb/neighbors.hpp>
 #include <gnb/rrc/task.hpp>
 #include <gnb/xn/task.hpp>
 #include <lib/rrc/encode.hpp>
@@ -971,7 +972,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
  * to the target PCI. The cause parameter indicates the reason for the handover and is included in the 
  * message to assist the AMF in making informed decisions during the handover process.
  * 
- * Note: in this simulator, the HanodverRequired message includes a custom SourceToTarget-TransparentContainer 
+ * Note: in this simulator, the HandoverRequired message includes a custom SourceToTarget-TransparentContainer 
  * that encapsulates the RRC handover preparation information.  This is done to avoid modification of the ASN.1
  * definitions and to simplify the implementation by reusing the existing NGAP message structure. The custom container
  * is identified by a specific magic number in the beginning of the container payload, allowing the target
@@ -992,18 +993,19 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
         return;
     }
 
-    const auto *neighbor = m_base->config->findNeighborByPci(targetPci);
-    if (!neighbor)
+    auto neighborOpt = m_base->neighbors->findByPci(targetPci);
+    if (!neighborOpt)
     {
         m_logger->err("sendHandoverRequired: target PCI=%d not found in neighborList", targetPci);
         return;
     }
+    const auto &neighbor = *neighborOpt;
 
-    if (neighbor->handoverInterface == EHandoverInterface::Xn)
+    if (neighbor.handoverInterface == EHandoverInterface::Xn)
     {
         m_logger->warn("neighborList entry for PCI=%d requests Xn (%s), but only N2 is implemented; "
                        "continuing via N2",
-                       targetPci, neighbor->ipAddress.c_str());
+                       targetPci, neighbor.ipAddress.c_str());
     }
 
     m_logger->info("Resolved target neighbor PCI=%d -> NCGI(plmn=%03d-%02d nci=0x%09llx gnbId=%u cellId=%d) "
@@ -1011,11 +1013,11 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
                    targetPci,
                    m_base->config->plmn.mcc,
                    m_base->config->plmn.mnc,
-                   static_cast<unsigned long long>(neighbor->getNrCellIdentity()),
-                   neighbor->getGnbId(),
-                   neighbor->getCellId(),
-                   neighbor->tac,
-                   neighbor->handoverInterface == EHandoverInterface::N2 ? "N2" : "Xn");
+                   static_cast<unsigned long long>(neighbor.getNrCellIdentity()),
+                   neighbor.getGnbId(),
+                   neighbor.getCellId(),
+                   neighbor.tac,
+                   neighbor.handoverInterface == EHandoverInterface::N2 ? "N2" : "Xn");
 
     std::vector<ASN_NGAP_HandoverRequiredIEs *> ies;
 
@@ -1056,11 +1058,11 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
                              ngap_utils::PlmnToOctet3(m_base->config->plmn));
         globalGnbId->gNB_ID.present = ASN_NGAP_GNB_ID_PR_gNB_ID;
 
-        auto gnbIdLength = neighbor->idLength;
+        auto gnbIdLength = neighbor.idLength;
         auto bitsToShift = 32 - gnbIdLength;
 
         asn::SetBitString(globalGnbId->gNB_ID.choice.gNB_ID,
-                  octet4{neighbor->getGnbId() << bitsToShift},
+                  octet4{neighbor.getGnbId() << bitsToShift},
                           static_cast<size_t>(gnbIdLength));
 
         targetRanNode->globalRANNodeID.present = ASN_NGAP_GlobalRANNodeID_PR_globalGNB_ID;
@@ -1069,7 +1071,7 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
         // selectedTAI
         asn::SetOctetString3(targetRanNode->selectedTAI.pLMNIdentity,
                              ngap_utils::PlmnToOctet3(m_base->config->plmn));
-        asn::SetOctetString3(targetRanNode->selectedTAI.tAC, octet3{neighbor->tac});
+        asn::SetOctetString3(targetRanNode->selectedTAI.tAC, octet3{neighbor.tac});
 
         ie->value.choice.TargetID.choice.targetRANNodeID = targetRanNode;
         ies.push_back(ie);
@@ -1078,7 +1080,7 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
     // IE: SourceToTarget-TransparentContainer
     // Populate a standards-shaped RRC HandoverPreparationInformation payload.
     {
-        int sourcePci = static_cast<int>(m_base->config->nci & 0x3FF);
+        int sourcePci = cons::getPciFromNci(m_base->config->nci);
         HandoverPreparationInfo handoverPrep{};
         handoverPrep.measIdentities = m_base->rrcTask->getHandoverMeasurementIdentities(ueId);
         handoverPrep.measConfigRrcReconfiguration =
@@ -1269,6 +1271,8 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
  */
 void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPreparationFailure *msg)
 {
+    // FIX - need to figure out how to determine which targetPCI this message came from
+    int hoTargetPci = -1;
     m_logger->warn("HandoverPreparationFailure received from AMF");
 
     auto *ue = findUeByNgapIdPair(amfId, ngap_utils::FindNgapIdPair(msg));
@@ -1284,15 +1288,14 @@ void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPre
     auto itByUe = m_hoReqChoPendingByTargetPci.find(ue->ctxId);
     if (itByUe != m_hoReqChoPendingByTargetPci.end())
     {
+        // targetPCIs are tracked as a map in the second value
         auto &targetMap = itByUe->second;
-        if (targetMap.size() == 1)
+        // if the targetPCI is in the map, remove it
+        if (targetMap.count(hoTargetPci) != 0)
         {
-            auto itOnly = targetMap.begin();
-            if (itOnly->second > 1)
-                itOnly->second--;
-            else
-                targetMap.clear();
+            targetMap.erase(hoTargetPci);
 
+            // if the map is now empty, remove the UE entry as well
             if (targetMap.empty())
                 m_hoReqChoPendingByTargetPci.erase(itByUe);
         }
@@ -1314,6 +1317,7 @@ void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPre
 
     auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::HANDOVER_FAILURE);
     w->ueId = ue->ctxId;
+    w->hoTargetPci = hoTargetPci;
     m_base->rrcTask->push(std::move(w));
 
     m_logger->warn("UE[%d] Handover preparation failed. UE remains on source cell.", ue->ctxId);

@@ -52,6 +52,11 @@ struct NmGnbRlsToRrc : NtsMessage
     OctetString data;
     rrc::RrcChannel rrcChannel{};
 
+    // UPLINK_RRC
+    // Last known UE geographic position, carried from the RLS heartbeat.
+    GeoPosition uePos{};
+    bool        hasPosData{false};
+
     explicit NmGnbRlsToRrc(PR present) : NtsMessage(NtsMessageType::GNB_RLS_TO_RRC), present(present)
     {
     }
@@ -123,6 +128,12 @@ struct NmGnbRlsToRls : NtsMessage
 
     // RECEIVE_RLS_MESSAGE
     std::unique_ptr<rls::RlsMessage> msg{};
+
+    // RECEIVE_RLS_MESSAGE
+    // UPLINK_RRC
+    // Last known UE geographic position, sourced from the most recent heartbeat.
+    GeoPosition uePos{};
+    bool        hasPosData{false};
 
     // DOWNLINK_DATA
     // UPLINK_DATA

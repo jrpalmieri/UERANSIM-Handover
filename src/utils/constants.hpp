@@ -41,7 +41,14 @@ struct cons
     static constexpr const char DIR_SEPARATOR = '/';
 
     // RF related
+    // mask used to generate PCI from NCI (PCI is the last 10 bits of NCI)
+    static constexpr const int PCI_MASK = 0x3FF;
 
+    // Extract PCI from a 36-bit NCI (lower 10 bits)
+    static constexpr int getPciFromNci(int64_t nci)
+    {
+        return static_cast<int>(nci & PCI_MASK);
+    }
     // Min value for RSRP (equivalent to no signal)
     static constexpr const int MIN_RSRP = -156;
     // Max value for RSRP (equivalent to strongest possible signal)

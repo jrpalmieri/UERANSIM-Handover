@@ -101,7 +101,7 @@ xn:
 # Handover measurement/CHO configuration.
 # events: classic (non-CHO) events always sent to UEs.
 # if choEnbaled is true, then Conditional Handover (CHO) events in choEvents will also be sent to UEs.
-# choEvents: CHO condition groups (AND within group).
+# choEvents: CHO profiles with a condition group (AND within group).
 # CHO priority is derived from target candidate ranking (best=1).
 handover:
   events:
@@ -110,75 +110,20 @@ handover:
       hysteresisDb: 1
       tttMs: 200
   choEnabled: false
-  choEvents:
-    - events:
-      - eventType: D1
-        distanceThreshold: 1200
-        # can be "fixed" (absolute distance to reference position) or "nadir" (distance to satellite nadir point)
-        #   nadir requires satellite position information at the UE, which is provided in SIB19 messages
-        distanceType: fixed
-        hysteresisM: 100
-        tttMs: 1000
-        # targetCellId is either a specific cell ID (e.g. '0x000000020') which must be on the neighbor list
-        #   or "calculated", which causes the gNB to use the cell ID of the best candidate neighbor cell based on distance
-        targetCellId: '0x000000020'
-        # Required when distanceType is fixed.
-        referencePosition:
-          # set this to true to use the gNB's current position as the reference position for D1 event.
-          #    (any lat/long/alt values provided here will be ignored)
-          # if false, the reference position will be set to the provided latitude/longitude/altitude values.
-          useCurrPosition: true
-          latitude: 37.7749
-          longitude: -122.4194
-          altitude: 100
-      - eventType: A3
-        a3OffsetDb: 3
-        hysteresisDb: 1
-        tttMs: 1000
-        
-# NTN configuration
-ntn:
-  # setting ntnEnabled to false will ignore all other ntn parameters
-  # set to true to enable NTN satellite mode, which will:
-  #   - cause the gNB to calculate RSRP based on satellite link budget
-  #   - send SIB19 messages to the UE so it can use the satellite position
-  #   - send CHO measurement events based on satellite-specific conditions (e.g. distance to satellite)
-  ntnEnabled: false
-  # controls how SIB19 is configured/sent
-  sib19:
-    # sib19on must be true to enable SIB19 transmissions
-    sib19on: false
-    # send period (in ms)
-    sib19timing: 1000
-    # these params are not used in the simulation, set to default values for completeness
-    kOffset: 0
-    taCommon: 0
-    taCommonDrift: 0
-    # taCommonDriftVariation: 0
-    # ulSyncValidityDuration: 60
-    # cellSpecificKoffset: 0
-    # polarization: 0          # 0: RHCP, 1: LHCP, 2: LINEAR
-    # taDrift: 0
-  ntnHandover:
-    events:
-      - eventType: A3
-        a3OffsetDb: 3
-        hysteresisDb: 1
-        tttMs: 200
-    choEnabled: false
-    choEvents:
-      - events:
+  choDefaultProfileId: 1  # default profile ID to use for CHO candidates if not overridden
+  choCandidateProfiles:
+    - candidateProfileId: 1
+      # targetCellId is either a specific cell ID (e.g. '0x000000020') which must be on the neighbor list
+      #   or "calculated", which causes the gNB to use the cell ID of the best candidate neighbor cell based on distance
+      targetCellId: '0x000000020'
+      conditions:
         - eventType: D1
           distanceThreshold: 1200
           # can be "fixed" (absolute distance to reference position) or "nadir" (distance to satellite nadir point)
           #   nadir requires satellite position information at the UE, which is provided in SIB19 messages
-          distanceType: nadir
+          distanceType: fixed
           hysteresisM: 100
           tttMs: 1000
-          # targetCellId is either a specific cell ID (e.g. '0x000000020') which must be on the neighbor list
-          #   or "calculated", which causes the gNB to use the cell ID of the best candidate neighbor cell based on distance
-          #   for NTN, this always be calculated, since the target cell will change based on satellite movement
-          targetCellId: calculated
           # Required when distanceType is fixed.
           referencePosition:
             # set this to true to use the gNB's current position as the reference position for D1 event.
@@ -192,3 +137,75 @@ ntn:
           a3OffsetDb: 3
           hysteresisDb: 1
           tttMs: 1000
+    - candidateProfileId: 2
+      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
+      targetCellId: calculated
+      conditions:
+      # - eventType: D1
+      #   distanceThreshold: 1200
+      #   # can be "fixed" (absolute distance to reference position) or "nadir" (distance to satellite nadir point)
+      #   #   nadir requires satellite position information at the UE, which is provided in SIB19 messages
+      #   distanceType: nadir
+      #   hysteresisM: 100
+      #   tttMs: 1000
+      #   # Required when distanceType is fixed.
+      #   referencePosition:
+      #     # set this to true to use the gNB's current position as the reference position for D1 event.
+      #     #    (any lat/long/alt values provided here will be ignored)
+      #     # if false, the reference position will be set to the provided latitude/longitude/altitude values.
+      #     useCurrPosition: true
+      #     latitude: 37.7749
+      #     longitude: -122.4194
+      #     altitude: 100
+      # "dummy" A3 event, used for time-triggered handovers
+      #   setting useTimer=true means the gNB will apply a trigger timer to the event
+      #   specifying timeSec=0 means ler gnb set this, any other value will always use that fixed value
+      - eventType: A3
+        a3OffsetDb: -30
+        hysteresisDb: 0
+        tttMs: 0
+        useTimer: true
+        timerSec: 0
+        
+# NTN configuration
+ntn:
+  # setting ntnEnabled to false will ignore all other ntn parameters
+  # set to true to enable NTN satellite mode, which will:
+  #   - cause the gNB to calculate RSRP based on satellite link budget
+  #   - send SIB19 messages to the UE so it can use the satellite position
+  #   - send CHO measurement events based on satellite-specific conditions (e.g. distance to satellite)
+  ntnEnabled: false
+
+  tle:
+    # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
+    # The default TLE is for the Starlink Gen2-1 satellite, which can be used for testing purposes.
+    # To get the TLE for a different satellite, you can use a service like Celestrak (https://celestrak.com/NORAD/elements/) or Space-Track (https://www.space-track.org/auth/login).
+    line1: '1 47933U 21029A   23162.59097222  .00001250  00000-0  29666-4 0  9993'
+    line2: '2 47933  53.0000 180.0000 0001000   0.0000   0.0000 15.50000000    14'
+  # Optional time warping for NTN simulation time alignment.
+  # Provide exactly one of:
+  #   timeWarp.offsetMs: signed offset in milliseconds (negative shifts backwards), OR
+  #   timeWarp.targetTimeEpoch: TLE epoch format YYDDD.DDDDDDDD (UTC).
+  # targetTimeEpoch is converted once at startup into an offset that is used
+  # for the full simulation run.
+  # timeWarp:
+  #   offsetMs: -3600000
+  timeWarp:
+    targetTimeEpoch: "23162.59097222"   # lines up with the TLE epoch
+  # minimum elevation angle (degrees) for the satellite to be considered "visible" to the UE - used for CHO conditions
+  elevationMinDeg: 20   
+  # controls how SIB19 is configured/sent
+  sib19:
+    # sib19on must be true to enable SIB19 transmissions
+    sib19on: true
+    # send period (in ms)
+    sib19timing: 1000
+    # these params are not used in the simulation, set to default values for completeness
+    kOffset: 0
+    taCommon: 0
+    taCommonDrift: 0
+    # taCommonDriftVariation: 0
+    # ulSyncValidityDuration: 60
+    # cellSpecificKoffset: 0
+    # polarization: 0          # 0: RHCP, 1: LHCP, 2: LINEAR
+    # taDrift: 0

@@ -17,6 +17,8 @@
 #include <utils/logger.hpp>
 #include <utils/nts.hpp>
 
+#include <asn/rrc/ASN_RRC_MeasConfig.h>
+
 extern "C"
 {
     struct ASN_RRC_BCCH_BCH_Message;
@@ -59,8 +61,24 @@ class GnbRrcTask : public NtsTask
     bool m_cellReserved = false;
     UacAiBarringSet m_aiBarringSet = {};
     bool m_intraFreqReselectAllowed = true;
-    TruePositionVelocity m_truePositionVelocity{};
+
+    // gnb location as PV in ECEF coordinates
+    PositionVelocity m_truePositionVelocity{};
+
     std::unordered_map<int, SatellitePositionVelocityEntry> m_satellitePvByPci{};
+
+    // Cache of PCI values for neighboring satellites, used for coarse filtering of nearby satellites.
+    // TODO(satellite-neighbor-integration): When satellite tracking discovers a new neighbor gNB
+    //   (i.e., a satellite with a valid TLE that is within range), call
+    //   m_base->neighbors->upsert(entry) to add it to the runtime neighbor store so it becomes
+    //   available for handover decisions without a manual CLI update.
+    std::vector<int> m_satNeighborhoodCache{};
+
+    // Cache of PCIs for gNBs that are within communication range of the UE,
+    //   used for deciding which neighbors to include in SIB19.
+    // TODO(satellite-neighbor-integration): Entries added here that are not yet in the runtime
+    //   neighbor store should trigger a neighbor upsert (see m_satNeighborhoodCache note above).
+    std::vector<int> m_sib19RangeCache{};
 
     friend class GnbCmdHandler;
 
@@ -74,8 +92,9 @@ class GnbRrcTask : public NtsTask
                         OctetString &rrcContainer);
     bool addPendingHandover(int ueId, const HandoverPreparationInfo &handoverPrep,
                 OctetString &rrcContainer);
-    void setTruePositionVelocity(const TruePositionVelocity &value);
+    void setTruePositionVelocity(const PositionVelocity &value);
     void upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value);
+    void upsertSatTles(const std::vector<SatTleEntry> &entries);
 
   protected:
     void onStart() override;
@@ -119,8 +138,12 @@ class GnbRrcTask : public NtsTask
     void receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH1_Message *msg);
     void receiveRrcMessage(int ueId, int cRnti, ASN_RRC_UL_DCCH_Message *msg);
 
+    /* Satellite TLE tracking and neighborhood cache - sat_calcs.cpp */
+
+    void roughNeighborhoodSats();
+
     /* System Information Broadcast related - broadcast.cpp */
-    
+
     void onBroadcastTimerExpired();
     void triggerSysInfoBroadcast();
     void triggerSib19Broadcast();
@@ -150,8 +173,17 @@ class GnbRrcTask : public NtsTask
     void evaluateHandoverDecision(int ueId, const std::string &eventType);
     void processConditionalHandover(int ueId, const std::string &reason);
     void handleNgapHandoverCommand(int ueId, const OctetString &rrcContainer, bool hoForChoPreparation);
-    void handleNgapHandoverFailure(int ueId);
+    void handleNgapHandoverFailure(int ueId, int targetPci, bool hoForChoPreparation);
     void handoverContextRelease(int ueId);
+    void completeConditionalHandover(RrcUeContext *ue, const OctetString &rrcContainer);
+    void clearChoPendingState(RrcUeContext *ue);
+    std::vector<long> createMeasConfig(
+      ASN_RRC_MeasConfig *&mc,
+      RrcUeContext *ue,
+      std::vector<GnbHandoverConfig::GnbHandoverEventConfig> selectedEvents,
+      int triggerTimerSec, 
+      int distanceThreshold,
+      int choProfileId); 
 
 };
 

@@ -10,6 +10,8 @@
 
 #include <gnb/ngap/task.hpp>
 #include <lib/rrc/encode.hpp>
+#include <utils/common.hpp>
+#include <utils/common_types.hpp>
 
 namespace nr::gnb
 {
@@ -24,6 +26,24 @@ void GnbRrcTask::handleRlsSapMessage(NmGnbRlsToRrc &msg)
         break;
     }
     case NmGnbRlsToRrc::UPLINK_RRC: {
+        // Update the UE context with the latest position reported in heartbeats.
+        if (msg.hasPosData)
+        {
+            auto *ue = tryFindUeByUeId(msg.ueId);
+            if (ue)
+            {
+                EcefPosition ecef = GeoToEcef(msg.uePos);
+                ue->uePosition.isValid = true;
+                ue->uePosition.epochMs = utils::CurrentTimeMillis();
+                ue->uePosition.x       = ecef.x;
+                ue->uePosition.y       = ecef.y;
+                ue->uePosition.z       = ecef.z;
+                // velocity is unknown from heartbeat position alone
+                ue->uePosition.vx = 0.0;
+                ue->uePosition.vy = 0.0;
+                ue->uePosition.vz = 0.0;
+            }
+        }
         handleUplinkRrc(msg.ueId, msg.cRnti, msg.rrcChannel, msg.data);
         break;
     }

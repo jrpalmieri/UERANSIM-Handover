@@ -42,7 +42,7 @@ void UeRrcTask::performCycle()
         //   so skip
         //if (!m_base->config->useHandoverMeasFramework) return;
 
-        // Phase 2 priority: evaluate CHO first. If CHO triggers in this cycle,
+        // evaluate CHO first. If CHO triggers in this cycle,
         // suppress Rel-15 MeasurementReport generation for the same cycle.
         bool choTriggered = false;
         if (!m_handoverInProgress && !m_measurementEvalSuspended)

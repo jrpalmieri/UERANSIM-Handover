@@ -10,7 +10,6 @@
 
 #include <gnb/gtp/task.hpp>
 #include <gnb/rrc/task.hpp>
-#include <gnb/rls/satellite_state.hpp>
 #include <utils/common.hpp>
 #include <utils/random.hpp>
 
@@ -26,13 +25,6 @@ GnbRlsTask::GnbRlsTask(TaskBase *base) : m_base{base}
                                 base->config->phyLocation);
     m_ctlTask = new RlsControlTask(base, m_sti);
 
-    m_satPosTask = nullptr;
-    if (base->config->ntn.ntnEnabled && base->satState)
-    {
-        m_satPosTask = new SatPositionTask(
-            base->logBase, base->satState);
-    }
-
     m_udpTask->initialize(m_ctlTask);
     m_ctlTask->initialize(this, m_udpTask);
 }
@@ -41,8 +33,6 @@ void GnbRlsTask::onStart()
 {
     m_udpTask->start();
     m_ctlTask->start();
-    if (m_satPosTask)
-        m_satPosTask->start();
 }
 
 void GnbRlsTask::onLoop()
@@ -81,10 +71,12 @@ void GnbRlsTask::onLoop()
         }
         case NmGnbRlsToRls::UPLINK_RRC: {
             auto m = std::make_unique<NmGnbRlsToRrc>(NmGnbRlsToRrc::UPLINK_RRC);
-            m->ueId = w.ueId;
-            m->cRnti = w.cRnti;
+            m->ueId       = w.ueId;
+            m->cRnti      = w.cRnti;
             m->rrcChannel = w.rrcChannel;
-            m->data = std::move(w.data);
+            m->data       = std::move(w.data);
+            m->uePos      = w.uePos;
+            m->hasPosData = w.hasPosData;
             m_base->rrcTask->push(std::move(m));
             break;
         }
@@ -146,11 +138,6 @@ void GnbRlsTask::onQuit()
 {
     m_udpTask->quit();
     m_ctlTask->quit();
-    if (m_satPosTask)
-    {
-        m_satPosTask->quit();
-        delete m_satPosTask;
-    }
     delete m_udpTask;
     delete m_ctlTask;
 }
