@@ -33,6 +33,18 @@ static std::string ToString(EGnbRsrpMode mode)
     }
 }
 
+static std::string ToString(ESib19EphemerisMode mode)
+{
+    switch (mode)
+    {
+    case ESib19EphemerisMode::PosVel:
+        return "pos-vel";
+    case ESib19EphemerisMode::Orbital:
+        return "orbital";
+    }
+    return "pos-vel";
+}
+
 static std::string ToString(EHandoverInterface intf)
 {
     switch (intf)
@@ -53,6 +65,11 @@ Json ToJson(const GnbStatusInfo &v)
 
 Json ToJson(const GnbConfig &v)
 {
+    std::string startCondition =
+        v.ntn.timeWarp.startCondition == NtnConfig::TimeWarpConfig::EStartCondition::Paused
+            ? "paused"
+            : "moving";
+
     auto handoverEvents = Json::Arr({});
     for (const auto &event : v.handover.events)
     {
@@ -180,6 +197,7 @@ Json ToJson(const GnbConfig &v)
         {"sib19-on", v.ntn.sib19.sib19On},
         {"sib19-timing-ms", v.ntn.sib19.sib19TimingMs},
         {"sat-loc-update-threshold-ms", v.ntn.sib19.satLocUpdateThresholdMs},
+        {"eph-type", ToString(v.ntn.sib19.ephType)},
         {"k-offset", v.ntn.sib19.kOffset},
         {"ta-common", v.ntn.sib19.taCommon},
         {"ta-common-drift", v.ntn.sib19.taCommonDrift},
@@ -197,10 +215,10 @@ Json ToJson(const GnbConfig &v)
         sib19Json.put("ta-drift", *v.ntn.sib19.taDrift);
 
     Json timeWarpJson = Json::Obj({});
-    if (v.ntn.timeWarp.offsetMs)
-        timeWarpJson.put("offset-ms", *v.ntn.timeWarp.offsetMs);
-    if (v.ntn.timeWarp.targetTimeEpoch)
-        timeWarpJson.put("target-time-epoch", *v.ntn.timeWarp.targetTimeEpoch);
+    timeWarpJson.put("start-condition", startCondition);
+    timeWarpJson.put("tick-scaling", std::to_string(v.ntn.timeWarp.tickScaling));
+    if (v.ntn.timeWarp.startEpochMillis)
+        timeWarpJson.put("start-epoch-ms", *v.ntn.timeWarp.startEpochMillis);
 
     return Json::Obj({
         {"name", v.name},

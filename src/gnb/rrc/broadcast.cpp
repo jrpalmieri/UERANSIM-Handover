@@ -165,7 +165,7 @@ void GnbRrcTask::triggerSib19Broadcast()
     int ownPci = cons::getPciFromNci(m_config->nci);
 
     // config sets what type of ephemeris data to include in SIB19, either pos/vel or orbital elements
-    const int ephType = m_config->ntn.sib19.ephType;  // 0 = pos/vel, 1 = orbital
+    const auto ephType = m_config->ntn.sib19.ephType;
 
     // Own TLE must be loaded — it is always included as the serving satellite.
     auto ownTleOpt = m_base->satTleStore->find(ownPci);
@@ -244,7 +244,7 @@ void GnbRrcTask::triggerSib19Broadcast()
             e.pci = pci;
 
             // pos/vel
-            if (ephType == 0)
+            if (ephType == ESib19EphemerisMode::PosVel)
             {
                 // --- pos/vel: SGP4 propagate to now + numerical velocity ---
                 libsgp4::SGP4 sgp4(t);
@@ -329,7 +329,7 @@ void GnbRrcTask::triggerSib19Broadcast()
 
         WriteLe(payload, base, static_cast<int32_t>(e.pci));
 
-        if (ephType == 0)
+        if (ephType == ESib19EphemerisMode::PosVel)
         {
             WriteLe(payload, base + 4,  e.x);
             WriteLe(payload, base + 12, e.y);
@@ -362,7 +362,7 @@ void GnbRrcTask::triggerSib19Broadcast()
     }
 
     m_logger->debug("SIB19: broadcasting %u entries ephType=%d (own pci=%d + %zu neighbors)",
-                    entryCount, ephType, ownPci, entries.size() - 1);
+                    entryCount, static_cast<int>(ephType), ownPci, entries.size() - 1);
 
     sendRrcMessage(rrc::RrcChannel::DL_SIB19, OctetString(std::move(payload)));
 }

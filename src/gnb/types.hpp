@@ -27,6 +27,11 @@
 
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
 
+namespace utils
+{
+class SatTime;
+}
+
 namespace nr::gnb
 {
 
@@ -467,14 +472,20 @@ struct SatelliteLinkConfig
     
 };
 
+enum class ESib19EphemerisMode : uint8_t
+{
+    PosVel = 0,
+    Orbital = 1,
+};
+
 struct SIB19Config
 {
     bool sib19On{false};
     int sib19TimingMs{1000};
     int satLocUpdateThresholdMs{5000};
 
-    // Ephemeris type transmitted in SIB19: 0 = pos/vel state vectors, 1 = Keplerian orbital elements
-    int ephType{0};
+    // Ephemeris mode transmitted in SIB19.
+    ESib19EphemerisMode ephType{ESib19EphemerisMode::PosVel};
 
     int32_t kOffset{0};
     int64_t taCommon{0};
@@ -642,8 +653,15 @@ struct NtnConfig
 {
     struct TimeWarpConfig
     {
-        std::optional<int64_t> offsetMs{};
-        std::optional<std::string> targetTimeEpoch{};
+        enum class EStartCondition
+        {
+            Moving,
+            Paused,
+        };
+
+        EStartCondition startCondition{EStartCondition::Moving};
+        double tickScaling{1.0};
+        std::optional<int64_t> startEpochMillis{};
     };
 
     bool ntnEnabled{false};
@@ -731,6 +749,7 @@ struct TaskBase
     XnTask *xnTask{};
 
     SatTleStore *satTleStore{};  // always non-null after GNodeB construction
+    utils::SatTime *satTime{};
 
     GnbNeighbors *neighbors{};
 };

@@ -8,8 +8,12 @@
 
 #pragma once
 
+#include <memory>
+#include <string>
+
 #include <ue/nts.hpp>
 #include <ue/types.hpp>
+#include <utils/logger.hpp>
 
 namespace nr::ue
 {
@@ -18,6 +22,14 @@ class UeCmdHandler
 {
   private:
     TaskBase *m_base;
+    std::unique_ptr<Logger> m_cliLogger{};
+    std::string m_currentCommand{};
+    std::string m_currentSource{};
+
+  private:
+    void ensureCliLogger();
+    void logCommandReceived(const NmUeCliCommand &msg);
+    void logResponse(bool isError, const std::string &output);
 
   public:
     explicit UeCmdHandler(TaskBase *base) : m_base(base)

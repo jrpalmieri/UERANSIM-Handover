@@ -70,6 +70,15 @@ class CapturedDlRrc:
     pdu_id: int
 
 
+@dataclass
+class CapturedHeartbeatAck:
+    timestamp: float
+    sti: int
+    sender_id: int
+    sender_id2: int
+    dbm: int
+
+
 class RrcChannel(IntEnum):
     BCCH_BCH = 0
     BCCH_DL_SCH = 1
@@ -90,12 +99,14 @@ class FakeUe:
         gnb_port: int = PORTAL_PORT,
         sim_pos: tuple[float, float, float] = (0.0, 0.0, 0.0),
         ue_id: int = 1,
+        heartbeat_interval_s: float = 1.0,
     ):
         self._gnb_addr = gnb_addr
         self._gnb_port = gnb_port
         self._sim_pos = sim_pos
         self._sti = random.getrandbits(64)
         self._ue_id = ue_id
+        self._heartbeat_interval_s = max(0.05, heartbeat_interval_s)
 
         self._sock: Optional[socket.socket] = None
         self._running = False
@@ -104,6 +115,7 @@ class FakeUe:
         self._lock = threading.Lock()
 
         self._heartbeat_ack_received = False
+        self._heartbeat_acks: Deque[CapturedHeartbeatAck] = deque(maxlen=200)
         self._pdu_id_counter = 1
         self._dl_messages: Deque[CapturedDlRrc] = deque(maxlen=200)
 
@@ -196,6 +208,24 @@ class FakeUe:
             time.sleep(0.2)
         return False
 
+    def wait_for_heartbeat_ack_dbm(
+        self,
+        timeout_s: float = 10.0,
+        min_count: int = 1,
+    ) -> Optional[CapturedHeartbeatAck]:
+        end = time.monotonic() + timeout_s
+        while time.monotonic() < end:
+            with self._lock:
+                if len(self._heartbeat_acks) >= min_count:
+                    return self._heartbeat_acks[-1]
+            time.sleep(0.1)
+        return None
+
+    @property
+    def heartbeat_acks(self) -> List[CapturedHeartbeatAck]:
+        with self._lock:
+            return list(self._heartbeat_acks)
+
     def wait_for_dl_rrc(self, channel: RrcChannel, timeout_s: float = 10.0) -> Optional[CapturedDlRrc]:
         end = time.monotonic() + timeout_s
         while time.monotonic() < end:
@@ -215,7 +245,7 @@ class FakeUe:
         while self._running:
             hb = self._encode_heartbeat(self._sim_pos)
             self._send(hb)
-            time.sleep(1.0)
+            time.sleep(self._heartbeat_interval_s)
 
     def _receive_loop(self):
         while self._running:
@@ -231,7 +261,17 @@ class FakeUe:
                 continue
 
             if parsed["msg_type"] == MSG_HEARTBEAT_ACK:
-                self._heartbeat_ack_received = True
+                with self._lock:
+                    self._heartbeat_ack_received = True
+                    self._heartbeat_acks.append(
+                        CapturedHeartbeatAck(
+                            timestamp=time.monotonic(),
+                            sti=parsed["sti"],
+                            sender_id=parsed["sender_id"],
+                            sender_id2=parsed["sender_id2"],
+                            dbm=parsed["dbm"],
+                        )
+                    )
                 continue
 
             if parsed["msg_type"] != MSG_PDU_TRANSMISSION:

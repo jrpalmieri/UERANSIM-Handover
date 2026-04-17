@@ -11,6 +11,9 @@
 #include <stdexcept>
 #include <thread>
 #include <shared_mutex>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 
 #include <unistd.h>
 
@@ -22,6 +25,7 @@
 #include <ue/ue.hpp>
 #include <ue/types.hpp>
 #include <ue/rrc/position.hpp>
+#include <libsgp4/DateTime.h>
 #include <utils/common.hpp>
 #include <utils/concurrent_map.hpp>
 #include <utils/constants.hpp>
@@ -46,6 +50,43 @@ static struct Options
     int count{};
     int tempo{};
 } g_options{};
+
+static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch, const std::string &fieldPath)
+{
+    if (tleEpoch.size() < 5)
+        throw std::runtime_error(fieldPath + " must be in TLE format YYDDD.DDD...");
+
+    if (!std::isdigit(static_cast<unsigned char>(tleEpoch[0])) ||
+        !std::isdigit(static_cast<unsigned char>(tleEpoch[1])))
+    {
+        throw std::runtime_error(fieldPath + " must start with a 2-digit year (YY)");
+    }
+
+    int year2 = (tleEpoch[0] - '0') * 10 + (tleEpoch[1] - '0');
+    int fullYear = year2 >= 57 ? (1900 + year2) : (2000 + year2);
+
+    double dayOfYear = 0.0;
+    try
+    {
+        dayOfYear = std::stod(tleEpoch.substr(2));
+    }
+    catch (const std::exception &)
+    {
+        throw std::runtime_error(fieldPath + " has invalid day-of-year value");
+    }
+
+    if (!(dayOfYear >= 1.0 && dayOfYear < 367.0))
+        throw std::runtime_error(fieldPath + " day-of-year must be in [1, 367)");
+
+    return libsgp4::DateTime(static_cast<unsigned int>(fullYear), dayOfYear);
+}
+
+static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
+{
+    const libsgp4::DateTime unixEpoch(1970, 1, 1, 0, 0, 0);
+    auto delta = dateTime - unixEpoch;
+    return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
+}
 
 struct NwUeControllerCmd : NtsMessage
 {
@@ -306,6 +347,66 @@ static nr::ue::UeConfig *ReadConfigYaml()
         result->initialPosition = pos;
     }
 
+    if (yaml::HasField(config, "ntn"))
+    {
+        auto ntn = config["ntn"];
+
+        if (yaml::HasField(ntn, "timewarp"))
+            throw std::runtime_error("Field ntn.timewarp is invalid; use ntn.timeWarp");
+
+        if (yaml::HasField(ntn, "timeWarp"))
+        {
+            auto timeWarp = ntn["timeWarp"];
+            if (!timeWarp.IsMap())
+                throw std::runtime_error("Field ntn.timeWarp must be a map");
+
+            if (yaml::HasField(timeWarp, "startCondition"))
+            {
+                auto startCondition = yaml::GetString(timeWarp, "startCondition");
+                std::transform(startCondition.begin(), startCondition.end(), startCondition.begin(),
+                               [](unsigned char ch) {
+                                   return static_cast<char>(std::tolower(ch));
+                               });
+
+                if (startCondition == "paused")
+                {
+                    result->ntn.timeWarp.startCondition =
+                        nr::ue::UeConfig::NtnConfig::TimeWarpConfig::EStartCondition::Paused;
+                }
+                else if (startCondition == "moving")
+                {
+                    result->ntn.timeWarp.startCondition =
+                        nr::ue::UeConfig::NtnConfig::TimeWarpConfig::EStartCondition::Moving;
+                }
+                else
+                {
+                    throw std::runtime_error(
+                        "Field ntn.timeWarp.startCondition has invalid value, expected 'paused' or 'moving'");
+                }
+            }
+
+            if (yaml::HasField(timeWarp, "tickScaling"))
+            {
+                result->ntn.timeWarp.tickScaling = yaml::GetDouble(timeWarp, "tickScaling");
+                if (!std::isfinite(result->ntn.timeWarp.tickScaling) || result->ntn.timeWarp.tickScaling <= 0.0)
+                {
+                    throw std::runtime_error("Field ntn.timeWarp.tickScaling must be a finite value > 0");
+                }
+            }
+
+            if (yaml::HasField(timeWarp, "startEpoch"))
+            {
+                auto startEpochText = yaml::GetString(timeWarp, "startEpoch");
+                utils::Trim(startEpochText);
+                if (startEpochText.empty())
+                    throw std::runtime_error("ntn.timeWarp.startEpoch cannot be empty");
+
+                auto startEpochDt = ParseTleEpochDateTime(startEpochText, "ntn.timeWarp.startEpoch");
+                result->ntn.timeWarp.startEpochMillis = DateTimeToUnixMillis(startEpochDt);
+            }
+        }
+    }
+
     return result;
 }
 
@@ -436,6 +537,7 @@ static nr::ue::UeConfig *GetConfigByUe(int ueIndex)
     c->useHandoverMeasFramework = g_refConfig->useHandoverMeasFramework;
     c->rls = g_refConfig->rls;
     c->initialPosition = g_refConfig->initialPosition;
+    c->ntn = g_refConfig->ntn;
 
     if (c->supi.has_value())
         IncrementNumber(c->supi->value, ueIndex);

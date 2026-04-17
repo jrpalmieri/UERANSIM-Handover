@@ -13,12 +13,15 @@
 #include "ngap/task.hpp"
 #include "rls/task.hpp"
 #include "rrc/task.hpp"
+#include "sat_time.hpp"
 #include "sat_tle_store.hpp"
 #include "sctp/task.hpp"
 #include "xn/task.hpp"
 
 #include <lib/app/cli_base.hpp>
+#include <utils/common.hpp>
 #include <utils/constants.hpp>
+#include <utils/sat_time.hpp>
 
 namespace nr::gnb
 {
@@ -32,6 +35,14 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     base->cliCallbackTask = cliCallbackTask;
 
     base->satTleStore = new SatTleStore();
+    int64_t startEpochMillis = config->ntn.timeWarp.startEpochMillis.value_or(utils::CurrentTimeMillis());
+
+    auto startCondition = utils::SatTime::EStartCondition::Moving;
+    if (config->ntn.timeWarp.startCondition == nr::gnb::NtnConfig::TimeWarpConfig::EStartCondition::Paused)
+        startCondition = utils::SatTime::EStartCondition::Paused;
+
+    base->satTime = new utils::SatTime(startEpochMillis, startCondition, config->ntn.timeWarp.tickScaling);
+    sat_time::SetSatTimeSource(base->satTime);
 
     base->neighbors = new GnbNeighbors();
     base->neighbors->upsertAll(config->neighborList);
@@ -66,6 +77,8 @@ GNodeB::~GNodeB()
     delete taskBase->rlsTask;
     delete taskBase->xnTask;
 
+    sat_time::SetSatTimeSource(nullptr);
+    delete taskBase->satTime;
     delete taskBase->satTleStore;
 
     delete taskBase->logBase;

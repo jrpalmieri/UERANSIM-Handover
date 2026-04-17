@@ -170,6 +170,74 @@ static bool ParseLocPvArgument(const std::string &arg, app::GnbCliCommand &cmd)
     }
 }
 
+static bool StartsWith(const std::string &value, const std::string &prefix)
+{
+    return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
+}
+
+static bool ParseSatTimeArg(const std::string &arg, app::SatTimeCliControl &control)
+{
+    if (arg == "pause")
+    {
+        control.action = app::SatTimeCliControl::EAction::Pause;
+        return true;
+    }
+    if (arg == "run")
+    {
+        control.action = app::SatTimeCliControl::EAction::Run;
+        return true;
+    }
+    if (StartsWith(arg, "tickscale="))
+    {
+        auto valueText = arg.substr(std::string("tickscale=").size());
+        if (valueText.empty())
+            return false;
+
+        try
+        {
+            control.tickScale = std::stod(valueText);
+        }
+        catch (...)
+        {
+            return false;
+        }
+
+        control.action = app::SatTimeCliControl::EAction::TickScale;
+        return true;
+    }
+    if (StartsWith(arg, "start-epoch="))
+    {
+        auto valueText = arg.substr(std::string("start-epoch=").size());
+        utils::Trim(valueText);
+        if (valueText.empty())
+            return false;
+
+        control.startEpoch = std::move(valueText);
+        control.action = app::SatTimeCliControl::EAction::StartEpoch;
+        return true;
+    }
+    if (StartsWith(arg, "pause-at-wallclock="))
+    {
+        auto valueText = arg.substr(std::string("pause-at-wallclock=").size());
+        if (valueText.empty())
+            return false;
+
+        try
+        {
+            control.pauseAtWallclock = std::stoll(valueText);
+        }
+        catch (...)
+        {
+            return false;
+        }
+
+        control.action = app::SatTimeCliControl::EAction::PauseAtWallclock;
+        return true;
+    }
+
+    return false;
+}
+
 namespace app
 {
 
@@ -188,6 +256,11 @@ static OrderedMap<std::string, CmdEntry> g_gnbCmdEntries = {
                      "<json-payload>", DefaultDesc, true}},
     {"sat-tle", {"Upsert TLE orbital elements for one or more satellite gNBs from JSON payload",
                   "<json-payload>", DefaultDesc, true}},
+    {"sat-time", {"Control satellite time: pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|"
+                    "pause-at-wallclock=<unix-ms>",
+                    "[pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>]",
+                    DefaultDesc,
+                    false}},
     {"neighbors", {"Update gNB neighbor list from JSON payload", "<json-payload>", DefaultDesc, true}},
     {"version", {"Show gNB version information", "", DefaultDesc, false}},
 };
@@ -206,6 +279,11 @@ static OrderedMap<std::string, CmdEntry> g_ueCmdEntries = {
     {"ps-release-all", {"Trigger PDU session release procedures for all active sessions", "", DefaultDesc, false}},
     {"deregister",
      {"Perform a de-registration by the UE", "<normal|disable-5g|switch-off|remove-sim>", DefaultDesc, true}},
+    {"sat-time", {"Control satellite time: pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|"
+                    "pause-at-wallclock=<unix-ms>",
+                    "[pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>]",
+                    DefaultDesc,
+                    false}},
     {"version", {"Show UE version information", "", DefaultDesc, false}},
 };
 
@@ -310,6 +388,25 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
         cmd->satTleJson = options.getPositional(0);
         return cmd;
     }
+    else if (subCmd == "sat-time")
+    {
+        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::SAT_TIME);
+        if (options.positionalCount() == 0)
+        {
+            cmd->satTime.action = SatTimeCliControl::EAction::Status;
+            return cmd;
+        }
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one sat-time argument is expected")
+
+        if (!ParseSatTimeArg(options.getPositional(0), cmd->satTime))
+        {
+            CMD_ERR("Invalid sat-time argument. Expected pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|"
+                    "pause-at-wallclock=<unix-ms>")
+        }
+
+        return cmd;
+    }
 
     return nullptr;
 }
@@ -352,6 +449,25 @@ static std::unique_ptr<UeCliCommand> UeCliParseImpl(const std::string &subCmd, c
         else
             CMD_ERR("Invalid de-registration type, possible values are: \"normal\", \"disable-5g\", \"switch-off\", "
                     "\"remove-sim\"")
+        return cmd;
+    }
+    else if (subCmd == "sat-time")
+    {
+        auto cmd = std::make_unique<UeCliCommand>(UeCliCommand::SAT_TIME);
+        if (options.positionalCount() == 0)
+        {
+            cmd->satTime.action = SatTimeCliControl::EAction::Status;
+            return cmd;
+        }
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one sat-time argument is expected")
+
+        if (!ParseSatTimeArg(options.getPositional(0), cmd->satTime))
+        {
+            CMD_ERR("Invalid sat-time argument. Expected pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|"
+                    "pause-at-wallclock=<unix-ms>")
+        }
+
         return cmd;
     }
     else if (subCmd == "ps-release")

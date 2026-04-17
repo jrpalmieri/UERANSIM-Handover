@@ -13,7 +13,9 @@
 #include "rls/task.hpp"
 #include "rrc/task.hpp"
 
+#include <utils/common.hpp>
 #include <utils/constants.hpp>
+#include <utils/sat_time.hpp>
 
 namespace nr::ue
 {
@@ -28,6 +30,13 @@ UserEquipment::UserEquipment(UeConfig *config, app::IUeController *ueController,
     base->ueController = ueController;
     base->nodeListener = nodeListener;
     base->cliCallbackTask = cliCallbackTask;
+
+    int64_t startEpochMillis = config->ntn.timeWarp.startEpochMillis.value_or(utils::CurrentTimeMillis());
+    auto startCondition = utils::SatTime::EStartCondition::Moving;
+    if (config->ntn.timeWarp.startCondition == nr::ue::UeConfig::NtnConfig::TimeWarpConfig::EStartCondition::Paused)
+        startCondition = utils::SatTime::EStartCondition::Paused;
+
+    base->satTime = new utils::SatTime(startEpochMillis, startCondition, config->ntn.timeWarp.tickScaling);
 
     base->nasTask = new NasTask(base);
     base->rrcTask = new UeRrcTask(base);
@@ -50,6 +59,7 @@ UserEquipment::~UserEquipment()
     delete taskBase->rrcTask;
     delete taskBase->rlsTask;
     delete taskBase->appTask;
+    delete taskBase->satTime;
 
     delete taskBase->logBase;
 

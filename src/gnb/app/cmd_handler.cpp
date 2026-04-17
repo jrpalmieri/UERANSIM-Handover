@@ -10,9 +10,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 
+#include <libsgp4/DateTime.h>
 #include <gnb/app/task.hpp>
 #include <gnb/gnb.hpp>
 #include <gnb/gtp/task.hpp>
@@ -24,6 +27,7 @@
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
 #include <utils/printer.hpp>
+#include <utils/sat_time.hpp>
 #include <utils/yaml_utils.hpp>
 #include <yaml-cpp/yaml.h>
 
@@ -68,6 +72,59 @@ struct SatLocPvRequest
     int64_t epochMs{};
 };
 
+static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch, const std::string &fieldPath)
+{
+    if (tleEpoch.size() < 5)
+        throw std::runtime_error(fieldPath + " must be in TLE format YYDDD.DDD...");
+
+    if (!std::isdigit(static_cast<unsigned char>(tleEpoch[0])) ||
+        !std::isdigit(static_cast<unsigned char>(tleEpoch[1])))
+    {
+        throw std::runtime_error(fieldPath + " must start with a 2-digit year (YY)");
+    }
+
+    int year2 = (tleEpoch[0] - '0') * 10 + (tleEpoch[1] - '0');
+    int fullYear = year2 >= 57 ? (1900 + year2) : (2000 + year2);
+
+    double dayOfYear = 0.0;
+    try
+    {
+        dayOfYear = std::stod(tleEpoch.substr(2));
+    }
+    catch (const std::exception &)
+    {
+        throw std::runtime_error(fieldPath + " has invalid day-of-year value");
+    }
+
+    if (!(dayOfYear >= 1.0 && dayOfYear < 367.0))
+        throw std::runtime_error(fieldPath + " day-of-year must be in [1, 367)");
+
+    return libsgp4::DateTime(static_cast<unsigned int>(fullYear), dayOfYear);
+}
+
+static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
+{
+    const libsgp4::DateTime unixEpoch(1970, 1, 1, 0, 0, 0);
+    auto delta = dateTime - unixEpoch;
+    return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
+}
+
+static Json ToJsonSatTimeStatus(const utils::SatTime::Status &status)
+{
+    Json json = Json::Obj({
+        {"sat-time-ms", status.satTimeMillis},
+        {"wallclock-ms", status.wallclockMillis},
+        {"start-epoch-ms", status.startEpochMillis},
+        {"tick-scaling", std::to_string(status.tickScaling)},
+        {"paused", status.paused},
+    });
+
+    if (status.scheduledPauseWallclockMillis.has_value())
+        json.put("pause-at-wallclock-ms", *status.scheduledPauseWallclockMillis);
+
+    return json;
+}
+
 static std::string ToLower(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
@@ -89,6 +146,87 @@ static std::string ToString(ENeighborsUpdateMode mode)
     default:
         return "?";
     }
+}
+
+static std::string EscapeForLog(const std::string &value)
+{
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (char c : value)
+    {
+        if (c == '\n')
+            escaped += "\\n";
+        else if (c == '\r')
+            escaped += "\\r";
+        else
+            escaped += c;
+    }
+    return escaped;
+}
+
+static std::string FormatSource(const InetAddress &address)
+{
+    return "ipV" + std::to_string(address.getIpVersion()) + ":" + std::to_string(address.getPort());
+}
+
+static std::string FormatSatTimeAction(const app::SatTimeCliControl &satTime)
+{
+    switch (satTime.action)
+    {
+    case app::SatTimeCliControl::EAction::Status:
+        return "sat-time";
+    case app::SatTimeCliControl::EAction::Pause:
+        return "sat-time pause";
+    case app::SatTimeCliControl::EAction::Run:
+        return "sat-time run";
+    case app::SatTimeCliControl::EAction::TickScale:
+        return "sat-time tickscale=" + std::to_string(satTime.tickScale);
+    case app::SatTimeCliControl::EAction::StartEpoch:
+        return "sat-time start-epoch=" + satTime.startEpoch;
+    case app::SatTimeCliControl::EAction::PauseAtWallclock:
+        return "sat-time pause-at-wallclock=" + std::to_string(satTime.pauseAtWallclock);
+    }
+    return "sat-time";
+}
+
+static std::string ToAuditCommand(const app::GnbCliCommand &cmd)
+{
+    std::ostringstream stream;
+    switch (cmd.present)
+    {
+    case app::GnbCliCommand::STATUS:
+        return "status";
+    case app::GnbCliCommand::UI_STATUS:
+        return "ui-status";
+    case app::GnbCliCommand::INFO:
+        return "info";
+    case app::GnbCliCommand::AMF_LIST:
+        return "amf-list";
+    case app::GnbCliCommand::AMF_INFO:
+        return "amf-info " + std::to_string(cmd.amfId);
+    case app::GnbCliCommand::UE_LIST:
+        return "ue-list";
+    case app::GnbCliCommand::UE_COUNT:
+        return "ue-count";
+    case app::GnbCliCommand::UE_RELEASE_REQ:
+        return "ue-release " + std::to_string(cmd.ueId);
+    case app::GnbCliCommand::LOC_PV:
+        stream << "loc-pv x=" << cmd.locX << " y=" << cmd.locY << " z=" << cmd.locZ << " vx=" << cmd.velX
+               << " vy=" << cmd.velY << " vz=" << cmd.velZ << " epoch-ms=" << cmd.epochMs;
+        return stream.str();
+    case app::GnbCliCommand::SAT_LOC_PV:
+        return "sat-loc-pv payload=" + cmd.satLocPvJson;
+    case app::GnbCliCommand::SAT_TLE:
+        return "sat-tle payload=" + cmd.satTleJson;
+    case app::GnbCliCommand::SAT_TIME:
+        return FormatSatTimeAction(cmd.satTime);
+    case app::GnbCliCommand::NEIGHBORS:
+        return "neighbors payload=" + cmd.neighborsJson;
+    case app::GnbCliCommand::VERSION:
+        return "version";
+    }
+
+    return "unknown";
 }
 
 static NeighborsUpdateRequest ParseNeighborsRequest(const std::string &jsonPayload)
@@ -347,11 +485,47 @@ static NeighborsUpdateResult ApplyNeighborsUpdate(GnbNeighbors &neighbors,
 void GnbCmdHandler::sendResult(const InetAddress &address, const std::string &output)
 {
     m_base->cliCallbackTask->push(std::make_unique<app::NwCliSendResponse>(address, output, false));
+    logResponse(false, output);
 }
 
 void GnbCmdHandler::sendError(const InetAddress &address, const std::string &output)
 {
     m_base->cliCallbackTask->push(std::make_unique<app::NwCliSendResponse>(address, output, true));
+    logResponse(true, output);
+}
+
+void GnbCmdHandler::ensureCliLogger()
+{
+    if (m_cliLogger != nullptr)
+        return;
+
+    m_cliLogger = m_base->logBase->makeUniqueLogger(m_base->config->name + "-cli");
+}
+
+void GnbCmdHandler::logCommandReceived(const NmGnbCliCommand &msg)
+{
+    ensureCliLogger();
+    m_currentCommand = ToAuditCommand(*msg.cmd);
+    m_currentSource = FormatSource(msg.address);
+    m_cliLogger->info("CLI command received from %s: %s", m_currentSource.c_str(),
+                      EscapeForLog(m_currentCommand).c_str());
+}
+
+void GnbCmdHandler::logResponse(bool isError, const std::string &output)
+{
+    ensureCliLogger();
+    auto responseText = output.empty() ? std::string{"<empty>"} : EscapeForLog(output);
+    auto responseType = isError ? "error" : "result";
+
+    if (!m_currentCommand.empty())
+    {
+        m_cliLogger->info("CLI %s to %s for command '%s': %s", responseType, m_currentSource.c_str(),
+                          EscapeForLog(m_currentCommand).c_str(), responseText.c_str());
+    }
+    else
+    {
+        m_cliLogger->info("CLI %s: %s", responseType, responseText.c_str());
+    }
 }
 
 void GnbCmdHandler::pauseTasks()
@@ -389,6 +563,7 @@ bool GnbCmdHandler::isAllPaused()
 
 void GnbCmdHandler::handleCmd(NmGnbCliCommand &msg)
 {
+    logCommandReceived(msg);
     pauseTasks();
 
     uint64_t currentTime = utils::CurrentTimeMillis();
@@ -416,6 +591,8 @@ void GnbCmdHandler::handleCmd(NmGnbCliCommand &msg)
     }
 
     unpauseTasks();
+    m_currentCommand.clear();
+    m_currentSource.clear();
 }
 
 void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
@@ -553,6 +730,47 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
             {"upsertedCount", static_cast<int>(entries.size())},
         });
         sendResult(msg.address, response.dumpYaml());
+        break;
+    }
+    case app::GnbCliCommand::SAT_TIME: {
+        if (m_base->satTime == nullptr)
+        {
+            sendError(msg.address, "sat-time is not available");
+            break;
+        }
+
+        try
+        {
+            switch (msg.cmd->satTime.action)
+            {
+            case app::SatTimeCliControl::EAction::Status:
+                break;
+            case app::SatTimeCliControl::EAction::Pause:
+                m_base->satTime->SetPaused(true);
+                break;
+            case app::SatTimeCliControl::EAction::Run:
+                m_base->satTime->SetPaused(false);
+                break;
+            case app::SatTimeCliControl::EAction::TickScale:
+                m_base->satTime->SetTickScaling(msg.cmd->satTime.tickScale);
+                break;
+            case app::SatTimeCliControl::EAction::StartEpoch: {
+                auto dt = ParseTleEpochDateTime(msg.cmd->satTime.startEpoch, "sat-time start-epoch");
+                m_base->satTime->SetStartEpochMillis(DateTimeToUnixMillis(dt));
+                break;
+            }
+            case app::SatTimeCliControl::EAction::PauseAtWallclock:
+                m_base->satTime->SchedulePauseAtWallclockMillis(msg.cmd->satTime.pauseAtWallclock);
+                break;
+            }
+        }
+        catch (const std::exception &e)
+        {
+            sendError(msg.address, std::string("sat-time command failed: ") + e.what());
+            break;
+        }
+
+        sendResult(msg.address, ToJsonSatTimeStatus(m_base->satTime->GetStatus()).dumpYaml());
         break;
     }
     case app::GnbCliCommand::NEIGHBORS: {

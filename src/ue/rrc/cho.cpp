@@ -48,6 +48,7 @@
 #include <lib/rrc/encode.hpp>
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
+#include <utils/sat_time.hpp>
 
 #include <asn/rrc/ASN_RRC_ConditionalReconfiguration.h>
 #include <asn/rrc/ASN_RRC_CondReconfigToAddMod.h>
@@ -674,8 +675,10 @@ bool UeRrcTask::evaluateChoCandidates()
     if (m_choCandidates.empty() || m_handoverInProgress || m_measurementEvalSuspended)
         return false;
 
-    // current time in milliseconds
-    int64_t now = utils::CurrentTimeMillis();
+    // current satellite-domain time in milliseconds
+    int64_t now = m_base->satTime != nullptr
+                      ? m_base->satTime->CurrentSatTimeMillis()
+                      : utils::CurrentTimeMillis();
 
     // copy the current cell power measurements under lock to avoid holding the lock while evaluating conditions
     std::map<int, int> allMeas;

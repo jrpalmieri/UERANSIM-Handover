@@ -91,18 +91,27 @@ integrityMaxRate:
 #   TIMER_PERIOD_ACK_CONTROL: 2250
 # If these are omitted, default values will be used.
 # HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT.
+# These MUST be coordinated with the GNB configuration to avoid timeout issues causing UE registration flapping.
 rls:
   LOOP_COUNTER: 200
   RECEIVE_TIMEOUT: 100
   TIMER_PERIOD_ACK_SEND: 300
   TIMER_PERIOD_ACK_CONTROL: 500
 
-# UE position, specified in WGS-84 geographic coordinates (latitude, longitude, altitude).
-#   Sent to gNBs in RLS heartbeat messages.  Used to calculate RSRP returned in ACks (if enabled in gNB config)
+# UE position - used in RSRP calculations and CHO distance-based conditions.
+# Specified in WGS-84 geographic coordinates (converted to ECEF by UE).
 position:
-  latitude: 33.7490    # degrees North
-  longitude: -84.3880  # degrees East
-  altitude: 320.0      # meters above WGS-84 ellipsoid
+  latitude: 45.0000    # degrees North
+  longitude: 90.0000   # degrees East
+  altitude: 0.0      # meters above WGS-84 ellipsoid
+
+# parameters for Non-Terrestrial Network (NTN) operation
+ntn:
+  # NTN satellite-time control for UE-side SIB19/CHO satellite propagation.
+  timeWarp:
+    startCondition: moving
+    tickScaling: 1.0
+    startEpoch: "23162.59097222"
 
 
 # Measurement Source Configuration (optional)

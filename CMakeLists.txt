@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 
 option(STATIC_BUILD "Build fully static executables for portability across Ubuntu versions" OFF)
+option(BUILD_UNIT_TESTS "Build local C++ unit-test executables" ON)
 
 include_directories(src)
 
@@ -69,4 +70,12 @@ target_link_libraries(nr-cli common-lib)
 
 if(STATIC_BUILD)
     target_link_options(nr-cli PRIVATE -static)
+endif()
+
+#################### UNIT TEST EXECUTABLES ####################
+
+if(BUILD_UNIT_TESTS)
+    add_executable(sat_time_tests tests/sat_time_tests.cpp)
+    target_compile_options(sat_time_tests PRIVATE -Wall -Wextra -pedantic)
+    target_link_libraries(sat_time_tests utils)
 endif()

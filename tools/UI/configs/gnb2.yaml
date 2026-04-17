@@ -25,12 +25,19 @@ ignoreStreamIds: true
 
 # RF link configuration.
 rfLink:
-  updateMode: Fixed
-  rsrpDbValue: -60
-  carrFrequencyHz: 3.5e9
-  txPowerDbm: 15.0
-  txGainDbi: 15.0
-  ueRxGainDbi: 0.0
+  # updateMode: Fixed
+  # rsrpDbValue: -120
+  updateMode: Calculated
+  # typical values for a LEO satellite gNB
+  carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
+  txPowerDbm: 43.0          # Radiated (transmit) power (dBm)
+  txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
+  ueRxGainDbi: 25.0         # UE Receive antenna gain (dBi)
+  # typical values for a terrestrial gNB (macro)
+  # carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
+  # txPowerDbm: 15.0          # Radiated (transmit) power (dBm)
+  # txGainDbi: 15.0           # gNB Transmit antenna gain (dBi)
+  # ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
 
 # RLS loop/timer settings (ms).
 #  If these are omitted, default values will be used:
@@ -62,10 +69,10 @@ neighborList:
 # Used as the static terrestrial position or as fallback
 # when no TLE has been received in satellite mode
 position:
-  latitude: 33.7490     # degrees North
-  longitude: -84.3880   # degrees East
-#  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
-  altitude: 800.0      # meters above ellipsoid (typical for terrestrial gNB)
+  latitude: 45.0000     # degrees North
+  longitude: 90.0000   # degrees East
+  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
+#  altitude: 800.0      # meters above ellipsoid (typical for terrestrial gNB)
 
 # Xn interface configuration (used for handover signaling with neighbor cells that support Xn handover)
 xn:
@@ -103,15 +110,57 @@ handover:
           a3OffsetDb: 3
           hysteresisDb: 1
           tttMs: 1000
-# NTN configuration
+
+# NTN (non-Terrestrial Network) configuration
 ntn:
+
+  # setting ntnEnabled to false will ignore all other ntn parameters and cause gnb to 
+  #   operate in regular (terrestrial) mode
   ntnEnabled: false
+
+  # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
+  tle:
+    # Samples - same epoch, nadir: lat=45N, lon=90W
+    #  Sat 1: Zenith (Elevation ~90 deg)
+    #line1: '1 99991U 26106A   26106.97180556  .00000000  00000-0  00000-0 0  9993'
+    #line2: '2 99991  45.0000 270.0000 0001000   0.0000  90.0000 15.00000000    14'
+    #    Sat 2: Rising (Elevation ~30 deg)
+    line1: '1 99992U 26106B   26106.97180556  .00000000  00000-0  00000-0 0  9995'
+    line2: '2 99992  45.0000 270.0000 0001000   0.0000  70.0000 15.00000000    12'
+    #    Sat 3: Trailing (Elevation ~10 deg)
+    # line1: '1 99993U 26106C   26106.97180556  .00000000  00000-0  00000-0 0  9997'
+    # line2: '2 99993  45.0000 270.0000 0001000   0.0000  50.0000 15.00000000    10'
+    #    Sat 4: Distant 1 (Below Horizon)
+    # line1: '1 99994U 26106D   26106.97180556  .00000000  00000-0  00000-0 0  9999'
+    # line2: '2 99994  45.0000 270.0000 0001000   0.0000  30.0000 15.00000000    18'
+    #    Sat 5: Distant 2 (Below Horizon)
+    # line1: '1 99995U 26106E   26106.97180556  .00000000  00000-0  00000-0 0  9990'
+    # line2: '2 99995  45.0000 270.0000 0001000   0.0000  10.0000 15.00000000    16'
+
+  # Satellite time control for NTN simulation.
+  timeWarp:
+    # startEpoch must be in TLE epoch format YYDDD.DDDDDDDD
+    startEpoch: "26106.97180556"   # lines up with the TLE epoch
+    # startCondition controls whether the satellite time starts immediately (moving) 
+    #   or waits for a trigger (paused).
+    startCondition: paused
+    # tickScaling controls the speed of time progression relative to real time
+    #   tickScaling=2.0 means satellite time progresses twice as fast as real time.
+    #   tickScaling=0.5 means satellite time progresses at half the speed of real time.
+    tickScaling: 1.0
+
+  # minimum elevation angle (degrees) for the satellite to be considered 
+  #   "visible" to the UE - used for CHO conditions
+  elevationMinDeg: 20
+
   # controls how SIB19 is configured/sent
   sib19:
     # sib19on must be true to enable SIB19 transmissions
-    sib19on: false
+    sib19on: true
     # send period (in ms)
     sib19timing: 1000
+    # ephemeris type ('orbital' or 'pos-vel')
+    ephType: orbital
     # these params are not used in the simulation, set to default values for completeness
     kOffset: 0
     taCommon: 0

@@ -37,12 +37,12 @@ rfLink:
   # updateMode: Fixed
   # rsrpDbValue: -120
   updateMode: Calculated
-  # typical values for a LEO satellite gNB, which can be adjusted as needed for different scenarios
+  # typical values for a LEO satellite gNB
   carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
   txPowerDbm: 43.0          # Radiated (transmit) power (dBm)
   txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
   ueRxGainDbi: 25.0         # UE Receive antenna gain (dBi)
-  # typical values for a terrestrial gNB (macro), which can be adjusted as needed for different scenarios
+  # typical values for a terrestrial gNB (macro)
   # carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
   # txPowerDbm: 15.0          # Radiated (transmit) power (dBm)
   # txGainDbi: 15.0           # gNB Transmit antenna gain (dBi)
@@ -167,39 +167,56 @@ handover:
         useTimer: true
         timerSec: 0
         
-# NTN configuration
+# NTN (non-Terrestrial Network) configuration
 ntn:
-  # setting ntnEnabled to false will ignore all other ntn parameters
-  # set to true to enable NTN satellite mode, which will:
-  #   - cause the gNB to calculate RSRP based on satellite link budget
-  #   - send SIB19 messages to the UE so it can use the satellite position
-  #   - send CHO measurement events based on satellite-specific conditions (e.g. distance to satellite)
+
+  # setting ntnEnabled to false will ignore all other ntn parameters and cause gnb to 
+  #   operate in regular (terrestrial) mode
   ntnEnabled: false
 
+  # Two Line Element (TLE) set for the satellite, used to calculate satellite position.
   tle:
-    # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
-    # The default TLE is for the Starlink Gen2-1 satellite, which can be used for testing purposes.
-    # To get the TLE for a different satellite, you can use a service like Celestrak (https://celestrak.com/NORAD/elements/) or Space-Track (https://www.space-track.org/auth/login).
-    line1: '1 47933U 21029A   23162.59097222  .00001250  00000-0  29666-4 0  9993'
-    line2: '2 47933  53.0000 180.0000 0001000   0.0000   0.0000 15.50000000    14'
-  # Optional time warping for NTN simulation time alignment.
-  # Provide exactly one of:
-  #   timeWarp.offsetMs: signed offset in milliseconds (negative shifts backwards), OR
-  #   timeWarp.targetTimeEpoch: TLE epoch format YYDDD.DDDDDDDD (UTC).
-  # targetTimeEpoch is converted once at startup into an offset that is used
-  # for the full simulation run.
-  # timeWarp:
-  #   offsetMs: -3600000
+    # Samples - same epoch, nadir: lat=45N, lon=90W
+    #  Sat 1: Zenith (Elevation ~90 deg)
+    line1: '1 99991U 26106A   26106.97180556  .00000000  00000-0  00000-0 0  9993'
+    line2: '2 99991  45.0000 270.0000 0001000   0.0000  90.0000 15.00000000    14'
+    #    Sat 2: Rising (Elevation ~30 deg)
+    # line1: '1 99992U 26106B   26106.97180556  .00000000  00000-0  00000-0 0  9995'
+    # line2: '2 99992  45.0000 270.0000 0001000   0.0000  70.0000 15.00000000    12'
+    #    Sat 3: Trailing (Elevation ~10 deg)
+    # line1: '1 99993U 26106C   26106.97180556  .00000000  00000-0  00000-0 0  9997'
+    # line2: '2 99993  45.0000 270.0000 0001000   0.0000  50.0000 15.00000000    10'
+    #    Sat 4: Distant 1 (Below Horizon)
+    # line1: '1 99994U 26106D   26106.97180556  .00000000  00000-0  00000-0 0  9999'
+    # line2: '2 99994  45.0000 270.0000 0001000   0.0000  30.0000 15.00000000    18'
+    #    Sat 5: Distant 2 (Below Horizon)
+    # line1: '1 99995U 26106E   26106.97180556  .00000000  00000-0  00000-0 0  9990'
+    # line2: '2 99995  45.0000 270.0000 0001000   0.0000  10.0000 15.00000000    16'
+
+  # Satellite time control for NTN simulation.
   timeWarp:
-    targetTimeEpoch: "23162.59097222"   # lines up with the TLE epoch
-  # minimum elevation angle (degrees) for the satellite to be considered "visible" to the UE - used for CHO conditions
+    # startEpoch must be in TLE epoch format YYDDD.DDDDDDDD
+    startEpoch: "26106.97180556"   # lines up with the TLE epoch
+    # startCondition controls whether the satellite time starts immediately (moving) 
+    #   or waits for a trigger (paused).
+    startCondition: moving
+    # tickScaling controls the speed of time progression relative to real time
+    #   tickScaling=2.0 means satellite time progresses twice as fast as real time.
+    #   tickScaling=0.5 means satellite time progresses at half the speed of real time.
+    tickScaling: 1.0
+
+  # minimum elevation angle (degrees) for the satellite to be considered 
+  #   "visible" to the UE - used for CHO conditions
   elevationMinDeg: 20   
+
   # controls how SIB19 is configured/sent
   sib19:
     # sib19on must be true to enable SIB19 transmissions
     sib19on: true
     # send period (in ms)
     sib19timing: 1000
+    # ephemeris type ('orbital' or 'pos-vel')
+    ephType: orbital
     # these params are not used in the simulation, set to default values for completeness
     kOffset: 0
     taCommon: 0

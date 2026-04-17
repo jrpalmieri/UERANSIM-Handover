@@ -73,6 +73,14 @@ class TestUeSignalBasedHandover:
             f"Expected parseable UL MeasurementReport, got message type '{msg_type}'"
         )
 
+    def _assert_no_cho_runtime_effects(self, ue_process):
+        """Legacy RSRP tests must not configure or execute CHO candidates."""
+        info = ue_process.parse_cho_info()
+        assert info["candidates_configured"] == 0
+        assert info["executed_id"] is None
+        assert info["applied_added"] == 0
+        assert info["runtime_resets"] == 0
+
     def test_handover_from_source_to_target_based_on_signal_strength(self, two_gnb_ue, source_gnb, target_gnb):
         source_gnb.cell_dbm = -52
         target_gnb.cell_dbm = -88
@@ -91,6 +99,7 @@ class TestUeSignalBasedHandover:
         latest = _latest_cell_dbm(two_gnb_ue.log_lines)
         assert 1 in latest and 2 in latest
         assert _strongest_cell(latest) == 2
+        self._assert_no_cho_runtime_effects(two_gnb_ue)
 
     def test_fallback_meas_report_path_without_cho(self, two_gnb_ue, source_gnb, target_gnb):
         """Without CHO config, UE should still use standard A3 MeasurementReport path.
@@ -116,6 +125,7 @@ class TestUeSignalBasedHandover:
             target_dbm=-46,
             transaction_id=10,
         )
+        self._assert_no_cho_runtime_effects(two_gnb_ue)
 
     def test_fallback_a2_meas_report_path_without_cho(self, two_gnb_ue, source_gnb, target_gnb):
         """Without CHO config, UE should still trigger legacy A2 reporting."""
@@ -137,6 +147,7 @@ class TestUeSignalBasedHandover:
             target_dbm=-80,
             transaction_id=11,
         )
+        self._assert_no_cho_runtime_effects(two_gnb_ue)
 
     def test_fallback_a5_meas_report_path_without_cho(self, two_gnb_ue, source_gnb, target_gnb):
         """Without CHO config, UE should still trigger legacy A5 dual-threshold reporting."""
@@ -159,6 +170,7 @@ class TestUeSignalBasedHandover:
             target_dbm=-85,
             transaction_id=12,
         )
+        self._assert_no_cho_runtime_effects(two_gnb_ue)
 
 
 @ue_binary_exists

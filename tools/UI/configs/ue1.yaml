@@ -119,11 +119,11 @@ measSource:
   # For UDP measurement source: specify the local port to listen on for measurement messages
   udpPort: 7200
 
-# UE position (optional, for D1 distance-based CHO events)
-# Specified in WGS-84 geographic coordinates; automatically converted to ECEF.
+# UE position - used in RSRP calculations and CHO distance-based conditions.
+# Specified in WGS-84 geographic coordinates (converted to ECEF by UE).
 position:
-  latitude: 33.7490    # degrees North
-  longitude: -84.3880  # degrees East
-  altitude: 320.0      # meters above WGS-84 ellipsoid
+  latitude: 45.000     # degrees North
+  longitude: 90.000    # degrees East
+  altitude: 0.0      # meters above WGS-84 ellipsoid
 
 

@@ -10,7 +10,6 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cctype>
-#include <chrono>
 #include <cmath>
 #include <optional>
 #include <unordered_map>
@@ -40,25 +39,17 @@ static struct Options
 {
     std::string configFile{};
     bool disableCmd{};
-    std::optional<int64_t> timeWarpOffsetMsOverride{};
 } g_options{};
 
-static int64_t CurrentWallTimeMillis()
-{
-    auto now = std::chrono::system_clock::now().time_since_epoch();
-    return static_cast<int64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
-}
-
-static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch)
+static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch, const std::string &fieldPath)
 {
     if (tleEpoch.size() < 5)
-        throw std::runtime_error("ntn.timeWarp.targetTimeEpoch must be in TLE format YYDDD.DDD...");
+        throw std::runtime_error(fieldPath + " must be in TLE format YYDDD.DDD...");
 
     if (!std::isdigit(static_cast<unsigned char>(tleEpoch[0])) ||
         !std::isdigit(static_cast<unsigned char>(tleEpoch[1])))
     {
-        throw std::runtime_error("ntn.timeWarp.targetTimeEpoch must start with a 2-digit year (YY)");
+        throw std::runtime_error(fieldPath + " must start with a 2-digit year (YY)");
     }
 
     int year2 = (tleEpoch[0] - '0') * 10 + (tleEpoch[1] - '0');
@@ -71,11 +62,11 @@ static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch)
     }
     catch (const std::exception &)
     {
-        throw std::runtime_error("ntn.timeWarp.targetTimeEpoch has invalid day-of-year value");
+        throw std::runtime_error(fieldPath + " has invalid day-of-year value");
     }
 
     if (!(dayOfYear >= 1.0 && dayOfYear < 367.0))
-        throw std::runtime_error("ntn.timeWarp.targetTimeEpoch day-of-year must be in [1, 367)");
+        throw std::runtime_error(fieldPath + " day-of-year must be in [1, 367)");
 
     return libsgp4::DateTime(static_cast<unsigned int>(fullYear), dayOfYear);
 }
@@ -86,30 +77,6 @@ static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
     auto delta = dateTime - unixEpoch;
     return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
 }
-
-static int64_t ResolveConfiguredTimeWarpOffsetMs(const nr::gnb::GnbConfig &config)
-{
-    const auto &tw = config.ntn.timeWarp;
-
-    if (tw.offsetMs.has_value() && tw.targetTimeEpoch.has_value())
-    {
-        throw std::runtime_error(
-            "ntn.timeWarp must define only one of offsetMs or targetTimeEpoch");
-    }
-
-    if (tw.offsetMs.has_value())
-        return *tw.offsetMs;
-
-    if (tw.targetTimeEpoch.has_value())
-    {
-        const libsgp4::DateTime target = ParseTleEpochDateTime(*tw.targetTimeEpoch);
-        const int64_t targetMs = DateTimeToUnixMillis(target);
-        return targetMs - CurrentWallTimeMillis();
-    }
-
-    return 0;
-}
-
 
 static nr::gnb::EGnbRsrpMode ReadRsrpMode(const YAML::Node &node, const std::string &fieldPath)
 {
@@ -124,6 +91,27 @@ static nr::gnb::EGnbRsrpMode ReadRsrpMode(const YAML::Node &node, const std::str
         return nr::gnb::EGnbRsrpMode::Fixed;
 
     throw std::runtime_error("Field " + fieldPath + " has invalid value, expected 'Calculated' or 'Fixed'");
+}
+
+static nr::gnb::ESib19EphemerisMode ReadSib19EphemerisMode(const YAML::Node &node, const std::string &fieldPath)
+{
+    auto valueNode = node["ephType"];
+    if (!valueNode.IsScalar())
+        throw std::runtime_error("Field " + fieldPath + " must be a scalar value");
+
+    auto mode = valueNode.as<std::string>();
+    utils::Trim(mode);
+    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+
+    if (mode == "pos-vel" || mode == "posvel" || mode == "position-velocity" || mode == "0")
+        return nr::gnb::ESib19EphemerisMode::PosVel;
+    if (mode == "orbital" || mode == "1")
+        return nr::gnb::ESib19EphemerisMode::Orbital;
+
+    throw std::runtime_error(
+        "Field " + fieldPath + " has invalid value, expected 'pos-vel' or 'orbital'");
 }
 
 static void ReadTargetCellSelector(
@@ -199,7 +187,7 @@ static nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig ReadHandoverEvent(
     if (yaml::HasField(entry, "a2ThresholdDbm"))
         item.a2ThresholdDbm = yaml::GetInt32(entry, "a2ThresholdDbm", -156, -31);
     if (yaml::HasField(entry, "a3OffsetDb"))
-        item.a3OffsetDb = yaml::GetInt32(entry, "a3OffsetDb", -15, 15);
+        item.a3OffsetDb = yaml::GetInt32(entry, "a3OffsetDb", std::nullopt, std::nullopt);
     if (yaml::HasField(entry, "a5Threshold1Dbm"))
         item.a5Threshold1Dbm = yaml::GetInt32(entry, "a5Threshold1Dbm", -156, -31);
     if (yaml::HasField(entry, "a5Threshold2Dbm"))
@@ -416,7 +404,7 @@ static void ReadHandoverConfigSection(
     if (yaml::HasField(handover, "a2ThresholdDbm"))
         defaults.a2ThresholdDbm = yaml::GetInt32(handover, "a2ThresholdDbm", -156, -31);
     if (yaml::HasField(handover, "a3OffsetDb"))
-        defaults.a3OffsetDb = yaml::GetInt32(handover, "a3OffsetDb", -15, 15);
+        defaults.a3OffsetDb = yaml::GetInt32(handover, "a3OffsetDb", std::nullopt, std::nullopt);
     if (yaml::HasField(handover, "a5Threshold1Dbm"))
         defaults.a5Threshold1Dbm = yaml::GetInt32(handover, "a5Threshold1Dbm", -156, -31);
     if (yaml::HasField(handover, "a5Threshold2Dbm"))
@@ -618,25 +606,56 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
         if (yaml::HasField(ntn, "ntnEnabled"))
             result->ntn.ntnEnabled = yaml::GetBool(ntn, "ntnEnabled");
 
+
         if (yaml::HasField(ntn, "timeWarp"))
         {
             auto timeWarp = ntn["timeWarp"];
             if (!timeWarp.IsMap())
                 throw std::runtime_error("Field ntn.timeWarp must be a map");
 
-            if (yaml::HasField(timeWarp, "offsetMs"))
+            if (yaml::HasField(timeWarp, "startCondition"))
             {
-                result->ntn.timeWarp.offsetMs =
-                    yaml::GetInt64(timeWarp, "offsetMs", std::nullopt, std::nullopt);
+                auto startCondition = yaml::GetString(timeWarp, "startCondition");
+                std::transform(startCondition.begin(), startCondition.end(), startCondition.begin(),
+                               [](unsigned char ch) {
+                                   return static_cast<char>(std::tolower(ch));
+                               });
+
+                if (startCondition == "paused")
+                {
+                    result->ntn.timeWarp.startCondition =
+                        nr::gnb::NtnConfig::TimeWarpConfig::EStartCondition::Paused;
+                }
+                else if (startCondition == "moving")
+                {
+                    result->ntn.timeWarp.startCondition =
+                        nr::gnb::NtnConfig::TimeWarpConfig::EStartCondition::Moving;
+                }
+                else
+                {
+                    throw std::runtime_error(
+                        "Field ntn.timeWarp.startCondition has invalid value, expected 'paused' or 'moving'");
+                }
             }
 
-            if (yaml::HasField(timeWarp, "targetTimeEpoch"))
+            if (yaml::HasField(timeWarp, "tickScaling"))
             {
-                auto targetTimeEpoch = yaml::GetString(timeWarp, "targetTimeEpoch");
-                utils::Trim(targetTimeEpoch);
-                if (targetTimeEpoch.empty())
-                    throw std::runtime_error("ntn.timeWarp.targetTimeEpoch cannot be empty");
-                result->ntn.timeWarp.targetTimeEpoch = std::move(targetTimeEpoch);
+                result->ntn.timeWarp.tickScaling = yaml::GetDouble(timeWarp, "tickScaling");
+                if (!std::isfinite(result->ntn.timeWarp.tickScaling) || result->ntn.timeWarp.tickScaling <= 0.0)
+                {
+                    throw std::runtime_error("Field ntn.timeWarp.tickScaling must be a finite value > 0");
+                }
+            }
+
+            if (yaml::HasField(timeWarp, "startEpoch"))
+            {
+                auto startEpochText = yaml::GetString(timeWarp, "startEpoch");
+                utils::Trim(startEpochText);
+                if (startEpochText.empty())
+                    throw std::runtime_error("ntn.timeWarp.startEpoch cannot be empty");
+
+                auto startEpochDt = ParseTleEpochDateTime(startEpochText, "ntn.timeWarp.startEpoch");
+                result->ntn.timeWarp.startEpochMillis = DateTimeToUnixMillis(startEpochDt);
             }
         }
 
@@ -726,8 +745,7 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
 
                 if (yaml::HasField(sib19, "ephType"))
                 {
-                    result->ntn.sib19.ephType =
-                        yaml::GetInt32(sib19, "ephType", 0, 1);
+                    result->ntn.sib19.ephType = ReadSib19EphemerisMode(sib19, "ntn.sib19.ephType");
                 }
             }
         }
@@ -770,8 +788,7 @@ static void ReadOptions(int argc, char **argv)
                                  "5G-SA gNB implementation",
                                  cons::Owner,
                                  "nr-gnb",
-                                 {"-c <config-file> [option...]",
-                                  "-c <config-file> --time-warp-ms <offset-ms> [option...]"},
+                                 {"-c <config-file> [option...]"},
                                  {},
                                  true,
                                  false};
@@ -779,35 +796,15 @@ static void ReadOptions(int argc, char **argv)
     opt::OptionItem itemConfigFile = {'c', "config", "Use specified configuration file for gNB", "config-file"};
     opt::OptionItem itemDisableCmd = {'l', "disable-cmd", "Disable command line functionality for this instance",
                                       std::nullopt};
-    opt::OptionItem itemTimeWarpMs = {
-        'w',
-        "time-warp-ms",
-        "Override NTN time warp offset in milliseconds (negative shifts time backwards)",
-        "offset-ms"
-    };
 
     desc.items.push_back(itemConfigFile);
     desc.items.push_back(itemDisableCmd);
-    desc.items.push_back(itemTimeWarpMs);
 
     opt::OptionsResult opt{argc, argv, desc, false, nullptr};
 
     if (opt.hasFlag(itemDisableCmd))
         g_options.disableCmd = true;
     g_options.configFile = opt.getOption(itemConfigFile);
-
-    if (opt.hasFlag(itemTimeWarpMs))
-    {
-        try
-        {
-            g_options.timeWarpOffsetMsOverride = std::stoll(opt.getOption(itemTimeWarpMs));
-        }
-        catch (const std::exception &)
-        {
-            std::cerr << "ERROR: invalid --time-warp-ms value" << std::endl;
-            exit(1);
-        }
-    }
 
     try
     {
@@ -909,18 +906,7 @@ int main(int argc, char **argv)
     app::Initialize();
     ReadOptions(argc, argv);
 
-    // adjust the base time to align with a desired starting epoch if configured, to enable deterministic time warping for NTN testing
-
-    const int64_t effectiveTimeWarpOffsetMs = g_options.timeWarpOffsetMsOverride.has_value()
-                                                  ? *g_options.timeWarpOffsetMsOverride
-                                                  : ResolveConfiguredTimeWarpOffsetMs(*g_refConfig);
-    utils::SetTimeWarpOffsetMillis(effectiveTimeWarpOffsetMs);
-
     std::cout << cons::Name << std::endl;
-    if (effectiveTimeWarpOffsetMs != 0)
-    {
-        std::cout << "NTN time warp offset (ms): " << effectiveTimeWarpOffsetMs << std::endl;
-    }
 
     if (!g_options.disableCmd)
     {

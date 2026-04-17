@@ -23,14 +23,24 @@ slices:
 # Indicates whether or not SCTP stream number errors should be ignored.
 ignoreStreamIds: true
 
-# RF link configuration.
+# rf link parameters to calculate RSRP values sent to UEs
+#   if updateMode is "Fixed", only the provided rsrpDbValue is used and the other parameters are ignored.
+#     Note: this value can be manually changed during operation through the command interface to simulate changes in RF conditions.
+#   if updateMode is "Calculated", the RSRP is calculated  using the carrier frequency, tx power, and antenna gains.
 rfLink:
-  updateMode: Fixed
-  rsrpDbValue: -60
-  carrFrequencyHz: 3.5e9
-  txPowerDbm: 15.0
-  txGainDbi: 15.0
-  ueRxGainDbi: 0.0
+  # updateMode: Fixed
+  # rsrpDbValue: -120
+  updateMode: Calculated
+  # typical values for a LEO satellite gNB
+  carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
+  txPowerDbm: 43.0          # Radiated (transmit) power (dBm)
+  txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
+  ueRxGainDbi: 25.0         # UE Receive antenna gain (dBi)
+  # typical values for a terrestrial gNB (macro), which can be adjusted as needed for different scenarios
+  # carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
+  # txPowerDbm: 15.0          # Radiated (transmit) power (dBm)
+  # txGainDbi: 15.0           # gNB Transmit antenna gain (dBi)
+  # ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi) - 0.0 is omnidirectional
 
 # RLS loop/timer settings (ms).
 #  If these are omitted, default values will be used:
@@ -62,10 +72,10 @@ neighborList:
 # Used as the static terrestrial position or as fallback
 # when no TLE has been received in satellite mode
 position:
-  latitude: 33.7490     # degrees North
-  longitude: -84.3880   # degrees East
-#  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
-  altitude: 800.0      # meters above ellipsoid (typical for terrestrial gNB)
+  latitude: 45.000     # degrees North
+  longitude: 90.000    # degrees East
+  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
+#  altitude: 800.0      # meters above ellipsoid (typical for terrestrial gNB)
 
 # Xn interface configuration (used for handover signaling with neighbor cells that support Xn handover)
 xn:
@@ -78,24 +88,37 @@ xn:
 
 # Handover measurement/CHO configuration.
 # events: classic (non-CHO) events always sent to UEs.
-# choEvents: CHO condition groups (AND within group).
+# if choEnbaled is true, then Conditional Handover (CHO) events in choEvents will also be sent to UEs.
+# choEvents: CHO profiles with a condition group (AND within group).
 # CHO priority is derived from target candidate ranking (best=1).
+
 handover:
-  choEnabled: false
   events:
     - eventType: A3
       a3OffsetDb: 3
       hysteresisDb: 1
       tttMs: 200
-  choEvents:
-    - events:
+  choEnabled: false
+  choDefaultProfileId: 1  # default profile ID to use for CHO candidates if not overridden
+  choCandidateProfiles:
+    - candidateProfileId: 1
+      # targetCellId is either a specific cell ID (e.g. '0x000000020') which must be on the neighbor list
+      #   or "calculated", which causes the gNB to use the cell ID of the best candidate neighbor cell based on distance
+      targetCellId: '0x000000022'
+      conditions:
         - eventType: D1
           distanceThreshold: 1200
-          distanceType: nadir
+          # can be "fixed" (absolute distance to reference position) or "nadir" (distance to satellite nadir point)
+          #   nadir requires satellite position information at the UE, which is provided in SIB19 messages
+          distanceType: fixed
           hysteresisM: 100
           tttMs: 1000
           # Required when distanceType is fixed.
           referencePosition:
+            # set this to true to use the gNB's current position as the reference position for D1 event.
+            #    (any lat/long/alt values provided here will be ignored)
+            # if false, the reference position will be set to the provided latitude/longitude/altitude values.
+            useCurrPosition: true
             latitude: 37.7749
             longitude: -122.4194
             altitude: 100
@@ -103,15 +126,87 @@ handover:
           a3OffsetDb: 3
           hysteresisDb: 1
           tttMs: 1000
-# NTN configuration
+    - candidateProfileId: 2
+      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
+      targetCellId: calculated
+      conditions:
+      # - eventType: D1
+      #   distanceThreshold: 1200
+      #   # can be "fixed" (absolute distance to reference position) or "nadir" (distance to satellite nadir point)
+      #   #   nadir requires satellite position information at the UE, which is provided in SIB19 messages
+      #   distanceType: nadir
+      #   hysteresisM: 100
+      #   tttMs: 1000
+      #   # Required when distanceType is fixed.
+      #   referencePosition:
+      #     # set this to true to use the gNB's current position as the reference position for D1 event.
+      #     #    (any lat/long/alt values provided here will be ignored)
+      #     # if false, the reference position will be set to the provided latitude/longitude/altitude values.
+      #     useCurrPosition: true
+      #     latitude: 37.7749
+      #     longitude: -122.4194
+      #     altitude: 100
+      # "dummy" A3 event, used for time-triggered handovers
+      #   setting useTimer=true means the gNB will apply a trigger timer to the event
+      #   specifying timeSec=0 means ler gnb set this, any other value will always use that fixed value
+      - eventType: A3
+        a3OffsetDb: -30
+        hysteresisDb: 0
+        tttMs: 0
+        useTimer: true
+        timerSec: 0
+
+
+# NTN (non-Terrestrial Network) configuration
 ntn:
+
+  # setting ntnEnabled to false will ignore all other ntn parameters and cause gnb to 
+  #   operate in regular (terrestrial) mode
   ntnEnabled: false
+
+  # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
+  tle:
+    # Samples - same epoch, nadir: lat=45N, lon=90W
+    #  Sat 1: Zenith (Elevation ~90 deg)
+    line1: '1 99991U 26106A   26106.97180556  .00000000  00000-0  00000-0 0  9993'
+    line2: '2 99991  45.0000 270.0000 0001000   0.0000  90.0000 15.00000000    14'
+    #    Sat 2: Rising (Elevation ~30 deg)
+    # line1: '1 99992U 26106B   26106.97180556  .00000000  00000-0  00000-0 0  9995'
+    # line2: '2 99992  45.0000 270.0000 0001000   0.0000  70.0000 15.00000000    12'
+    #    Sat 3: Trailing (Elevation ~10 deg)
+    # line1: '1 99993U 26106C   26106.97180556  .00000000  00000-0  00000-0 0  9997'
+    # line2: '2 99993  45.0000 270.0000 0001000   0.0000  50.0000 15.00000000    10'
+    #    Sat 4: Distant 1 (Below Horizon)
+    # line1: '1 99994U 26106D   26106.97180556  .00000000  00000-0  00000-0 0  9999'
+    # line2: '2 99994  45.0000 270.0000 0001000   0.0000  30.0000 15.00000000    18'
+    #    Sat 5: Distant 2 (Below Horizon)
+    # line1: '1 99995U 26106E   26106.97180556  .00000000  00000-0  00000-0 0  9990'
+    # line2: '2 99995  45.0000 270.0000 0001000   0.0000  10.0000 15.00000000    16'
+
+  # Satellite time control for NTN simulation.
+  timeWarp:
+    # startEpoch must be in TLE epoch format YYDDD.DDDDDDDD
+    startEpoch: "26106.97180556"   # lines up with the TLE epoch
+    # startCondition controls whether the satellite time starts immediately (moving) 
+    #   or waits for a trigger (paused).
+    startCondition: paused
+    # tickScaling controls the speed of time progression relative to real time
+    #   tickScaling=2.0 means satellite time progresses twice as fast as real time.
+    #   tickScaling=0.5 means satellite time progresses at half the speed of real time.
+    tickScaling: 1.0
+
+  # minimum elevation angle (degrees) for the satellite to be considered 
+  #   "visible" to the UE - used for CHO conditions
+  elevationMinDeg: 20
+
   # controls how SIB19 is configured/sent
   sib19:
     # sib19on must be true to enable SIB19 transmissions
-    sib19on: false
+    sib19on: true
     # send period (in ms)
     sib19timing: 1000
+    # ephemeris type ('orbital' or 'pos-vel')
+    ephType: orbital
     # these params are not used in the simulation, set to default values for completeness
     kOffset: 0
     taCommon: 0

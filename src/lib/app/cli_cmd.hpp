@@ -18,6 +18,24 @@
 namespace app
 {
 
+struct SatTimeCliControl
+{
+    enum class EAction
+    {
+        Status,
+        Pause,
+        Run,
+        TickScale,
+        StartEpoch,
+        PauseAtWallclock,
+    };
+
+    EAction action{EAction::Status};
+    double tickScale{};
+    std::string startEpoch{};
+    int64_t pauseAtWallclock{};
+};
+
 struct GnbCliCommand
 {
     enum PR
@@ -33,6 +51,7 @@ struct GnbCliCommand
         LOC_PV,
         SAT_LOC_PV,
         SAT_TLE,
+        SAT_TIME,
         NEIGHBORS,
         VERSION,
     } present;
@@ -58,6 +77,9 @@ struct GnbCliCommand
     // SAT_TLE
     std::string satTleJson{};
 
+    // SAT_TIME
+    SatTimeCliControl satTime{};
+
     // NEIGHBORS
     std::string neighborsJson{};
 
@@ -79,6 +101,7 @@ struct UeCliCommand
         PS_RELEASE_ALL,
         PS_LIST,
         DE_REGISTER,
+        SAT_TIME,
         RLS_STATE,
         COVERAGE,
         VERSION,
@@ -95,6 +118,9 @@ struct UeCliCommand
     std::optional<SingleSlice> sNssai{};
     std::optional<std::string> apn{};
     bool isEmergency{};
+
+    // SAT_TIME
+    SatTimeCliControl satTime{};
 
     explicit UeCliCommand(PR present) : present(present)
     {

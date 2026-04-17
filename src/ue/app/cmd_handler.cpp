@@ -8,6 +8,12 @@
 
 #include "cmd_handler.hpp"
 
+#include <cctype>
+#include <cmath>
+#include <sstream>
+#include <stdexcept>
+
+#include <libsgp4/DateTime.h>
 #include <ue/app/task.hpp>
 #include <ue/nas/task.hpp>
 #include <ue/rls/task.hpp>
@@ -17,6 +23,7 @@
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
 #include <utils/printer.hpp>
+#include <utils/sat_time.hpp>
 
 #include <shared_mutex>
 
@@ -38,14 +45,191 @@ static std::string SignalDescription(int dbm)
 namespace nr::ue
 {
 
+static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch, const std::string &fieldPath)
+{
+    if (tleEpoch.size() < 5)
+        throw std::runtime_error(fieldPath + " must be in TLE format YYDDD.DDD...");
+
+    if (!std::isdigit(static_cast<unsigned char>(tleEpoch[0])) ||
+        !std::isdigit(static_cast<unsigned char>(tleEpoch[1])))
+    {
+        throw std::runtime_error(fieldPath + " must start with a 2-digit year (YY)");
+    }
+
+    int year2 = (tleEpoch[0] - '0') * 10 + (tleEpoch[1] - '0');
+    int fullYear = year2 >= 57 ? (1900 + year2) : (2000 + year2);
+
+    double dayOfYear = 0.0;
+    try
+    {
+        dayOfYear = std::stod(tleEpoch.substr(2));
+    }
+    catch (const std::exception &)
+    {
+        throw std::runtime_error(fieldPath + " has invalid day-of-year value");
+    }
+
+    if (!(dayOfYear >= 1.0 && dayOfYear < 367.0))
+        throw std::runtime_error(fieldPath + " day-of-year must be in [1, 367)");
+
+    return libsgp4::DateTime(static_cast<unsigned int>(fullYear), dayOfYear);
+}
+
+static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
+{
+    const libsgp4::DateTime unixEpoch(1970, 1, 1, 0, 0, 0);
+    auto delta = dateTime - unixEpoch;
+    return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
+}
+
+static Json ToJsonSatTimeStatus(const utils::SatTime::Status &status)
+{
+    Json json = Json::Obj({
+        {"sat-time-ms", status.satTimeMillis},
+        {"wallclock-ms", status.wallclockMillis},
+        {"start-epoch-ms", status.startEpochMillis},
+        {"tick-scaling", std::to_string(status.tickScaling)},
+        {"paused", status.paused},
+    });
+
+    if (status.scheduledPauseWallclockMillis.has_value())
+        json.put("pause-at-wallclock-ms", *status.scheduledPauseWallclockMillis);
+
+    return json;
+}
+
+static std::string EscapeForLog(const std::string &value)
+{
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (char c : value)
+    {
+        if (c == '\n')
+            escaped += "\\n";
+        else if (c == '\r')
+            escaped += "\\r";
+        else
+            escaped += c;
+    }
+    return escaped;
+}
+
+static std::string FormatSource(const InetAddress &address)
+{
+    return "ipV" + std::to_string(address.getIpVersion()) + ":" + std::to_string(address.getPort());
+}
+
+static std::string FormatSatTimeAction(const app::SatTimeCliControl &satTime)
+{
+    switch (satTime.action)
+    {
+    case app::SatTimeCliControl::EAction::Status:
+        return "sat-time";
+    case app::SatTimeCliControl::EAction::Pause:
+        return "sat-time pause";
+    case app::SatTimeCliControl::EAction::Run:
+        return "sat-time run";
+    case app::SatTimeCliControl::EAction::TickScale:
+        return "sat-time tickscale=" + std::to_string(satTime.tickScale);
+    case app::SatTimeCliControl::EAction::StartEpoch:
+        return "sat-time start-epoch=" + satTime.startEpoch;
+    case app::SatTimeCliControl::EAction::PauseAtWallclock:
+        return "sat-time pause-at-wallclock=" + std::to_string(satTime.pauseAtWallclock);
+    }
+    return "sat-time";
+}
+
+static std::string ToAuditCommand(const app::UeCliCommand &cmd)
+{
+    std::ostringstream stream;
+    switch (cmd.present)
+    {
+    case app::UeCliCommand::INFO:
+        return "info";
+    case app::UeCliCommand::STATUS:
+        return "status";
+    case app::UeCliCommand::UI_STATUS:
+        return "ui-status";
+    case app::UeCliCommand::TIMERS:
+        return "timers";
+    case app::UeCliCommand::PS_ESTABLISH: {
+        stream << "ps-establish";
+        if (cmd.apn.has_value())
+            stream << " apn=" << *cmd.apn;
+        if (cmd.sNssai.has_value())
+            stream << " s-nssai=" << ToJson(*cmd.sNssai).str();
+        stream << " emergency=" << (cmd.isEmergency ? "true" : "false");
+        return stream.str();
+    }
+    case app::UeCliCommand::PS_RELEASE: {
+        stream << "ps-release";
+        for (int i = 0; i < cmd.psCount; i++)
+            stream << " " << static_cast<int>(cmd.psIds[i]);
+        return stream.str();
+    }
+    case app::UeCliCommand::PS_RELEASE_ALL:
+        return "ps-release-all";
+    case app::UeCliCommand::PS_LIST:
+        return "ps-list";
+    case app::UeCliCommand::DE_REGISTER:
+        return "deregister cause=" + std::to_string(static_cast<int>(cmd.deregCause));
+    case app::UeCliCommand::SAT_TIME:
+        return FormatSatTimeAction(cmd.satTime);
+    case app::UeCliCommand::RLS_STATE:
+        return "rls-state";
+    case app::UeCliCommand::COVERAGE:
+        return "coverage";
+    case app::UeCliCommand::VERSION:
+        return "version";
+    }
+
+    return "unknown";
+}
+
 void UeCmdHandler::sendResult(const InetAddress &address, const std::string &output)
 {
     m_base->cliCallbackTask->push(std::make_unique<app::NwCliSendResponse>(address, output, false));
+    logResponse(false, output);
 }
 
 void UeCmdHandler::sendError(const InetAddress &address, const std::string &output)
 {
     m_base->cliCallbackTask->push(std::make_unique<app::NwCliSendResponse>(address, output, true));
+    logResponse(true, output);
+}
+
+void UeCmdHandler::ensureCliLogger()
+{
+    if (m_cliLogger != nullptr)
+        return;
+
+    m_cliLogger = m_base->logBase->makeUniqueLogger(m_base->config->getNodeName() + "-cli");
+}
+
+void UeCmdHandler::logCommandReceived(const NmUeCliCommand &msg)
+{
+    ensureCliLogger();
+    m_currentCommand = ToAuditCommand(*msg.cmd);
+    m_currentSource = FormatSource(msg.address);
+    m_cliLogger->info("CLI command received from %s: %s", m_currentSource.c_str(),
+                      EscapeForLog(m_currentCommand).c_str());
+}
+
+void UeCmdHandler::logResponse(bool isError, const std::string &output)
+{
+    ensureCliLogger();
+    auto responseText = output.empty() ? std::string{"<empty>"} : EscapeForLog(output);
+    auto responseType = isError ? "error" : "result";
+
+    if (!m_currentCommand.empty())
+    {
+        m_cliLogger->info("CLI %s to %s for command '%s': %s", responseType, m_currentSource.c_str(),
+                          EscapeForLog(m_currentCommand).c_str(), responseText.c_str());
+    }
+    else
+    {
+        m_cliLogger->info("CLI %s: %s", responseType, responseText.c_str());
+    }
 }
 
 void UeCmdHandler::pauseTasks()
@@ -75,6 +259,7 @@ bool UeCmdHandler::isAllPaused()
 
 void UeCmdHandler::handleCmd(NmUeCliCommand &msg)
 {
+    logCommandReceived(msg);
     pauseTasks();
 
     uint64_t currentTime = utils::CurrentTimeMillis();
@@ -102,6 +287,8 @@ void UeCmdHandler::handleCmd(NmUeCliCommand &msg)
     }
 
     unpauseTasks();
+    m_currentCommand.clear();
+    m_currentSource.clear();
 }
 
 void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
@@ -203,6 +390,47 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
             sendResult(msg.address, "De-registration procedure triggered");
         else
             sendResult(msg.address, "De-registration procedure triggered. UE device will be switched off.");
+        break;
+    }
+    case app::UeCliCommand::SAT_TIME: {
+        if (m_base->satTime == nullptr)
+        {
+            sendError(msg.address, "sat-time is not available");
+            break;
+        }
+
+        try
+        {
+            switch (msg.cmd->satTime.action)
+            {
+            case app::SatTimeCliControl::EAction::Status:
+                break;
+            case app::SatTimeCliControl::EAction::Pause:
+                m_base->satTime->SetPaused(true);
+                break;
+            case app::SatTimeCliControl::EAction::Run:
+                m_base->satTime->SetPaused(false);
+                break;
+            case app::SatTimeCliControl::EAction::TickScale:
+                m_base->satTime->SetTickScaling(msg.cmd->satTime.tickScale);
+                break;
+            case app::SatTimeCliControl::EAction::StartEpoch: {
+                auto dt = ParseTleEpochDateTime(msg.cmd->satTime.startEpoch, "sat-time start-epoch");
+                m_base->satTime->SetStartEpochMillis(DateTimeToUnixMillis(dt));
+                break;
+            }
+            case app::SatTimeCliControl::EAction::PauseAtWallclock:
+                m_base->satTime->SchedulePauseAtWallclockMillis(msg.cmd->satTime.pauseAtWallclock);
+                break;
+            }
+        }
+        catch (const std::exception &e)
+        {
+            sendError(msg.address, std::string("sat-time command failed: ") + e.what());
+            break;
+        }
+
+        sendResult(msg.address, ToJsonSatTimeStatus(m_base->satTime->GetStatus()).dumpYaml());
         break;
     }
     case app::UeCliCommand::PS_RELEASE: {

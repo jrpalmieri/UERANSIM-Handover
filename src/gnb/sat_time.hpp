@@ -10,9 +10,15 @@
 
 #include <libsgp4/DateTime.h>
 
+namespace utils
+{
+class SatTime;
+}
+
 namespace nr::gnb::sat_time
 {
 
+void SetSatTimeSource(utils::SatTime *satTime);
 libsgp4::DateTime Now();
 
 } // namespace nr::gnb::sat_time

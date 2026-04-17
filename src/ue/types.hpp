@@ -34,6 +34,11 @@
 #include <utils/nts.hpp>
 #include <utils/octet_string.hpp>
 
+namespace utils
+{
+class SatTime;
+}
+
 namespace nr::ue
 {
 
@@ -154,6 +159,24 @@ struct UeRlsConfig
 
 struct UeConfig
 {
+    struct NtnConfig
+    {
+        struct TimeWarpConfig
+        {
+            enum class EStartCondition
+            {
+                Moving,
+                Paused,
+            };
+
+            EStartCondition startCondition{EStartCondition::Moving};
+            double tickScaling{1.0};
+            std::optional<int64_t> startEpochMillis{};
+        };
+
+        TimeWarpConfig timeWarp{};
+    };
+
     /* Read from config file */
     std::optional<Supi> supi{};
     int protectionScheme;
@@ -204,6 +227,8 @@ struct UeConfig
     
     // UE position from config (for D1 handover events)
     std::optional<UePosition> initialPosition{};
+
+    NtnConfig ntn{};
 
     UeRlsConfig rls{};
 
@@ -336,6 +361,7 @@ struct TaskBase
     NasTask *nasTask{};
     UeRrcTask *rrcTask{};
     UeRlsTask *rlsTask{};
+    utils::SatTime *satTime{};
 };
 
 struct RrcTimers
