@@ -64,6 +64,8 @@
 
 static constexpr int MIN_COND_RECONFIG_ID = 1;
 static constexpr int MAX_COND_RECONFIG_ID = 8;
+static constexpr int MIN_COND_EXEC_PRIORITY = 1;
+static constexpr int MAX_COND_EXEC_PRIORITY = 128;
 static constexpr int MIN_MEAS_ID = 1;
 static constexpr int MAX_MEAS_ID = 64;
 static constexpr int MAX_COND_EXEC_MEAS_IDS = 2;
@@ -71,14 +73,7 @@ static constexpr int MAX_COND_RECONFIG_REMOVE_ENTRIES = 64;
 static constexpr int MAX_COND_RECONFIG_ADDMOD_ENTRIES = 64;
 static constexpr int MAX_COND_RRC_RECONFIG_BYTES = 16384;
 
-// T304 enum → milliseconds (mirrors reconfig.cpp helper).
-static int t304EnumToMs(long t304)
-{
-    static const int table[] = {50, 100, 150, 200, 500, 1000, 2000, 10000};
-    if (t304 >= 0 && t304 < 8)
-        return table[t304];
-    return 1000;
-}
+
 
 namespace nr::ue
 {
@@ -87,38 +82,130 @@ namespace nr::ue
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
-static const char *eventTypeName(EChoEventType t)
+
+int selectBestTerrestrial(const std::unordered_set<int> &nonSatPcis, const std::map<int, int> &allMeas)
 {
-    switch (t)
+    // select the target candidate with the strongest signal (highest RSRP).
+    // In the future, we can add more sophisticated tie-breaking logic here if needed.
+    int bestPci = -1;
+    int bestRsrp = std::numeric_limits<int>::min();
+
+    for (int pci : nonSatPcis)
     {
-    case EChoEventType::A2: return "A2";
-    case EChoEventType::A3: return "A3";
-    case EChoEventType::A5: return "A5";
-    case EChoEventType::D1: return "D1";
-    default: return "?";
+        auto it = allMeas.find(pci);
+        if (it == allMeas.end())
+            continue;
+        int rsrp = it->second;
+
+        if (rsrp > bestRsrp)
+        {
+            bestRsrp = rsrp;
+            bestPci = pci;
+        }
     }
+
+    return bestPci;
 }
 
-static const char *d1RefTypeName(ED1ReferenceType t)
+int selectBestSatellite(const std::unordered_set<int> &satPcis)
 {
-    switch (t)
-    {
-    case ED1ReferenceType::Fixed: return "fixed";
-    case ED1ReferenceType::Nadir: return "nadir";
-    default: return "?";
-    }
+    return -1;
+    // loop through SIB19 data for all satellite candidates and calculate the transit time
+
+    // for (int pci : satPcis)
+    // {
+    //     auto it = m_cellDesc.find(pci);
+    //     if (it == m_cellDesc.end())
+    //         continue;
+
+    //     auto &sib19 = it->second.sib19;
+    //     if (!sib19.hasSib19)
+    //         continue;
+
+    //     // only consider candidates with valid SIB19 ephemeris
+    //     if (!isSib19EphemerisValid(sib19, utils::CurrentTimeMillis()))
+    //         continue;
+
+    //     // calculate transit time based on current SIB19 ephemeris and satellite position extrapolation
+    //     //  (similar to the serving cell position calculation in evaluateConditionD1)
+
+
+    // // calculate reference position for satellite, if serving cell is a sat
+    // //   used in all D1 condition checks that use nadir
+    // EcefPosition servingPosNadir{0, 0, 0};
+
+    // bool servingPosValid = false;
+   
+    // // check if the serving cell ID is in the SIB19 map.  if it is, the serving cell is a sat
+    // auto servingIt = m_cellDesc.find(servingCellId);
+    // if (servingIt != m_cellDesc.end() && servingIt->second.sib19.hasSib19)
+    // {
+    //     auto &sib19 = servingIt->second.sib19;
+    //     //int64_t relativeNow = now - m_startedTime;
+
+    //     // only use if the SIB19 data is current (within the validity threshold)
+    //     if (isSib19EphemerisValid(sib19, now))
+    //     {
+            
+    //         // get satellite's current position using current SIB19 ephemeris and
+    //         //   motion extrapolation based on time delta from SIB19 epoch to now
+
+    //         double dtSec = (now - (sib19.ntnConfig.epochTime)*10) / 1000.0;  // sib19 epoch is counted in 10ms units
+    //         double satX, satY, satZ;
+    //         // if position is stored in SIB19 as ECEF position + velocity, apply delta based on time 
+    //         if (sib19.ntnConfig.ephemerisInfo.type == EEphemerisType::POSITION_VELOCITY)
+    //         {
+    //             extrapolateSatelliteEcefPosition(
+    //                 sib19.ntnConfig.ephemerisInfo.posVel,
+    //                 dtSec, satX, satY, satZ);
+
+    //             // convert position to nadir for distance calculations
+    //             servingPosNadir = computeNadir(satX, satY, satZ);
+    //             servingPosValid = true;
+
+    //         }
+    //         // otherwise it is stored as orbital parameters that need to be converted to ECEF position
+    //         //   using the SIB19 epoch as reference time
+    //         else  // ORBITAL_PARAMETERS
+    //         {
+    //             int64_t epochMs = static_cast<int64_t>(sib19.ntnConfig.epochTime) * 10LL;
+    //             propagateKeplerian(
+    //                 sib19.ntnConfig.ephemerisInfo.orbital,
+    //                 epochMs, now, satX, satY, satZ);
+    //             servingPosNadir = computeNadir(satX, satY, satZ);
+    //             servingPosValid = true;
+    //         }
+    //     }
+    // }
+
+
 }
 
 // Build a human-readable condition group string, e.g. "(A3 AND D1)".
-static std::string conditionGroupStr(const std::vector<ChoCondition> &conds)
+static std::string conditionGroupStr(const std::vector<int> &measIds, const UeMeasConfig &cfg)
 {
-    if (conds.empty())
+    if (measIds.empty())
         return "(empty)";
     std::string s = "(";
-    for (size_t i = 0; i < conds.size(); i++)
+    for (size_t i = 0; i < measIds.size(); i++)
     {
         if (i > 0) s += " AND ";
-        s += eventTypeName(conds[i].eventType);
+        auto measIt = cfg.measIds.find(measIds[i]);
+        if (measIt == cfg.measIds.end())
+        {
+            s += "UNKNOWN";
+            continue;
+        }
+
+        int rid = measIt->second.reportConfigId;
+        auto reportIt = cfg.reportConfigs.find(rid);
+        if (reportIt == cfg.reportConfigs.end())
+        {
+            s += "UNKNOWN";
+            continue;
+        }
+
+        s += reportIt->second.eventStr();
     }
     s += ")";
     return s;
@@ -156,8 +243,6 @@ void UeRrcTask::parseConditionalReconfiguration(
 
     int removedCount = 0;
     int removeMissCount = 0;
-
-    auto now = utils::CurrentTimeMillis();
 
     // Apply remove list first, then add/modify list.
     if (condReconfig->condReconfigToRemoveList)
@@ -263,6 +348,7 @@ void UeRrcTask::parseConditionalReconfiguration(
             continue;
         }
 
+
         // --- Build condition group from condExecutionCond MeasIds ---
         // Per TS 38.331: multiple MeasIds in one condExecutionCond = AND logic.
         if (item->condExecutionCond)
@@ -304,7 +390,7 @@ void UeRrcTask::parseConditionalReconfiguration(
                 if (itMid == m_measConfig.measIds.end())
                 {
                     m_logger->warn("CHO candidate %d: condExecutionCond MeasId %d not found "
-                                   "in active MeasConfig – skipping this condition",
+                                   "in active MeasConfig - skipping this condition",
                                    cand.candidateId, measId);
                     continue;
                 }
@@ -317,62 +403,14 @@ void UeRrcTask::parseConditionalReconfiguration(
                     continue;
                 }
 
-                // build condition from reportConfig parameters
-                auto &rc = itRc->second;
-                ChoCondition cond{};
-
-                switch (rc.event)
-                {
-                case EMeasEvent::A2:
-                    cond.eventType = EChoEventType::A2;
-                    cond.a2Threshold = rc.a2Threshold;
-                    cond.hysteresis = rc.hysteresis;
-                    cond.timeToTriggerMs = rc.timeToTriggerMs;
-                    break;
-                case EMeasEvent::A3:
-                    cond.eventType = EChoEventType::A3;
-                    cond.a3Offset = rc.a3Offset;
-                    cond.a3Hysteresis = rc.hysteresis;
-                    cond.hysteresis = rc.hysteresis;
-                    cond.timeToTriggerMs = rc.timeToTriggerMs;
-                    break;
-                case EMeasEvent::A5:
-                    cond.eventType = EChoEventType::A5;
-                    cond.a5Threshold1 = rc.a5Threshold1;
-                    cond.a5Threshold2 = rc.a5Threshold2;
-                    cond.a5Hysteresis = rc.hysteresis;
-                    cond.hysteresis = rc.hysteresis;
-                    cond.timeToTriggerMs = rc.timeToTriggerMs;
-                    break;
-                case EMeasEvent::D1:
-                    cond.eventType = EChoEventType::D1;
-                    cond.d1ReferenceType = rc.d1ReferenceType;
-                    cond.d1RefX = rc.d1RefX;
-                    cond.d1RefY = rc.d1RefY;
-                    cond.d1RefZ = rc.d1RefZ;
-                    cond.d1ThresholdM = rc.d1ThresholdM;
-                    cond.hysteresis = rc.hysteresis;
-                    cond.timeToTriggerMs = rc.timeToTriggerMs;
-                    break;
-                default:
-                    m_logger->warn("CHO candidate %d: MeasId %d has unsupported event type – "
-                                   "skipping condition",
-                                   cand.candidateId, measId);
-                    continue;
-                }
-
-                m_logger->info("CHO candidate %d: %s condition from MeasId %d (ttt=%dms)",
-                               cand.candidateId, eventTypeName(cond.eventType),
-                               measId, cond.timeToTriggerMs);
-
-                // add condition to candidate's condition group
-                cand.conditions.push_back(std::move(cond));
+                // add MeasId to the candidate's condition group
+                cand.measIds.push_back(measId);
             }
         }
 
         // If condExecutionCond was present but did not resolve to usable conditions,
         // reject the candidate
-        if (cand.conditions.empty())
+        if (cand.measIds.empty())
         {
             m_logger->warn("CHO candidate %d: condExecutionCond has no usable MeasIds; skipping candidate",
                             cand.candidateId);
@@ -382,43 +420,13 @@ void UeRrcTask::parseConditionalReconfiguration(
             // A candidate without usable measurable conditions is invalid.
         }
 
-        // check for optional condTriggerConfig_r16/ntn_TriggerConfig_r17 to apply trigger delay to all conditions in the group
-        if (item->condTriggerConfig_r16 && item->condTriggerConfig_r16->ntn_TriggerConfig_r17)
-        {
-            // the t-Service-r17 value is in seconds
-            const long tServiceSecRaw = item->condTriggerConfig_r16->ntn_TriggerConfig_r17->t_Service_r17;
-
-            // convert it to milliseconds to conform to other timers used by the UE
-            //   since the t-Service-r17 value cannot be higher that 5600, there is no risk of overflow
-            int tServiceMs = -1;
-            if (tServiceSecRaw >= 0)
-            {
-                constexpr long kMaxMsFromSec = std::numeric_limits<int>::max() / 1000;
-                const long clampedSec = std::min(tServiceSecRaw, kMaxMsFromSec);
-                tServiceMs = static_cast<int>(clampedSec * 1000);
-            }
-
-            // store the trigger delay as a timer value in each condition of the candidate's condition group
-            //   Note - we use the current time as the base for calculating the trigger delay timer.
-            //     We really should base this off of the time the GNB used to calculate the t-service value.
-            //     This should work OK for now, but should be updated in a future iteration.
-            for (auto &cond : cand.conditions)
-                cond.triggerDelayMs = now + tServiceMs;
-
-            m_logger->info("CHO candidate %d: parsed condTriggerConfig-r16/ntn-TriggerConfig-r17 "
-                           "(t-Service=%lds => triggerDelay=%dms on %zu condition(s))",
-                           cand.candidateId,
-                           tServiceSecRaw,
-                           tServiceMs,
-                           cand.conditions.size());
-        }
 
         // Decode the nested RRCReconfiguration from condRRCReconfig to extract the target PCI, C-RNTI, and T304 for 
         //  the candidate target cell.
 
         if (!item->condRRCReconfig || item->condRRCReconfig->size == 0)
         {
-            m_logger->warn("CHO candidate %d: missing condRRCReconfig – skipping",
+            m_logger->warn("CHO candidate %d: missing condRRCReconfig - skipping",
                            cand.candidateId);
             skippedCount++;
             continue;
@@ -471,10 +479,13 @@ void UeRrcTask::parseConditionalReconfiguration(
                                     ? static_cast<int>(*rws->spCellConfigCommon->physCellId)
                                     : -1;
                             cand.newCRNTI = static_cast<int>(rws->newUE_Identity);
-                            cand.t304Ms = t304EnumToMs(rws->t304);
+                            cand.t304Ms = nr::rrc::common::t304EnumToMs(rws->t304);
                             foundRWS = true;
                         }
                         asn::Free(asn_DEF_ASN_RRC_CellGroupConfig, cellGroupConfig);
+                        m_logger->debug("CHO candidate %d: decoded cRNTI=%d PCI=%d T304=%dms from nested RRCReconfiguration",
+                                        cand.candidateId, cand.newCRNTI, cand.targetPci, cand.t304Ms);
+                            
                     }
                 }
             }
@@ -485,7 +496,7 @@ void UeRrcTask::parseConditionalReconfiguration(
         if (!foundRWS)
         {
             m_logger->warn("CHO candidate %d: no ReconfigurationWithSync in nested reconfig "
-                           "– skipping", cand.candidateId);
+                           "- skipping", cand.candidateId);
             skippedCount++;
             continue;
         }
@@ -496,7 +507,7 @@ void UeRrcTask::parseConditionalReconfiguration(
         m_logger->info("CHO candidate %d added: targetPCI=%d newC-RNTI=%d t304=%dms "
                        "conditions=%s priority=%d",
                        cand.candidateId, cand.targetPci, cand.newCRNTI, cand.t304Ms,
-                       conditionGroupStr(cand.conditions).c_str(),
+                       conditionGroupStr(cand.measIds, m_measConfig).c_str(),
                        cand.executionPriority);
 
         // add to the candidate list, or update if candidateId already exists
@@ -519,400 +530,260 @@ void UeRrcTask::parseConditionalReconfiguration(
 }
 
 
-/**
- * @brief Evaluates a standard condition.  Returns the margin by which the condition is satisfied (positive means satisfied).
- * 
- */
-static double evaluateConditionRaw(
-    ChoCondition &cond,
-    int64_t /*now*/,
-    int servingRsrp,
-    int targetRsrp,
-    double ueDistance, // Distance from UE to the condition's D1 reference point
-    Logger *logger,
-    int candidateId)
-{
-    switch (cond.eventType)
-    {
-    case EChoEventType::A2:
-    {
-        // Align with measurement.cpp evaluateA2():
-        // entering when serving < threshold - hysteresis.
-        double margin = (cond.a2Threshold - cond.hysteresis) - servingRsrp;
-        return margin; // >0 means serving is bad enough
-    }
-
-    case EChoEventType::A3:
-    {
-        // Align with measurement.cpp evaluateA3_cell():
-        // entering when neighbor > serving + offset + hysteresis.
-        double margin = targetRsrp - (servingRsrp + cond.a3Offset + cond.a3Hysteresis);
-        return margin; // >0 means neighbor is good enough
-    }
-
-    case EChoEventType::A5:
-    {
-        // Align with measurement.cpp evaluateA5_*():
-        // serving < threshold1 - hysteresis AND neighbor > threshold2 + hysteresis.
-        double margin1 = (cond.a5Threshold1 - cond.a5Hysteresis) - servingRsrp;
-        double margin2 = targetRsrp - (cond.a5Threshold2 + cond.a5Hysteresis);
-        // Both must be positive; return the lesser (bottleneck)
-        if (margin1 > 0 && margin2 > 0)
-            return std::min(margin1, margin2);
-        return std::min(margin1, margin2); // will be <=0
-    }
-
-    case EChoEventType::D1:
-    {
-        // D1 (3GPP Event D1): distance to configured reference exceeds threshold.
-        // Margin = distance − threshold.  Positive means UE is beyond threshold.
-        double thresh = cond.d1ResolvedThreshM;
-        if (thresh <= 0)
-            return -1e6;  // No valid threshold — cannot evaluate
-        return ueDistance - thresh;  // positive when distance exceeds threshold
-    }
-
-    default:
-        return -1.0;
-    }
-}
-
-/**
- * @brief Checks to see if a timer-based condition has been satisfied.  The times is assumed to 
- * be a timestamp value in milliseconds stored in the cond.triggerDelayMs field, which represents the 
- * wall time at which the condition will become satisfied.  If the current time (now) is greater than 
- * or equal to that timestamp, then the timer criterion is met.
- * 
- * @param cond 
- * @param now 
- * @param logger 
- * @param candidateId 
- * @return true 
- * @return false 
- */
-static bool isTimerCriterionMet(ChoCondition &cond, int64_t now, Logger *logger, int candidateId)
-{
-    if (cond.triggerDelayMs == 0)
-        return true;
-
-    return now >= cond.triggerDelayMs;
-}
 
 
 
-// Evaluate a single condition with time-to-trigger.
-// Returns the margin (>0 = satisfied after TTT) and updates cond.satisfied.
-static double evaluateConditionWithTTT(
-    ChoCondition &cond,
-    int64_t now,
-    int servingRsrp,
-    int targetRsrp,
-    double ueDistance,
-    Logger *logger,
-    int candidateId)
-{
+// // Evaluate a single condition with time-to-trigger.
+// // Returns the margin (>0 = satisfied after TTT) and updates cond.satisfied.
+// static double evaluateConditionWithTTT(
+//     ChoCondition &cond,
+//     int64_t now,
+//     int servingRsrp,
+//     int targetRsrp,
+//     double ueDistance,
+//     Logger *logger,
+//     int candidateId)
+// {
 
-    // if there is a timer criterion, check if it is met.
-    bool timerMet = isTimerCriterionMet(cond, now, logger, candidateId);
-    if (!timerMet)
-        return -1.0;
+//     // if there is a timer criterion, check if it is met.
+//     bool timerMet = isTimerCriterionMet(cond, now, logger, candidateId);
+//     if (!timerMet)
+//         return -1.0;
 
 
-    // evaluate the base condition first to see if it's currently met, and to get the margin for logging and tie-breaking.
-    double margin = evaluateConditionRaw(cond, now, servingRsrp, targetRsrp,
-                                          ueDistance, logger, candidateId);
-    bool measurementMet = (margin > 0);
+//     // evaluate the base condition first to see if it's currently met, and to get the margin for logging and tie-breaking.
+//     double margin = evaluateConditionRaw(cond, now, servingRsrp, targetRsrp,
+//                                           ueDistance, logger, candidateId);
+//     bool measurementMet = (margin > 0);
 
-    if (measurementMet)
-    {
-        // check time-to-trigger
+//     if (measurementMet)
+//     {
+//         // check time-to-trigger
 
-        // if this is teh first time condition is met, start the ttt timer
-        if (cond.tttEnteringTimestamp == 0)
-            cond.tttEnteringTimestamp = now;
+//         // if this is teh first time condition is met, start the ttt timer
+//         if (cond.tttEnteringTimestamp == 0)
+//             cond.tttEnteringTimestamp = now;
 
-        // check for condition held for duration of timer
-        int64_t held = now - cond.tttEnteringTimestamp;
-        if (held >= cond.timeToTriggerMs)
-        {
-            cond.satisfied = true;
-            return margin;
-        }
-        else
-        {
-            cond.satisfied = false;
-            return -1.0; // Not yet held long enough
-        }
-    }
-    else
-    {
-        // reset the TTT timer if condition is not met
-        if (cond.tttEnteringTimestamp != 0)
-        {
-            logger->debug("CHO candidate %d: %s condition no longer satisfied, resetting TTT",
-                          candidateId, eventTypeName(cond.eventType));
-            cond.tttEnteringTimestamp = 0;
-        }
-        cond.satisfied = false;
-        return -1.0;
-    }
-}
+//         // check for condition held for duration of timer
+//         int64_t held = now - cond.tttEnteringTimestamp;
+//         if (held >= cond.timeToTriggerMs)
+//         {
+//             cond.satisfied = true;
+//             return margin;
+//         }
+//         else
+//         {
+//             cond.satisfied = false;
+//             return -1.0; // Not yet held long enough
+//         }
+//     }
+//     else
+//     {
+//         // reset the TTT timer if condition is not met
+//         if (cond.tttEnteringTimestamp != 0)
+//         {
+//             logger->debug("CHO candidate %d: %s condition no longer satisfied, resetting TTT",
+//                           candidateId, eventTypeName(cond.eventType));
+//             cond.tttEnteringTimestamp = 0;
+//         }
+//         cond.satisfied = false;
+//         return -1.0;
+//     }
+// }
 
 /**
  * @brief Evaluates each CHO candidate for condition satisfaction.  For candidates whose conditions 
  *  are all satisfied, triggers handover to the candidate.  Applies tie-breaking logic if more than 
  *  one candidate is satisfied.
  * 
- *  This should get called periodically, just before the measurements check for normal measurement reporting,
+ *  This is called periodically, just after the measurements check and before measurement reporting,
  *  so that CHO candidates get evaluated before the normal event logic.
  * 
  * @return true 
  * @return false 
  */
-bool UeRrcTask::evaluateChoCandidates()
+bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int> &allMeas)
 {
     // if no candidates, or if handover is already in progress, or if measurement evaluation is suspended, then skip
     if (m_choCandidates.empty() || m_handoverInProgress || m_measurementEvalSuspended)
         return false;
 
-    // current satellite-domain time in milliseconds
-    int64_t now = m_base->satTime != nullptr
-                      ? m_base->satTime->CurrentSatTimeMillis()
-                      : utils::CurrentTimeMillis();
-
-    // copy the current cell power measurements under lock to avoid holding the lock while evaluating conditions
-    std::map<int, int> allMeas;
+    std::vector<int> triggeredCandidateIndices;  // indices of candidates whose conditions are currently satisfied
+    for (const auto &cand : m_choCandidates)
     {
-        std::shared_lock lock(m_base->cellDbMeasMutex);
-        allMeas = m_base->cellDbMeas;
-    }
+        m_logger->debug("Evaluating CHO candidate %d: targetPCI=%d conditions=%s priority=%d executed=%s",
+                        cand.candidateId, cand.targetPci, conditionGroupStr(cand.measIds, m_measConfig).c_str(),
+                        cand.executionPriority, cand.executed ? "yes" : "no");
 
-    // current cellId
-    int servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
-    // current cell RSRP
-    int servingRsrp = getServingCellRsrp(servingCellId, allMeas);
-
-    // Pre-compute UE position (needed for D1 conditions)
-    UePosition uePos = getUePosition();
-
-    // calculate reference position for satellite, if serving cell is a sat
-    //   used in all D1 condition checks that use nadir
-    EcefPosition servingPosNadir{0, 0, 0};
-
-    bool servingPosValid = false;
-   
-    // check if the serving cell ID is in the SIB19 map.  if it is, the serving cell is a sat
-    auto servingIt = m_cellDesc.find(servingCellId);
-    if (servingIt != m_cellDesc.end() && servingIt->second.sib19.hasSib19)
-    {
-        auto &sib19 = servingIt->second.sib19;
-        //int64_t relativeNow = now - m_startedTime;
-
-        // only use if the SIB19 data is current (within the validity threshold)
-        if (isSib19EphemerisValid(sib19, now))
+        // check each condition for satisfaction
+        std::size_t total_satisfied = 0;
+        for (int measId : cand.measIds)
         {
-            
-            // get satellite's current position using current SIB19 ephemeris and
-            //   motion extrapolation based on time delta from SIB19 epoch to now
-
-            double dtSec = (now - (sib19.ntnConfig.epochTime)*10) / 1000.0;  // sib19 epoch is counted in 10ms units
-            double satX, satY, satZ;
-            // if position is stored in SIB19 as ECEF position + velocity, apply delta based on time 
-            if (sib19.ntnConfig.ephemerisInfo.type == EEphemerisType::POSITION_VELOCITY)
+            auto &mId = m_measConfig.measIdStates[measId];
+            if (mId.isSatisfied)
             {
-                extrapolateSatelliteEcefPosition(
-                    sib19.ntnConfig.ephemerisInfo.posVel,
-                    dtSec, satX, satY, satZ);
-
-                // convert position to nadir for distance calculations
-                servingPosNadir = computeNadir(satX, satY, satZ);
-                servingPosValid = true;
-
+                total_satisfied++;
             }
-            // otherwise it is stored as orbital parameters that need to be converted to ECEF position
-            //   using the SIB19 epoch as reference time
-            else  // ORBITAL_PARAMETERS
-            {
-                int64_t epochMs = static_cast<int64_t>(sib19.ntnConfig.epochTime) * 10LL;
-                propagateKeplerian(
-                    sib19.ntnConfig.ephemerisInfo.orbital,
-                    epochMs, now, satX, satY, satZ);
-                servingPosNadir = computeNadir(satX, satY, satZ);
-                servingPosValid = true;
-            }
+        }
+        if ((total_satisfied != 0U) && (total_satisfied == cand.measIds.size()))
+        {
+            m_logger->debug("CHO candidate %d: triggered by event group %s",
+                            cand.candidateId, conditionGroupStr(cand.measIds, m_measConfig).c_str());
+
+            triggeredCandidateIndices.push_back(cand.candidateId);
         }
     }
 
-    // Phase 1: Evaluate all conditions for all candidates.
-    // Collect candidates whose entire condition group is satisfied.
-    struct TriggeredCandidate
+    // nothing triggered, just exit
+    if (triggeredCandidateIndices.empty())
     {
-        int index;           // index into m_choCandidates
-        double minMargin;    // minimum margin across all conditions (bottleneck)
-        int targetRsrp;
-    };
-    std::vector<TriggeredCandidate> triggered;
+        m_logger->debug("No CHO candidates triggered at this time");
+        return false;
+    }
 
-    for (size_t ci = 0; ci < m_choCandidates.size(); ci++)
+    // One triggered candidate – no need for tie-breaking, just execute it.
+    if (triggeredCandidateIndices.size() == 1)
+    {
+        int ci = triggeredCandidateIndices[0];
+        auto &cand = m_choCandidates[ci];
+        m_logger->info("CHO candidate %d is only triggered candidate; executing handover to PCI %d",
+                       cand.candidateId, cand.targetPci);
+        executeChoCandidate(cand);
+        return true;
+    }
+
+    // More than one - need to apply tie-breaking logic to select the best candidate to execute.
+
+    // if these targets are satellites, then we need to calculate their transit times. Sat with the longest
+    //  transit time will be in range teh longest and will be highest in sky
+    
+    // generate list of PCIs that are sats
+    std::unordered_set<int> satPcis;
+    std::map<int, int> PciToChoId;
+    std::unordered_set<int> nonSatPcis;
+    for (int ci : triggeredCandidateIndices)
     {
         auto &cand = m_choCandidates[ci];
-        // if this candidate is marked as executed, or if it has no conditions (invalid), then skip evaluating it
-        if (cand.executed || cand.conditions.empty())
-            continue;
-
-        // Find target cell RSRP for this candidate (used by A3, A5 conditions).
-        int targetRsrp = cons::MIN_RSRP;
-        for (auto &[cellId, meas] : allMeas)
+        PciToChoId[cand.targetPci] = ci;
+        auto it = m_cellDesc.find(cand.targetPci);
+        if (it != m_cellDesc.end() && it->second.sib19.hasSib19)
         {
-            // match by PCI value
-            if (cellId == cand.targetPci)
-            {
-                targetRsrp = meas;
-                break;
-            }
-            // if PCI match didn;t work, try matching by NCI
-            if (m_cellDesc.count(cellId))
-            {
-                int nciLow = cons::getPciFromNci(m_cellDesc[cellId].sib1.nci);
-                if (nciLow == cand.targetPci)
-                {
-                    targetRsrp = meas;
-                    break;
-                }
-            }
+            satPcis.insert(cand.targetPci);
         }
-
-        bool allSatisfied = true;
-        double minMargin = 1e9;
-
-        // loop through each condition in the candidate's condition group
-        for (auto &cond : cand.conditions)
+        else
         {
-            // if condition is event D1 - calculate distance from UE to reference point
-            double servingD1DistanceM = 0.0;
-            if (cond.eventType == EChoEventType::D1)
-            {
-                // for fixed reference, calculate distance from UE to fixed point
-                if (cond.d1ReferenceType == ED1ReferenceType::Fixed)
-                {
-                    EcefPosition ref{cond.d1RefX, cond.d1RefY, cond.d1RefZ};
-                    servingD1DistanceM = ecefDistance(uePos.ecef, ref);
-                    servingPosValid = true;
-                }
-                // for nadir reference, calculate distance from UE to satellite nadir position (if available)
-                else if (cond.d1ReferenceType == ED1ReferenceType::Nadir && servingPosValid)
-                {
-                    servingD1DistanceM = ecefDistance(uePos.ecef, servingPosNadir);
-                }
-                // if not fixed and no valid distance found for serving cell — cannot evaluate D1 conditions for this candidate
-                //  so leave distance a 0, which will cause teh condition to be not satisfied and the TTT timer to reset
-                else {
-
-                    m_logger->debug("CHO candidate %d: D1 skipped – serving position unavailable",
-                                        cand.candidateId);
-                }
-
-                // D1 entering condition: distance > threshold + hysteresis.
-                cond.d1ResolvedThreshM = cond.d1ThresholdM + static_cast<double>(cond.hysteresis);
-            }
-
-            // Evaluate the condition, taking into account TTT
-            //   - will set the cond.satisfied flag for the condition
-            //   - will return the margin by which the condition is satisfied (positive means satisfied after TTT),
-            double margin = evaluateConditionWithTTT(
-                cond, now, servingRsrp, targetRsrp, servingD1DistanceM,
-                m_logger.get(), cand.candidateId);
-
-            if (!cond.satisfied)
-            {
-                allSatisfied = false;
-                // Don't break — continue evaluating remaining conditions
-                // so their TTT timers keep ticking.
-            }
-            else
-            {
-                minMargin = std::min(minMargin, margin);
-            }
-        }
-
-        // if all conditions in the group are satisfied, add to the triggered list for tie-breaking
-        if (allSatisfied)
-        {
-            // Build log message showing which conditions were met.
-            std::string condStr = conditionGroupStr(cand.conditions);
-            m_logger->info("CHO candidate %d: all conditions met %s – eligible for execution",
-                           cand.candidateId, condStr.c_str());
-
-            // store triggered condition
-            cand.triggerMargin = minMargin;
-            triggered.push_back({static_cast<int>(ci), minMargin, targetRsrp});
+            nonSatPcis.insert(cand.targetPci);
         }
     }
 
-    // if nothing triggered, we're done
-    if (triggered.empty())
-        return false;
+    // select best sat
+    int bestSatPci = selectBestSatellite(satPcis);
 
-    // Phase 2: Select best candidate using priority + tie-breaking.
-    // Sort by: (1) executionPriority ASC, (2) triggerMargin DESC,
-    //          (3) targetRsrp DESC, (4) config order ASC.
-    std::sort(triggered.begin(), triggered.end(),
-              [this](const TriggeredCandidate &a, const TriggeredCandidate &b)
-    {
-        auto &candA = m_choCandidates[a.index];
-        auto &candB = m_choCandidates[b.index];
+    // for non-SATs, we can apply the normal RSRP-based tie-breaking logic (highest RSRP wins)
+    int bestNonSatPci = selectBestTerrestrial(nonSatPcis, allMeas);
 
-        // 1. Priority (lower value = higher priority)
-        if (candA.executionPriority != candB.executionPriority)
-            return candA.executionPriority < candB.executionPriority;
+    // for now, we pick the best SAT candidate if one exists, otherwise we pick the best non-SAT candidate.
+    int bestPci = bestSatPci > 0 ? bestSatPci : bestNonSatPci;
 
-        // 2. Greatest trigger margin
-        if (std::abs(a.minMargin - b.minMargin) > 0.01)
-            return a.minMargin > b.minMargin;
-
-        // 3. Highest target RSRP
-        if (a.targetRsrp != b.targetRsrp)
-            return a.targetRsrp > b.targetRsrp;
-
-        // 4. Configuration order (earliest index)
-        return a.index < b.index;
-    });
-
-    // Execute the winning candidate.
-    auto &winner = m_choCandidates[triggered[0].index];
-
-    // included for logging only
-    if (triggered.size() > 1)
-    {
-        std::string ranking;
-        ranking.reserve(triggered.size() * 32);  // FIX: magic number
-        for (size_t i = 0; i < triggered.size(); i++)
-        {
-            auto &cand = m_choCandidates[triggered[i].index];
-            if (i > 0)
-                ranking += ", ";
-            ranking += "#" + std::to_string(cand.candidateId);
-            ranking += "(p=" + std::to_string(cand.executionPriority);
-            ranking += " m=" + std::to_string(static_cast<int>(triggered[i].minMargin));
-            ranking += " rsrp=" + std::to_string(triggered[i].targetRsrp) + ")";
-        }
-
-        m_logger->info("CHO tie-break: %zu candidates triggered, ranking=%s",
-                       triggered.size(), ranking.c_str());
-    }
-
-    std::string condStr = conditionGroupStr(winner.conditions);
-    m_logger->info("CHO selection: winner=%d priority=%d margin=%.2f targetRsrp=%d conditions=%s",
-                   winner.candidateId,
-                   winner.executionPriority,
-                   triggered[0].minMargin,
-                   triggered[0].targetRsrp,
-                   condStr.c_str());
-
-    // do handover based on winner's target PCI
-    executeChoCandidate(winner);
-
+    auto &foundCand = m_choCandidates[PciToChoId[bestPci]];
+    m_logger->info("CHO candidate %d selected as best candidate; executing handover to PCI %d",
+                    foundCand.candidateId, foundCand.targetPci);
+    executeChoCandidate(foundCand);
     return true;
+
+    // current satellite-domain time in milliseconds
+    // int64_t now = m_base->satTime != nullptr
+    //                   ? m_base->satTime->CurrentSatTimeMillis()
+    //                   : utils::CurrentTimeMillis();
+
+    // copy the current cell power measurements under lock to avoid holding the lock while evaluating conditions
+    // std::map<int, int> allMeas;
+    // {
+    //     std::shared_lock lock(m_base->cellDbMeasMutex);
+    //     allMeas = m_base->cellDbMeas;
+    // }
+
+    // current cellId
+    // int servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
+    // current cell RSRP
+    // int servingRsrp = getServingCellRsrp(servingCellId, allMeas);
+
+
+
+    // // Phase 1: Evaluate all conditions for all candidates.
+    // // Collect candidates whose entire condition group is satisfied.
+    // struct TriggeredCandidate
+    // {
+    //     int index;           // index into m_choCandidates
+    //     double minMargin;    // minimum margin across all conditions (bottleneck)
+    //     int targetRsrp;
+    // };
+    // std::vector<TriggeredCandidate> triggered;
+
+    // for (size_t ci = 0; ci < m_choCandidates.size(); ci++)
+    // {
+    //     auto &cand = m_choCandidates[ci];
+    //     // if this candidate is marked as executed, or if it has no conditions (invalid), then skip evaluating it
+    //     if (cand.executed || cand.conditions.empty())
+    //         continue;
+
+    //     // Find target cell RSRP for this candidate (used by A3, A5 conditions).
+    //     int targetRsrp = cons::MIN_RSRP;
+    //     for (auto &[cellId, meas] : allMeas)
+    //     {
+    //         // match by PCI value
+    //         if (cellId == cand.targetPci)
+    //         {
+    //             targetRsrp = meas;
+    //             break;
+    //         }
+    //         // if PCI match didn;t work, try matching by NCI
+    //         if (m_cellDesc.count(cellId))
+    //         {
+    //             int nciLow = cons::getPciFromNci(m_cellDesc[cellId].sib1.nci);
+    //             if (nciLow == cand.targetPci)
+    //             {
+    //                 targetRsrp = meas;
+    //                 break;
+    //             }
+    //         }
+    //     }
+
+    //     bool allSatisfied = true;
+    //     double minMargin = 1e9;
+
+    //     // loop through each condition in the candidate's condition group
+    //     for (auto &cond : cand.conditions)
+    //     {
+    //         // if condition is event D1 - calculate distance from UE to reference point
+    //         double servingD1DistanceM = 0.0;
+    //         if (cond.eventType == EChoEventType::D1)
+    //         {
+    //             // for fixed reference, calculate distance from UE to fixed point
+    //             if (cond.d1ReferenceType == ED1ReferenceType::Fixed)
+    //             {
+    //                 EcefPosition ref{cond.d1RefX, cond.d1RefY, cond.d1RefZ};
+    //                 servingD1DistanceM = ecefDistance(uePos.ecef, ref);
+    //                 servingPosValid = true;
+    //             }
+    //             // for nadir reference, calculate distance from UE to satellite nadir position (if available)
+    //             else if (cond.d1ReferenceType == ED1ReferenceType::Nadir && servingPosValid)
+    //             {
+    //                 servingD1DistanceM = ecefDistance(uePos.ecef, servingPosNadir);
+    //             }
+    //             // if not fixed and no valid distance found for serving cell — cannot evaluate D1 conditions for this candidate
+    //             //  so leave distance a 0, which will cause teh condition to be not satisfied and the TTT timer to reset
+    //             else {
+
+    //                 m_logger->debug("CHO candidate %d: D1 skipped – serving position unavailable",
+    //                                     cand.candidateId);
+    //             }
+
+    //             // D1 entering condition: distance > threshold + hysteresis.
+    //             cond.d1ResolvedThreshM = cond.d1ThresholdM + static_cast<double>(cond.hysteresis);
+    //         }
+
+
 }
 
 
@@ -971,31 +842,11 @@ void UeRrcTask::resetChoRuntimeState()
     {
         cand.triggerMargin = 0.0;
 
-        for (auto &cond : cand.conditions)
-        {
-            cond.tttEnteringTimestamp = 0;
-            cond.satisfied = false;
-            cond.d1ResolvedThreshM = 0.0;
-        }
     }
 
     m_logger->debug("CHO runtime state reset for %zu candidate(s)",
                     m_choCandidates.size());
 }
 
-/* ================================================================== */
-/*  UE Position retrieval (for D1 distance-based events)              */
-/* ================================================================== */
-
-UePosition UeRrcTask::getUePosition() const
-{
-    if (m_base->config->initialPosition.has_value())
-        return *m_base->config->initialPosition;
-
-    UePosition pos{};
-    pos.geo = {0.0, 0.0, 0.0};
-    pos.ecef = geoToEcef(pos.geo);
-    return pos;
-}
 
 } // namespace nr::ue

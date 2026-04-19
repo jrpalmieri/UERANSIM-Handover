@@ -68,6 +68,21 @@ inline T *Decode(asn_TYPE_descriptor_t &desc, const uint8_t *buffer, size_t size
 }
 
 template <typename T>
+inline T *DecodeWithResult(asn_TYPE_descriptor_t &desc, const uint8_t *buffer, size_t size, asn_dec_rval_t &outRes)
+{
+    auto *pdu = asn::New<T>();
+    outRes = uper_decode(nullptr, &desc, reinterpret_cast<void **>(&pdu), buffer, size, 0, 0);
+
+    if (outRes.code != RC_OK)
+    {
+        asn::Free(desc, pdu);
+        return nullptr;
+    }
+
+    return pdu;
+}
+
+template <typename T>
 inline bool DecodeInPlace(asn_TYPE_descriptor_t &desc, uint8_t *buffer, size_t size, T **outPdu)
 {
     auto res = aper_decode(nullptr, &desc, reinterpret_cast<void **>(outPdu), buffer, size, 0, 0);
@@ -93,3 +108,10 @@ inline T *Decode(asn_TYPE_descriptor_t &desc, const OctetString &octetString)
 }
 
 } // namespace rrc::encode
+
+namespace nr::rrc
+{
+
+namespace encode = ::rrc::encode;
+
+} // namespace nr::rrc

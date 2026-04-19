@@ -33,6 +33,7 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     base->logBase = new LogBase("logs/" + config->name + ".log");
     base->nodeListener = nodeListener;
     base->cliCallbackTask = cliCallbackTask;
+    base->gnbPosition = config->geoLocation;
 
     base->satTleStore = new SatTleStore();
     int64_t startEpochMillis = config->ntn.timeWarp.startEpochMillis.value_or(utils::CurrentTimeMillis());

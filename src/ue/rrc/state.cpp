@@ -38,20 +38,31 @@ void UeRrcTask::performCycle()
 {
     if (m_state == ERrcState::RRC_CONNECTED)
     {
-        // if the handover measurement framework is disabled, no need to run the measurement evaluations,
-        //   so skip
-        //if (!m_base->config->useHandoverMeasFramework) return;
+
+        int servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
+        std::map<int, int> allMeas;
+        // Get the current measurements to evaluate against
+        //   since this is actively updated by the RLS meas task and read here by RRC, 
+        //   we make a copy from the shared context which is protected by a mutex
+        {
+            std::shared_lock lk(m_base->cellDbMeasMutex);
+            allMeas = m_base->cellDbMeas;
+        }
+
+        // evaluate all the MeasIds and set their current state
+        evaluateMeasurements(servingCellId, allMeas);
 
         // evaluate CHO first. If CHO triggers in this cycle,
         // suppress Rel-15 MeasurementReport generation for the same cycle.
         bool choTriggered = false;
         if (!m_handoverInProgress && !m_measurementEvalSuspended)
-            choTriggered = evaluateChoCandidates();
+            choTriggered = evaluateChoCandidates(servingCellId, allMeas);
 
+        // CHO was triggered, don;t send measurement report for this cycle as per 38.331
         if (choTriggered)
             return;
 
-        evaluateMeasurements();
+        measurementReporting(servingCellId, getServingCellRsrp(servingCellId, allMeas));
     }
     else if (m_state == ERrcState::RRC_IDLE)
     {

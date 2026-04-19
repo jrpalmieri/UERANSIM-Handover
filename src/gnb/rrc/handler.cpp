@@ -90,9 +90,7 @@ void GnbRrcTask::releaseConnection(int ueId)
     sendRrcMessage(ueId, pdu);
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
 
-    // Delete UE RRC context (map is keyed by UE ID)
-    m_ueCtx.erase(ueId);
-    m_tidCountersByUe.erase(ueId);
+    handoverContextRelease(ueId);
 }
 
 void GnbRrcTask::handleRadioLinkFailure(int ueId)
@@ -102,9 +100,7 @@ void GnbRrcTask::handleRadioLinkFailure(int ueId)
     w->ueId = ueId;
     m_base->ngapTask->push(std::move(w));
 
-    // Delete UE RRC context (map is keyed by UE ID)
-    m_ueCtx.erase(ueId);
-    m_tidCountersByUe.erase(ueId);
+    handoverContextRelease(ueId);
 }
 
 void GnbRrcTask::handlePaging(const asn::Unique<ASN_NGAP_FiveG_S_TMSI> &tmsi,

@@ -36,6 +36,8 @@ typedef struct ASN_RRC_CondReconfigToAddMod {
 	OCTET_STRING_t	*condRRCReconfig;	/* OPTIONAL */
 	/* Rel-17 extension addition. */
 	OCTET_STRING_t	*condExecutionCondSCG;	/* OPTIONAL */
+	/* Rel-17 extension addition for CHO candidate selection priority. */
+	long	*condExecutionPriority_r17;	/* OPTIONAL */
 	/* Rel-16/17 extension addition for NTN timing trigger. */
 	struct ASN_RRC_CondTriggerConfig_r16 *condTriggerConfig_r16;	/* OPTIONAL */
 
@@ -46,7 +48,7 @@ typedef struct ASN_RRC_CondReconfigToAddMod {
 /* Implementation */
 extern asn_TYPE_descriptor_t asn_DEF_ASN_RRC_CondReconfigToAddMod;
 extern asn_SEQUENCE_specifics_t asn_SPC_ASN_RRC_CondReconfigToAddMod_specs_1;
-extern asn_TYPE_member_t asn_MBR_ASN_RRC_CondReconfigToAddMod_1[5];
+extern asn_TYPE_member_t asn_MBR_ASN_RRC_CondReconfigToAddMod_1[6];
 
 #ifdef __cplusplus
 }

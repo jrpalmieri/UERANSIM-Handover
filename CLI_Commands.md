@@ -96,14 +96,47 @@ In interactive mode, type `commands` to list subcommands available for that node
   - Success: `Requesting UE context release`
   - Error: `UE not found with given ID`
 
-### loc-pv
-- Syntax: `loc-pv <x:y:z:vx:vy:vz:epoch-ms>`
+### set-loc-wgs84
+- Syntax: `set-loc-wgs84 <lat:lon:alt>`
+- Args/options:
+  - one positional string in exact colon-separated format above
+- Expected output:
+  - Success: `Updated true gNB WGS84 position`
+  - Parse error when malformed:
+    - `Invalid format. Expected lat:lon:alt with valid WGS84 bounds`
+
+### set-loc-pv
+- Syntax: `set-loc-pv <x:y:z:vx:vy:vz:epoch-ms>`
 - Args/options:
   - one positional string in exact colon-separated format above
 - Expected output:
   - Success: `Updated true gNB position/velocity for SIB19 generation`
   - Parse error when malformed:
     - `Invalid format. Expected x:y:z:vx:vy:vz:epoch-ms`
+
+### get-loc-wgs84
+- Syntax: `get-loc-wgs84`
+- Args/options: none
+- Expected output:
+  - Success: JSON/YAML object with fields:
+    - `latitude`
+    - `longitude`
+    - `altitude`
+  - Error: `gNB location is not set`
+
+### get-loc-pv
+- Syntax: `get-loc-pv`
+- Args/options: none
+- Expected output:
+  - Success: JSON/YAML object with fields:
+    - `x`
+    - `y`
+    - `z`
+    - `vx`
+    - `vy`
+    - `vz`
+    - `epochMs`
+  - Error: `gNB location is not set`
 
 ### sat-loc-pv
 - Syntax: `sat-loc-pv <json-payload>`

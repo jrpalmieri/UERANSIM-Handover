@@ -4022,6 +4022,22 @@ ReportSFTD-NR ::=                 SEQUENCE {
     ...
 }
 
+ReferenceLocation-r17 ::=                  CHOICE {
+    fixedReferenceLocation-r17                 SEQUENCE {
+        longitude-r17                              INTEGER (-180000000..180000000),
+        latitude-r17                               INTEGER (-90000000..90000000),
+        height-r17                                 INTEGER (-1000..10000)
+    },
+    nadirReferenceLocation-r17                 NULL
+}
+
+EventD1-r17 ::=                             SEQUENCE {
+    distanceThresh-r17                           INTEGER (0..20000),
+    referenceLocation-r17                        ReferenceLocation-r17,
+    hysteresis                                   Hysteresis,
+    timeToTrigger                                TimeToTrigger
+}
+
 EventTriggerConfig::=                       SEQUENCE {
     eventId                                     CHOICE {
         eventA1                                     SEQUENCE {
@@ -4065,7 +4081,7 @@ EventTriggerConfig::=                       SEQUENCE {
             timeToTrigger                               TimeToTrigger,
             useWhiteCellList                            BOOLEAN
         },
-        ...
+        eventD1-r17                                  EventD1-r17
     },
 
     rsType                                      NR-RS-Type,

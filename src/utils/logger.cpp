@@ -17,7 +17,11 @@ Logger::Logger(const std::string &name, const std::vector<std::shared_ptr<spdlog
 {
     logger = new spdlog::logger(name, std::begin(sinks), std::end(sinks));
 
+#ifdef NDEBUG
+    logger->set_level(spdlog::level::info);
+#else
     logger->set_level(spdlog::level::debug);
+#endif
     logger->flush_on(spdlog::level::info);
 }
 

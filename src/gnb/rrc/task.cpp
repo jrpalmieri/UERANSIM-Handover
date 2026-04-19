@@ -11,9 +11,13 @@
 #include <gnb/nts.hpp>
 #include <gnb/rls/task.hpp>
 #include <lib/rrc/encode.hpp>
+#include <utils/common.hpp>
+#include <utils/position_calcs.hpp>
 
 #include <asn/rrc/ASN_RRC_DLInformationTransfer-IEs.h>
 #include <asn/rrc/ASN_RRC_DLInformationTransfer.h>
+
+#include <cmath>
 
 static constexpr const int TIMER_ID_SI_BROADCAST = 1;
 static constexpr const int TIMER_PERIOD_SI_BROADCAST = 10'000;
@@ -34,6 +38,9 @@ void GnbRrcTask::onStart()
 {
     setTimer(TIMER_ID_SI_BROADCAST, TIMER_PERIOD_SI_BROADCAST);
     setTimer(TIMER_ID_SAT_CACHE_CALC, TIMER_PERIOD_SAT_CACHE_CALC);
+
+    if (m_base->gnbPosition.isValid)
+        setTrueGeoPosition(m_base->gnbPosition);
 
     if (m_config->ntn.ownTle.has_value())
     {
@@ -149,6 +156,45 @@ void GnbRrcTask::onLoop()
 void GnbRrcTask::setTruePositionVelocity(const PositionVelocity &value)
 {
     m_truePositionVelocity = value;
+
+    if (!value.isValid)
+        return;
+
+    auto geo = EcefToGeo(EcefPosition{value.x, value.y, value.z});
+    geo.isValid = true;
+    m_base->gnbPosition = geo;
+}
+
+void GnbRrcTask::setTrueGeoPosition(const GeoPosition &value)
+{
+    if (!std::isfinite(value.latitude) || !std::isfinite(value.longitude) || !std::isfinite(value.altitude))
+        return;
+    if (value.latitude < -90.0 || value.latitude > 90.0)
+        return;
+    if (value.longitude < -180.0 || value.longitude > 180.0)
+        return;
+
+    GeoPosition normalized = value;
+    normalized.isValid = true;
+    m_base->gnbPosition = normalized;
+
+    EcefPosition ecef = GeoToEcef(normalized);
+
+    PositionVelocity pv{};
+    pv.isValid = true;
+    pv.x = ecef.x;
+    pv.y = ecef.y;
+    pv.z = ecef.z;
+    pv.vx = 0.0;
+    pv.vy = 0.0;
+    pv.vz = 0.0;
+    pv.epochMs = static_cast<int64_t>(utils::CurrentTimeMillis());
+    m_truePositionVelocity = pv;
+}
+
+GeoPosition GnbRrcTask::getTrueGeoPosition() const
+{
+    return m_base->gnbPosition;
 }
 
 void GnbRrcTask::upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value)

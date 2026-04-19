@@ -20,12 +20,14 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
 
 #include <utils/json.hpp>
+#include <utils/position_calcs.hpp>
 
 namespace nr::ue
 {
@@ -300,9 +302,16 @@ inline void extrapolateSatelliteEcefPosition(const SatPositionVelocity &posVel,
                                              double dtSec,
                                              double &x, double &y, double &z)
 {
-    x = posVel.positionX + posVel.velocityVX * dtSec;
-    y = posVel.positionY + posVel.velocityVY * dtSec;
-    z = posVel.positionZ + posVel.velocityVZ * dtSec;
+    ExtrapolateEcefPosition(posVel.positionX,
+                            posVel.positionY,
+                            posVel.positionZ,
+                            posVel.velocityVX,
+                            posVel.velocityVY,
+                            posVel.velocityVZ,
+                            dtSec,
+                            x,
+                            y,
+                            z);
 }
 
 /**

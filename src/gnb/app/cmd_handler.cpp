@@ -26,6 +26,7 @@
 #include <gnb/sctp/task.hpp>
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
+#include <utils/position_calcs.hpp>
 #include <utils/printer.hpp>
 #include <utils/sat_time.hpp>
 #include <utils/yaml_utils.hpp>
@@ -125,6 +126,29 @@ static Json ToJsonSatTimeStatus(const utils::SatTime::Status &status)
     return json;
 }
 
+static Json ToJsonLocWgs84(const GeoPosition &position)
+{
+    return Json::Obj({
+        {"latitude", std::to_string(position.latitude)},
+        {"longitude", std::to_string(position.longitude)},
+        {"altitude", std::to_string(position.altitude)},
+    });
+}
+
+static Json ToJsonLocPvFromGeo(const GeoPosition &position)
+{
+    auto ecef = GeoToEcef(position);
+    return Json::Obj({
+        {"x", std::to_string(ecef.x)},
+        {"y", std::to_string(ecef.y)},
+        {"z", std::to_string(ecef.z)},
+        {"vx", std::to_string(0.0)},
+        {"vy", std::to_string(0.0)},
+        {"vz", std::to_string(0.0)},
+        {"epochMs", static_cast<int64_t>(utils::CurrentTimeMillis())},
+    });
+}
+
 static std::string ToLower(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
@@ -186,6 +210,7 @@ static std::string FormatSatTimeAction(const app::SatTimeCliControl &satTime)
     case app::SatTimeCliControl::EAction::PauseAtWallclock:
         return "sat-time pause-at-wallclock=" + std::to_string(satTime.pauseAtWallclock);
     }
+
     return "sat-time";
 }
 
@@ -210,10 +235,17 @@ static std::string ToAuditCommand(const app::GnbCliCommand &cmd)
         return "ue-count";
     case app::GnbCliCommand::UE_RELEASE_REQ:
         return "ue-release " + std::to_string(cmd.ueId);
-    case app::GnbCliCommand::LOC_PV:
-        stream << "loc-pv x=" << cmd.locX << " y=" << cmd.locY << " z=" << cmd.locZ << " vx=" << cmd.velX
-               << " vy=" << cmd.velY << " vz=" << cmd.velZ << " epoch-ms=" << cmd.epochMs;
+    case app::GnbCliCommand::SET_LOC_WGS84:
+        stream << "set-loc-wgs84 lat=" << cmd.geoLat << " lon=" << cmd.geoLon << " alt=" << cmd.geoAlt;
         return stream.str();
+    case app::GnbCliCommand::SET_LOC_PV:
+        stream << "set-loc-pv x=" << cmd.locX << " y=" << cmd.locY << " z=" << cmd.locZ << " vx="
+               << cmd.velX << " vy=" << cmd.velY << " vz=" << cmd.velZ << " epoch-ms=" << cmd.epochMs;
+        return stream.str();
+    case app::GnbCliCommand::GET_LOC_WGS84:
+        return "get-loc-wgs84";
+    case app::GnbCliCommand::GET_LOC_PV:
+        return "get-loc-pv";
     case app::GnbCliCommand::SAT_LOC_PV:
         return "sat-loc-pv payload=" + cmd.satLocPvJson;
     case app::GnbCliCommand::SAT_TLE:
@@ -362,23 +394,6 @@ static std::vector<std::string> CollectStaleTargetWarnings(const GnbConfig &conf
         });
     };
 
-    auto checkEventList = [&warnings, &hasNeighborNci](
-                              const std::vector<GnbHandoverConfig::GnbHandoverEventConfig> &events,
-                              const std::string &basePath) {
-        for (size_t i = 0; i < events.size(); i++)
-        {
-            const auto &event = events[i];
-            if (event.targetCellCalculated || !event.targetCellId.has_value())
-                continue;
-            if (hasNeighborNci(*event.targetCellId))
-                continue;
-
-            warnings.push_back(basePath + "[" + std::to_string(i) + "] targetCellId=" +
-                               std::to_string(*event.targetCellId) + " does not exist in neighbor list");
-        }
-    };
-
-    checkEventList(config.handover.events, "handover.events");
     for (size_t i = 0; i < config.handover.candidateProfiles.size(); i++)
     {
         const auto &profile = config.handover.candidateProfiles[i];
@@ -387,9 +402,6 @@ static std::vector<std::string> CollectStaleTargetWarnings(const GnbConfig &conf
             warnings.push_back("handover.choCandidateProfiles[" + std::to_string(i) + "] targetCellId=" +
                                std::to_string(*profile.targetCellId) + " does not exist in neighbor list");
         }
-
-        checkEventList(profile.conditions,
-                       "handover.choCandidateProfiles[" + std::to_string(i) + "].conditions");
     }
 
     return warnings;
@@ -663,7 +675,18 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         }
         break;
     }
-    case app::GnbCliCommand::LOC_PV: {
+    case app::GnbCliCommand::SET_LOC_WGS84: {
+        GeoPosition geo{};
+        geo.isValid = true;
+        geo.latitude = msg.cmd->geoLat;
+        geo.longitude = msg.cmd->geoLon;
+        geo.altitude = msg.cmd->geoAlt;
+
+        m_base->rrcTask->setTrueGeoPosition(geo);
+        sendResult(msg.address, "Updated true gNB WGS84 position");
+        break;
+    }
+    case app::GnbCliCommand::SET_LOC_PV: {
         PositionVelocity position{};
         position.isValid = true;
         position.x = msg.cmd->locX;
@@ -676,6 +699,26 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
 
         m_base->rrcTask->setTruePositionVelocity(position);
         sendResult(msg.address, "Updated true gNB position/velocity for SIB19 generation");
+        break;
+    }
+    case app::GnbCliCommand::GET_LOC_WGS84: {
+        if (!m_base->gnbPosition.isValid)
+        {
+            sendError(msg.address, "gNB location is not set");
+            break;
+        }
+
+        sendResult(msg.address, ToJsonLocWgs84(m_base->gnbPosition).dumpYaml());
+        break;
+    }
+    case app::GnbCliCommand::GET_LOC_PV: {
+        if (!m_base->gnbPosition.isValid)
+        {
+            sendError(msg.address, "gNB location is not set");
+            break;
+        }
+
+        sendResult(msg.address, ToJsonLocPvFromGeo(m_base->gnbPosition).dumpYaml());
         break;
     }
     case app::GnbCliCommand::SAT_LOC_PV: {

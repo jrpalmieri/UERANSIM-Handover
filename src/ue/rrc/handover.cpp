@@ -77,7 +77,7 @@ void UeRrcTask::resumeMeasurements()
     for (auto &[id, state] : m_measConfig.measIdStates)
     {
         state.enteringTimestamp = 0;
-        state.reported = false;
+        state.isReported = false;
     }
 
     // Keep CHO candidate configuration but clear transient TTT/timer state so

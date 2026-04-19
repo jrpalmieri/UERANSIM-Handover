@@ -191,6 +191,7 @@ struct GeoPosition
     double latitude{};   // degrees, WGS-84
     double longitude{};  // degrees, WGS-84
     double altitude{};   // meters above ellipsoid
+    bool isValid{false}; // whether the position is valid (e.g., obtained from measurement)
 
     GeoPosition() = default;
 
@@ -199,6 +200,11 @@ struct GeoPosition
     {
     }
 };
+
+struct EcefPosition;
+
+/// Convert geodetic lat/lon/alt (WGS-84) to ECEF (meters)
+EcefPosition GeoToEcef(const GeoPosition &geo);
 
 /// Earth-Centered Earth-Fixed position in meters
 struct EcefPosition
@@ -213,10 +219,10 @@ struct EcefPosition
         : x(x), y(y), z(z)
     {
     }
+    EcefPosition(const GeoPosition &geo) : EcefPosition(GeoToEcef(geo))
+    {
+    }
 };
-
-/// Convert geodetic lat/lon/alt (WGS-84) to ECEF (meters)
-EcefPosition GeoToEcef(const GeoPosition &geo);
 
 /// Compute Euclidean distance (meters) between two ECEF points
 double EcefDistance(const EcefPosition &a, const EcefPosition &b);

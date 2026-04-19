@@ -1849,7 +1849,7 @@ class WindowedDashboard:
         if not node:
             msg = f"Unknown gNB target '{target_key}'"
             self.inject_status_var.set(msg)
-            self.panes[target_key].append_log("[loc-pv] " + msg)
+            self.panes[target_key].append_log("[set-loc-pv] " + msg)
             return
 
         arg = ":".join(
@@ -1863,22 +1863,22 @@ class WindowedDashboard:
                 str(epoch_ms),
             ]
         )
-        cmd = f"loc-pv {arg}"
+        cmd = f"set-loc-pv {arg}"
         out = self._cli_exec(node, cmd)
         if "error" in out:
-            msg = f"loc-pv failed for {target_key} ({node}): {out['error']}"
+            msg = f"set-loc-pv failed for {target_key} ({node}): {out['error']}"
             self.inject_status_var.set(msg)
-            self.panes[target_key].append_log("[loc-pv] " + msg)
+            self.panes[target_key].append_log("[set-loc-pv] " + msg)
             return
 
         msg = (
-            f"Sent loc-pv to {target_key} ({node}): "
+            f"Sent set-loc-pv to {target_key} ({node}): "
             f"pos=({self._format_cli_float(x)}, {self._format_cli_float(y)}, {self._format_cli_float(z)}) "
             f"vel=({self._format_cli_float(vx)}, {self._format_cli_float(vy)}, {self._format_cli_float(vz)}) "
             f"epoch={epoch_ms}"
         )
         self.inject_status_var.set(msg)
-        self.panes[target_key].append_log("[loc-pv] " + msg)
+        self.panes[target_key].append_log("[set-loc-pv] " + msg)
 
     def _open_gnb_loc_pv_dialog(self) -> None:
         dialog = tk.Toplevel(self.root)

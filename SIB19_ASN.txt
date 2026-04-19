@@ -1,0 +1,78 @@
+SIB19-r17 ::= SEQUENCE {
+    ntn-Config-r17                           NTN-Config-r17                                  OPTIONAL,       -- Need R
+    t-Service-r17                            INTEGER (0..549755813887)                       OPTIONAL,       -- Need R
+    referenceLocation-r17                    ReferenceLocation-r17                           OPTIONAL,       -- Need R
+    distanceThresh-r17                       INTEGER(0..65525)                               OPTIONAL,       -- Need R
+    ntn-NeighCellConfigList-r17              NTN-NeighCellConfigList-r17                     OPTIONAL,       -- Need R
+    lateNonCriticalExtension                 OCTET STRING                                    OPTIONAL,
+    ...,
+    [[
+    ntn-NeighCellConfigListExt-v1720         NTN-NeighCellConfigList-r17                     OPTIONAL        -- Need R
+    ]]
+}
+
+NTN-NeighCellConfigList-r17 ::=          SEQUENCE (SIZE(1..maxCellNTN-r17))  OF NTN-NeighCellConfig-r17
+
+NTN-NeighCellConfig-r17 ::=              SEQUENCE {
+    ntn-Config-r17                           NTN-Config-r17                                  OPTIONAL,       -- Need R
+    carrierFreq-r17                          ARFCN-ValueNR                                   OPTIONAL,       -- Need R
+    physCellId-r17                           PhysCellId                                      OPTIONAL        -- Need R
+}
+
+
+NTN-Config-r17 ::=             SEQUENCE {
+    epochTime-r17                  EpochTime-r17                                                            OPTIONAL,  -- Need R
+    ntn-UlSyncValidityDuration-r17 ENUMERATED{ s5, s10, s15, s20, s25, s30, s35,
+                                              s40, s45, s50, s55, s60, s120, s180, s240, s900}              OPTIONAL,  -- Cond SIB19
+    cellSpecificKoffset-r17        INTEGER(1..1023)                                                         OPTIONAL,  -- Need R
+    kmac-r17                       INTEGER(1..512)                                                          OPTIONAL,  -- Need R
+    ta-Info-r17                    TA-Info-r17                                                              OPTIONAL,  -- Need R
+    ntn-PolarizationDL-r17         ENUMERATED {rhcp,lhcp,linear}                                            OPTIONAL,  -- Need R
+    ntn-PolarizationUL-r17         ENUMERATED {rhcp,lhcp,linear}                                            OPTIONAL,  -- Need R
+    ephemerisInfo-r17              EphemerisInfo-r17                                                        OPTIONAL,  -- Need R
+    ta-Report-r17                  ENUMERATED {enabled}                                                     OPTIONAL,  -- Need R
+    ...
+}
+
+EpochTime-r17 ::=              SEQUENCE {
+    sfn-r17                        INTEGER(0..1023),
+    subFrameNR-r17                 INTEGER(0..9)
+}
+
+TA-Info-r17 ::=                 SEQUENCE  {
+    ta-Common-r17                  INTEGER(0..66485757),
+    ta-CommonDrift-r17             INTEGER(-257303..257303)                                                 OPTIONAL,  -- Need R
+    ta-CommonDriftVariant-r17      INTEGER(0..28949)                                                        OPTIONAL   -- Need R
+}
+
+ReferenceLocation := Ellipsoid-Point
+
+Ellipsoid-Point ::= SEQUENCE {
+    latitudeSign        ENUMERATED {north, south}, -- 1 bit
+    degreesLatitude     INTEGER (0..8388607),-- 23 bit field
+    degreesLongitude    INTEGER (-8388608..8388607)-- 24 bit field
+}
+
+
+SIB19 field descriptions
+
+distanceThresh = Distance from the serving cell reference location and is used in location-based measurement initiation in RRC_IDLE and RRC_INACTIVE, as defined in TS 38.304 [20]. Each step represents 50m.
+
+ntn-Config = Provides parameters needed for the UE to access NR via NTN access such as Ephemeris data, common TA parameters, k_offset, validity duration for UL sync information and epoch.
+ntn-NeighCellConfigList, ntn-NeighCellConfigListExt = Provides a list of NTN neighbour cells including their ntn-Config, carrier frequency and PhysCellId. This set includes all elements of ntn-NeighCellConfigList and all elements of ntn-NeighCellConfigListExt. If ntn-Config is absent for an entry in ntn-NeighCellConfigListExt, the ntn-Config provided in the entry at the same position in ntn-NeighCellConfigList applies. Network provides ntn-Config for the first entry of ntn-NeighCellConfigList. If the ntn-Config is absent for any other entry in ntn-NeighCellConfigList, the ntn-Config provided in the previous entry in ntn-NeighCellConfigList applies.
+referenceLocation = Reference location of the serving cell provided via NTN quasi-Earth fixed system and is used in location-based measurement initiation in RRC_IDLE and RRC_INACTIVE, as defined in TS 38.304 [20].
+t-Service = Indicates the time information on when a cell provided via NTN quasi-Earth fixed system is going to stop serving the area it is currently covering. The field indicates a time in multiples of 10 ms after 00:00:00 on Gregorian calendar date 1 January, 1900 (midnight between Sunday, December 31, 1899 and Monday, January 1, 1900). The exact stop time is between the time indicated by the value of this field minus 1 and the time indicated by the value of this field.
+
+EphemerisInfo = This field provides satellite ephemeris either in format of position and velocity state vector or in format of orbital parameters. This field is excluded when determining changes in system information, i.e. changes to ephemerisInfo should neither result in system information change notifications nor in a modification of valueTag in SIB1.
+epochTime = Indicate the epoch time for the NTN assistance information. When explicitly provided through SIB, or through dedicated signaling, the EpochTime is the starting time of a DL sub-frame, indicated by a SFN and a sub-frame number signaled together with the assistance information. For serving cell, the field sfn indicates the current SFN or the next upcoming SFN after the frame where the message indicating the epochTime is received. For neighbour cell, the sfn indicates the SFN nearest to the frame where the message indicating the epochTime is received. The reference point for epoch time of the serving or neighbour NTN payload ephemeris and Common TA parameters is the uplink time synchronization reference point. If this field is absent, the epoch time is the end of SI window where this SIB19 is scheduled. This field is mandatory present when ntn-Config is provided in dedicated configuration. If this field is absent in ntn-Config provided via NTN-NeighCellConfig the UE uses epoch time of the serving cell, otherwise the field is based on the timing of the serving cell, i.e. the SFN and sub-frame number indicated in this field refers to the SFN and sub-frame of the serving cell. In case of handover or conditional handover, this field is based on the timing of the target cell, i.e. the SFN and sub-frame number indicated in this field refers to the SFN and sub-frame of the target cell. For the target cell the UE considers epoch time, indicated by the SFN and sub-frame number in this field, to be the frame nearest to the frame in which the message indicating the epoch time is received. This field is excluded when determining changes in system information, i.e. changes to epochTime should neither result in system information change notifications nor in a modification of valueTag in SIB1.
+cellSpecificKoffset = Scheduling offset used for the timing relationships that are modified for NTN (see TS 38.213 [13]). The unit of the field K_offset is number of slots for a given subcarrier spacing of 15 kHz. If the field is absent UE assumes value 0.
+kmac = Scheduling offset provided by network if downlink and uplink frame timing are not aligned at gNB. If the field is absent UE assumes value 0. In FR1, the unit of kmac is number of slots for a given subcarrier spacing of 15 kHz.
+ntn-PolarizationDL = If present, this parameter indicates polarization information for downlink transmission on service link: including Right hand, Left hand circular polarizations (RHCP, LHCP) and Linear polarization.
+ntn-PolarizationUL = If present, this parameter indicates Polarization information for uplink service link.
+If not present and ntn-PolarizationDL is present, UE assumes the same polarization for UL and DL.
+ntn-UlSyncValidityDuration = A validity duration configured by the network for assistance information (i.e. Serving and/or neighbour satellite ephemeris and Common TA parameters) which indicates the maximum time duration (from epochTime) during which the UE can apply assistance information without having acquired new assistance information.
+The unit of ntn-UlSyncValidityDuration is second. Value s5 corresponds to 5 s, value s10 indicate 10 s and so on. This parameter applies to both connected and idle mode UEs. If this field is absent in ntn-Config provided via NTN-NeighCellConfig, the UE uses validity duration from the serving cell assistance information. This field is excluded when determining changes in system information, i.e. changes of ntn-UlSyncValidityDuration should neither result in system information change notifications nor in a modification of valueTag in SIB1. ntn-UlSyncValidityDuration is only updated when at least one of epochTime, ta-Info, ephemerisInfo is updated.
+ta-Common = Network-controlled common timing advanced value and it may include any timing offset considered necessary by the network. ta-Common with value of 0 is supported. The granularity of ta-Common is 4.072 × 10^(-3) μs. Values are given in unit of corresponding granularity. This field is excluded when determining changes in system information, i.e. changes of ta-Common should neither result in system information change notifications nor in a modification of valueTag in SIB1.
+ta-CommonDrift = Indicate drift rate of the common TA. The granularity of ta-CommonDrift is 0.2 × 10^(-3) μs⁄s. Values are given in unit of corresponding granularity. This field is excluded when determining changes in system information, i.e. changes of ta-CommonDrift should neither result in system information change notifications nor in a modification of valueTag in SIB1.
+ta-CommonDriftVariant = Indicate drift rate variation of the common TA. The granularity of ta-CommonDriftVariant is 0.2×10^(-4) μs⁄s^2. Values are given in unit of corresponding granularity. This field is excluded when determining changes in system information, i.e. changes of ta-CommonDriftVariant should neither result in system information change notifications nor in a modification of valueTag in SIB1.
+ta-Report = When this field is included in SIB19, it indicates reporting of timing advanced is enabled during Random Access due to RRC connection establishment or RRC connection resume, and during RRC connection reestablishment. When this field is included in ServingCellConfigCommon within dedicated signalling, it indicates TA reporting is enabled during Random Access due to reconfiguration with sync (see TS 38.321 [3], clause 5.4.8).

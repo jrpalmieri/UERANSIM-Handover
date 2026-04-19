@@ -16,34 +16,11 @@
 #include <ue/nts.hpp>
 #include <ue/types.hpp>
 #include <ue/rrc/measurement.hpp>
+#include <lib/rrc/common/asn_fwd.hpp>
 #include <utils/logger.hpp>
 #include <utils/nts.hpp>
 
 #include <asn/rrc/ASN_RRC_InitialUE-Identity.h>
-
-extern "C"
-{
-    struct ASN_RRC_BCCH_BCH_Message;
-    struct ASN_RRC_BCCH_DL_SCH_Message;
-    struct ASN_RRC_DL_CCCH_Message;
-    struct ASN_RRC_DL_DCCH_Message;
-    struct ASN_RRC_PCCH_Message;
-    struct ASN_RRC_UL_CCCH_Message;
-    struct ASN_RRC_UL_CCCH1_Message;
-    struct ASN_RRC_UL_DCCH_Message;
-
-    struct ASN_RRC_RRCSetupRequest;
-    struct ASN_RRC_DLInformationTransfer;
-    struct ASN_RRC_ULInformationTransfer;
-    struct ASN_RRC_RRCSetup;
-    struct ASN_RRC_RRCReject;
-    struct ASN_RRC_RRCRelease;
-    struct ASN_RRC_Paging;
-    struct ASN_RRC_MIB;
-    struct ASN_RRC_SIB1;
-    struct ASN_RRC_RRCReconfiguration;
-    struct ASN_RRC_ConditionalReconfiguration;
-}
 
 namespace nr::ue
 {
@@ -167,7 +144,8 @@ class UeRrcTask : public NtsTask
     void performUac(std::shared_ptr<LightSync<UacInput, UacOutput>> &uacCtl);
 
     /* Measurement framework */
-    void evaluateMeasurements();
+    void evaluateMeasurements(int servingCellId, const std::map<int, int> &allMeas);
+    void measurementReporting(int servingCellId, int servingRsrp);
     void applyMeasConfig(const UeMeasConfig &cfg);
     void resetMeasurements();
     void sendMeasurementReport(int measId, int servingCellId, int servingRsrp,
@@ -187,13 +165,11 @@ class UeRrcTask : public NtsTask
     /* Conditional Handover (CHO) */
     void handleChoConfiguration(const OctetString &pdu);
     void parseConditionalReconfiguration(const ASN_RRC_ConditionalReconfiguration *condReconfig);
-    bool evaluateChoCandidates();
+    bool evaluateChoCandidates(int servingCellId, const std::map<int, int> &allMeas);
     void executeChoCandidate(ChoCandidate &candidate);
     void cancelAllChoCandidates();
     void resetChoRuntimeState();
 
-    /* UE Position (for D1 distance-based events) */
-    UePosition getUePosition() const;
 };
 
 } // namespace nr::ue

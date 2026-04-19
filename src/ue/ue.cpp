@@ -44,6 +44,9 @@ UserEquipment::UserEquipment(UeConfig *config, app::IUeController *ueController,
     base->rlsTask = new UeRlsTask(base);
 
     base->g_allCellMeasurements = g_allCellMeasurements;
+
+    // initialize UE Location from config if provided, otherwise default to (0, 0, 0)
+    base->UeLocation = config->initialPosition.value_or(GeoPosition{});
     
     taskBase = base;
 }

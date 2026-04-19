@@ -16,6 +16,7 @@
 #include <lib/rrc/encode.hpp>
 #include <utils/common.hpp>
 #include <utils/common_types.hpp>
+#include <utils/position_calcs.hpp>
 
 #include <climits>
 #include <cstdint>
@@ -269,6 +270,14 @@ void GnbRrcTask::triggerSib19Broadcast()
                 e.vx = p1.x - p0.x;  // dt = 1 s → difference is m/s
                 e.vy = p1.y - p0.y;
                 e.vz = p1.z - p0.z;
+
+                // Keep global gNB WGS84 state aligned with the serving satellite in NTN mode.
+                if (pci == ownPci)
+                {
+                    GeoPosition ownGeo = EcefToGeo(p0);
+                    ownGeo.isValid = true;
+                    m_base->gnbPosition = ownGeo;
+                }
             }
             // orbital
             else

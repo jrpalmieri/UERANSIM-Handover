@@ -14,28 +14,11 @@
 #include <vector>
 
 #include <gnb/nts.hpp>
+#include <lib/rrc/common/asn_fwd.hpp>
 #include <utils/logger.hpp>
 #include <utils/nts.hpp>
 
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
-
-extern "C"
-{
-    struct ASN_RRC_BCCH_BCH_Message;
-    struct ASN_RRC_BCCH_DL_SCH_Message;
-    struct ASN_RRC_DL_CCCH_Message;
-    struct ASN_RRC_DL_DCCH_Message;
-    struct ASN_RRC_PCCH_Message;
-    struct ASN_RRC_UL_CCCH_Message;
-    struct ASN_RRC_UL_CCCH1_Message;
-    struct ASN_RRC_UL_DCCH_Message;
-
-    struct ASN_RRC_RRCSetupRequest;
-    struct ASN_RRC_RRCSetupComplete;
-    struct ASN_RRC_RRCReconfigurationComplete;
-    struct ASN_RRC_MeasurementReport;
-    struct ASN_RRC_ULInformationTransfer;
-}
 
 namespace nr::gnb
 {
@@ -92,6 +75,8 @@ class GnbRrcTask : public NtsTask
                         OctetString &rrcContainer);
     bool addPendingHandover(int ueId, const HandoverPreparationInfo &handoverPrep,
                 OctetString &rrcContainer);
+    void setTrueGeoPosition(const GeoPosition &value);
+    GeoPosition getTrueGeoPosition() const;
     void setTruePositionVelocity(const PositionVelocity &value);
     void upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value);
     void upsertSatTles(const std::vector<SatTleEntry> &entries);
@@ -180,7 +165,8 @@ class GnbRrcTask : public NtsTask
     std::vector<long> createMeasConfig(
       ASN_RRC_MeasConfig *&mc,
       RrcUeContext *ue,
-      std::vector<GnbHandoverConfig::GnbHandoverEventConfig> selectedEvents,
+      std::vector<nr::rrc::common::ReportConfigEvent> selectedEvents,
+      bool isChoRequest,
       int triggerTimerSec, 
       int distanceThreshold,
       int choProfileId); 

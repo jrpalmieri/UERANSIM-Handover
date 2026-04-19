@@ -22,6 +22,21 @@
 namespace nr::ue
 {
 
+static const char *decodeResultCodeName(asn_dec_rval_code_e code)
+{
+    switch (code)
+    {
+    case RC_OK:
+        return "RC_OK";
+    case RC_WMORE:
+        return "RC_WMORE";
+    case RC_FAIL:
+        return "RC_FAIL";
+    default:
+        return "RC_UNKNOWN";
+    }
+}
+
 static std::string pduHexPreview(const OctetString &pdu, size_t maxBytes = 16)
 {
     const uint8_t *buf = pdu.data();
@@ -84,10 +99,13 @@ void UeRrcTask::handleDownlinkRrc(int cellId, rrc::RrcChannel channel, const Oct
     case rrc::RrcChannel::DL_DCCH: {
         if (isActiveCell(cellId))
         {
-            auto *pdu = rrc::encode::Decode<ASN_RRC_DL_DCCH_Message>(asn_DEF_ASN_RRC_DL_DCCH_Message, rrcPdu);
+            asn_dec_rval_t decodeRes{};
+            auto *pdu = rrc::encode::DecodeWithResult<ASN_RRC_DL_DCCH_Message>(
+                asn_DEF_ASN_RRC_DL_DCCH_Message, rrcPdu.data(), static_cast<size_t>(rrcPdu.length()), decodeRes);
             if (pdu == nullptr)
                 m_logger->err(
-                    "RRC DL-DCCH PDU decoding failed (len=%d, preview=%s)",
+                    "RRC DL-DCCH PDU decoding failed (code=%s(%d), consumed=%zu, len=%d, preview=%s)",
+                    decodeResultCodeName(decodeRes.code), static_cast<int>(decodeRes.code), decodeRes.consumed,
                     rrcPdu.length(), pduHexPreview(rrcPdu).c_str());
             else
                 receiveRrcMessage(pdu);

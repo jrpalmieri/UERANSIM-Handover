@@ -203,6 +203,8 @@ static OctetString EncodeRrcReconfigurationMeasIds(const HandoverPreparationInfo
     return encoded;
 }
 
+
+// this does nothing.  In future could be used to pass measConfig data to target
 static std::vector<HandoverMeasurementIdentity> DecodeRrcReconfigurationMeasIds(const OctetString &encoded)
 {
     std::vector<HandoverMeasurementIdentity> out{};
@@ -235,7 +237,7 @@ static std::vector<HandoverMeasurementIdentity> DecodeRrcReconfigurationMeasIds(
                 if (!entry)
                     continue;
 
-                out.push_back({entry->measId, entry->measObjectId, entry->reportConfigId, "transferred"});
+                out.push_back({entry->measId, entry->measObjectId, entry->reportConfigId, nr::rrc::common::HandoverEventType::UNKNOWN, "transferred"});
             }
         }
     }

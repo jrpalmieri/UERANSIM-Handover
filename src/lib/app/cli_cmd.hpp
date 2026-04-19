@@ -48,7 +48,10 @@ struct GnbCliCommand
         UE_LIST,
         UE_COUNT,
         UE_RELEASE_REQ,
-        LOC_PV,
+        SET_LOC_WGS84,
+        SET_LOC_PV,
+        GET_LOC_WGS84,
+        GET_LOC_PV,
         SAT_LOC_PV,
         SAT_TLE,
         SAT_TIME,
@@ -62,7 +65,12 @@ struct GnbCliCommand
     // UE_RELEASE_REQ
     int ueId{};
 
-    // LOC_PV
+    // SET_LOC_WGS84
+    double geoLat{};
+    double geoLon{};
+    double geoAlt{};
+
+    // SET_LOC_PV
     double locX{};
     double locY{};
     double locZ{};

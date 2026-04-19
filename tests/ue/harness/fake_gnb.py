@@ -278,7 +278,7 @@ class FakeGnb:
         self._heartbeat_count: int = 0
         self._last_heartbeat_sim_pos: Optional[Tuple[float, float, float]] = None
 
-        # True gNB position/velocity used by CLI-equivalent loc-pv command.
+        # True gNB position/velocity used by CLI-equivalent set-loc-pv command.
         self._true_position_velocity: Optional[Dict[str, float]] = None
 
         # RRC codec
@@ -757,16 +757,16 @@ class FakeGnb:
         """Run a minimal CLI-equivalent gNB command in the test harness.
 
         Supported commands:
-          - loc-pv x:y:z:vx:vy:vz:epoch-ms
+          - set-loc-pv x:y:z:vx:vy:vz:epoch-ms
         """
         cmd = command.strip()
-        if not cmd.startswith("loc-pv "):
+        if not cmd.startswith("set-loc-pv "):
             raise ValueError(f"Unsupported command: {command}")
 
-        arg = cmd[len("loc-pv "):].strip()
+        arg = cmd[len("set-loc-pv "):].strip()
         parts = arg.split(":")
         if len(parts) != 7:
-            raise ValueError("Invalid loc-pv format. Expected x:y:z:vx:vy:vz:epoch-ms")
+            raise ValueError("Invalid set-loc-pv format. Expected x:y:z:vx:vy:vz:epoch-ms")
 
         try:
             x = float(parts[0])
@@ -777,7 +777,7 @@ class FakeGnb:
             vz = float(parts[5])
             epoch_ms = int(parts[6])
         except ValueError as exc:
-            raise ValueError("Invalid loc-pv argument values") from exc
+            raise ValueError("Invalid set-loc-pv argument values") from exc
 
         with self._lock:
             self._true_position_velocity = {

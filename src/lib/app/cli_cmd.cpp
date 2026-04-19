@@ -170,6 +170,36 @@ static bool ParseLocPvArgument(const std::string &arg, app::GnbCliCommand &cmd)
     }
 }
 
+static bool ParseLocWgs84Argument(const std::string &arg, app::GnbCliCommand &cmd)
+{
+    std::vector<std::string> tokens;
+    std::stringstream ss(arg);
+    std::string token;
+    while (std::getline(ss, token, ':'))
+        tokens.push_back(token);
+
+    if (tokens.size() != 3)
+        return false;
+
+    try
+    {
+        cmd.geoLat = std::stod(tokens[0]);
+        cmd.geoLon = std::stod(tokens[1]);
+        cmd.geoAlt = std::stod(tokens[2]);
+    }
+    catch (...)
+    {
+        return false;
+    }
+
+    if (cmd.geoLat < -90.0 || cmd.geoLat > 90.0)
+        return false;
+    if (cmd.geoLon < -180.0 || cmd.geoLon > 180.0)
+        return false;
+
+    return true;
+}
+
 static bool StartsWith(const std::string &value, const std::string &prefix)
 {
     return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
@@ -250,8 +280,12 @@ static OrderedMap<std::string, CmdEntry> g_gnbCmdEntries = {
     {"ue-list", {"List all UEs associated with the gNB", "", DefaultDesc, false}},
     {"ue-count", {"Print the total number of UEs connected the this gNB", "", DefaultDesc, false}},
     {"ue-release", {"Request a UE context release for the given UE", "<ue-id>", DefaultDesc, false}},
-    {"loc-pv", {"Set true gNB location as ECEF position/velocity.  Format: x:y:z:vx:vy:vz:epoch-ms",
-                  "<x:y:z:vx:vy:vz:epoch-ms>", DefaultDesc, true}},
+    {"set-loc-wgs84", {"Set true gNB location as WGS84 coordinates. Format: lat:lon:alt",
+                         "<lat:lon:alt>", DefaultDesc, true}},
+    {"set-loc-pv", {"Set true gNB location as ECEF position/velocity. Format: x:y:z:vx:vy:vz:epoch-ms",
+                      "<x:y:z:vx:vy:vz:epoch-ms>", DefaultDesc, true}},
+    {"get-loc-wgs84", {"Get true gNB location as WGS84 JSON", "", DefaultDesc, false}},
+    {"get-loc-pv", {"Get true gNB location as ECEF position/velocity JSON", "", DefaultDesc, false}},
     {"sat-loc-pv", {"Upsert one satellite SIB19 position/velocity entry from JSON payload",
                      "<json-payload>", DefaultDesc, true}},
     {"sat-tle", {"Upsert TLE orbital elements for one or more satellite gNBs from JSON payload",
@@ -342,9 +376,22 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
     {
         return std::make_unique<GnbCliCommand>(GnbCliCommand::VERSION);
     }
-    else if (subCmd == "loc-pv")
+    else if (subCmd == "set-loc-wgs84")
     {
-        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::LOC_PV);
+        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::SET_LOC_WGS84);
+        if (options.positionalCount() == 0)
+            CMD_ERR("WGS84 position argument is expected")
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one WGS84 position argument is expected")
+
+        if (!ParseLocWgs84Argument(options.getPositional(0), *cmd))
+            CMD_ERR("Invalid format. Expected lat:lon:alt with valid WGS84 bounds")
+
+        return cmd;
+    }
+    else if (subCmd == "set-loc-pv")
+    {
+        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::SET_LOC_PV);
         if (options.positionalCount() == 0)
             CMD_ERR("Position/velocity argument is expected")
         if (options.positionalCount() > 1)
@@ -353,6 +400,20 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
         if (!ParseLocPvArgument(options.getPositional(0), *cmd))
             CMD_ERR("Invalid format. Expected x:y:z:vx:vy:vz:epoch-ms")
 
+        return cmd;
+    }
+    else if (subCmd == "get-loc-wgs84")
+    {
+        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::GET_LOC_WGS84);
+        if (options.positionalCount() > 0)
+            CMD_ERR("No argument is expected")
+        return cmd;
+    }
+    else if (subCmd == "get-loc-pv")
+    {
+        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::GET_LOC_PV);
+        if (options.positionalCount() > 0)
+            CMD_ERR("No argument is expected")
         return cmd;
     }
     else if (subCmd == "neighbors")

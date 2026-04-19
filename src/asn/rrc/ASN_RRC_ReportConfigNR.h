@@ -13,6 +13,8 @@
 
 /* Including external dependencies */
 #include "ASN_RRC_ReportSFTD-NR.h"
+#include "ASN_RRC_CondTriggerConfig-r16.h"
+
 #include <constr_SEQUENCE.h>
 #include <constr_CHOICE.h>
 
@@ -27,7 +29,9 @@ typedef enum ASN_RRC_ReportConfigNR__reportType_PR {
 	ASN_RRC_ReportConfigNR__reportType_PR_eventTriggered,
 	/* Extensions may appear below */
 	ASN_RRC_ReportConfigNR__reportType_PR_reportCGI,
-	ASN_RRC_ReportConfigNR__reportType_PR_ext1
+	ASN_RRC_ReportConfigNR__reportType_PR_ext1,
+	ASN_RRC_ReportConfigNR__reportType_PR_condTriggerConfig_r16
+
 } ASN_RRC_ReportConfigNR__reportType_PR;
 
 /* Forward declarations */
@@ -53,6 +57,8 @@ typedef struct ASN_RRC_ReportConfigNR {
 				/* Context for parsing across buffer boundaries */
 				asn_struct_ctx_t _asn_ctx;
 			} *ext1;
+			struct ASN_RRC_CondTriggerConfig_r16  *condTriggerConfig_r16;
+
 		} choice;
 		
 		/* Context for parsing across buffer boundaries */

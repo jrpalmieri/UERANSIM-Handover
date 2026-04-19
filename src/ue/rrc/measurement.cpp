@@ -15,6 +15,7 @@
 #include <ue/rls/task.hpp>
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
+#include <utils/sat_time.hpp>
 
 #include <asn/rrc/ASN_RRC_MeasurementReport.h>
 #include <asn/rrc/ASN_RRC_MeasurementReport-IEs.h>
@@ -39,72 +40,12 @@ namespace nr::ue
 /*  JSON serialisation helpers for measurement types                  */
 /* ================================================================== */
 
-Json ToJson(const EMeasEvent &v)
-{
-    switch (v)
-    {
-    case EMeasEvent::A2: return "A2";
-    case EMeasEvent::A3: return "A3";
-    case EMeasEvent::A5: return "A5";
-    case EMeasEvent::D1: return "D1";
-    default: return "?";
-    }
-}
-
-static const char *d1RefTypeName(ED1ReferenceType t)
-{
-    switch (t)
-    {
-    case ED1ReferenceType::Fixed: return "fixed";
-    case ED1ReferenceType::Nadir: return "nadir";
-    default: return "?";
-    }
-}
-
-
-Json ToJson(const UeReportConfig &v)
-{
-    auto j = Json::Obj({
-        {"reportConfigId", v.reportConfigId},
-        {"event",          ToJson(v.event)},
-        {"hysteresis",     v.hysteresis},
-        {"timeToTrigger",  v.timeToTriggerMs},
-    });
-    switch (v.event)
-    {
-    case EMeasEvent::A2:
-        j.put("a2Threshold", v.a2Threshold);
-        break;
-    case EMeasEvent::A3:
-        j.put("a3Offset", v.a3Offset);
-        break;
-    case EMeasEvent::A5:
-        j.put("a5Threshold1", v.a5Threshold1);
-        j.put("a5Threshold2", v.a5Threshold2);
-        break;
-    case EMeasEvent::D1:
-    {
-        char buf[64];
-        j.put("d1ReferenceType", std::string(d1RefTypeName(v.d1ReferenceType)));
-        snprintf(buf, sizeof(buf), "%.3f", v.d1RefX);
-        j.put("d1RefX", std::string(buf));
-        snprintf(buf, sizeof(buf), "%.3f", v.d1RefY);
-        j.put("d1RefY", std::string(buf));
-        snprintf(buf, sizeof(buf), "%.3f", v.d1RefZ);
-        j.put("d1RefZ", std::string(buf));
-        snprintf(buf, sizeof(buf), "%.3f", v.d1ThresholdM);
-        j.put("d1ThresholdM", std::string(buf));
-        break;
-    }
-    }
-    return j;
-}
 
 Json ToJson(const UeMeasConfig &v)
 {
     auto arr = Json::Arr({});
     for (auto &[id, rc] : v.reportConfigs)
-        arr.push(ToJson(rc));
+        arr.push(rc.toJson());
     return Json::Obj({
         {"reportConfigs", std::move(arr)},
         {"numMeasObjects", static_cast<int32_t>(v.measObjects.size())},
@@ -112,76 +53,9 @@ Json ToJson(const UeMeasConfig &v)
     });
 }
 
-Json ToJson(const EChoEventType &v)
-{
-    switch (v)
-    {
-    case EChoEventType::A2: return "A2";
-    case EChoEventType::A3: return "A3";
-    case EChoEventType::A5: return "A5";
-    case EChoEventType::D1: return "D1";
-    default: return "?";
-    }
-}
-
-Json ToJson(const ChoCondition &v)
-{
-    auto j = Json::Obj({
-        {"eventType", ToJson(v.eventType)},
-        {"triggerDelayMs", v.triggerDelayMs},
-        {"timeToTriggerMs", v.timeToTriggerMs},
-        {"satisfied", v.satisfied},
-    });
-    switch (v.eventType)
-    {
-    case EChoEventType::A2:
-        j.put("a2Threshold", v.a2Threshold);
-        j.put("hysteresis", v.hysteresis);
-        break;
-    case EChoEventType::A3:
-        j.put("a3Offset", v.a3Offset);
-        j.put("a3Hysteresis", v.a3Hysteresis);
-        break;
-    case EChoEventType::A5:
-        j.put("a5Threshold1", v.a5Threshold1);
-        j.put("a5Threshold2", v.a5Threshold2);
-        j.put("a5Hysteresis", v.a5Hysteresis);
-        break;
-    case EChoEventType::D1:
-    {
-        char buf[64];
-        j.put("d1ReferenceType", std::string(d1RefTypeName(v.d1ReferenceType)));
-        snprintf(buf, sizeof(buf), "%.3f", v.d1RefX);
-        j.put("d1RefX", std::string(buf));
-        snprintf(buf, sizeof(buf), "%.3f", v.d1RefY);
-        j.put("d1RefY", std::string(buf));
-        snprintf(buf, sizeof(buf), "%.3f", v.d1RefZ);
-        j.put("d1RefZ", std::string(buf));
-        snprintf(buf, sizeof(buf), "%.3f", v.d1ThresholdM);
-        j.put("d1ThresholdM", std::string(buf));
-        snprintf(buf, sizeof(buf), "%.3f", v.d1ResolvedThreshM);
-        j.put("d1ResolvedThreshM", std::string(buf));
-        break;
-    }
-    }
-    return j;
-}
 
 Json ToJson(const ChoCandidate &v)
 {
-    // Serialize condition list
-    auto condArr = Json::Arr({});
-    for (auto &c : v.conditions)
-        condArr.push(ToJson(c));
-
-    // Build a summary string for the condition group
-    std::string condSummary;
-    for (size_t i = 0; i < v.conditions.size(); i++)
-    {
-        if (i > 0) condSummary += " AND ";
-        condSummary += ToJson(v.conditions[i].eventType).str();
-    }
-
     return Json::Obj({
         {"candidateId", v.candidateId},
         {"targetPci", v.targetPci},
@@ -189,8 +63,6 @@ Json ToJson(const ChoCandidate &v)
         {"t304Ms", v.t304Ms},
         {"txId", v.txId},
         {"executionPriority", v.executionPriority},
-        {"conditionGroup", condSummary},
-        {"conditions", std::move(condArr)},
         {"executed", v.executed},
     });
 }
@@ -205,7 +77,8 @@ Json ToJson(const ChoCandidate &v)
  */
 int UeRrcTask::getServingCellRsrp(int servingCellId, const std::map<int, int> &allMeas) const
 {
-    if (servingCellId != 0) {
+    if (servingCellId != 0) 
+    {
         // find serving cell ID in the set
         auto it = std::find_if(allMeas.begin(), allMeas.end(), [servingCellId](const std::pair<int, int>& p) {
             return p.first == servingCellId;
@@ -221,39 +94,6 @@ int UeRrcTask::getServingCellRsrp(int servingCellId, const std::map<int, int> &a
     return MIN_RSRP; // no serving cell
 }
 
-/**
- * @brief Struct to store measurement events for a cellId.
- */
-struct TriggeredNeighbor
-{
-    int cellId;
-    int rsrp;
-};
-
-static bool evaluateA2(int servingRsrp, int threshold, int hyst)
-{
-    // A2 entering: serving RSRP < threshold - hyst
-    return servingRsrp < (threshold - hyst);
-}
-
-static bool evaluateA3_cell(int servingRsrp, int neighborRsrp, int offset, int hyst)
-{
-    // A3 entering: neighbor RSRP > serving RSRP + offset + hyst
-    return neighborRsrp > (servingRsrp + offset + hyst);
-}
-
-static bool evaluateA5_serving(int servingRsrp, int threshold1, int hyst)
-{
-    // A5 entering condition 1: serving < threshold1 - hyst
-    return servingRsrp < (threshold1 - hyst);
-}
-
-static bool evaluateA5_neighbor(int neighborRsrp, int threshold2, int hyst)
-{
-    // A5 entering condition 2: neighbor > threshold2 + hyst
-    return neighborRsrp > (threshold2 + hyst);
-}
-
 
 /**
  * @brief Evaluate measurement events (A2, A3, A5) based on the current measurements 
@@ -264,7 +104,7 @@ static bool evaluateA5_neighbor(int neighborRsrp, int threshold2, int hyst)
  *  is generated and sent to the gnb.
  * 
  */
-void UeRrcTask::evaluateMeasurements()
+void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int> &allMeas)
 {
     // only do measurement evaluation if we're in RRC_CONNECTED 
     //  and have some measIds configured 
@@ -279,22 +119,17 @@ void UeRrcTask::evaluateMeasurements()
     if (m_measConfig.measIds.empty())
         return;
 
-    std::map<int, int> allMeas;
-    // Get the current measurements to evaluate against
-    //   since this is actively updated by the RLS meas task and read here by RRC, 
-    //   we make a copy from the shared context which is protected by a mutex
-    {
-        std::shared_lock lock(m_base->cellDbMeasMutex);
-        allMeas = m_base->cellDbMeas;
-    }
-
     // get the serving cell id and RSRP for easier reference in loops below
-    int servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
     int servingRsrp = getServingCellRsrp(servingCellId, allMeas);
     m_logger->debug("evaluateMeasurements: servingCell=%d servingRsrp=%d dBm, allMeas.size=%zu", servingCellId, servingRsrp, allMeas.size());
 
     // current time for time-to-trigger evaluation
     int64_t now = utils::CurrentTimeMillis();
+
+    // satellite time for T1 events
+    int64_t now_sat = m_base->satTime != nullptr
+                      ? m_base->satTime->CurrentSatTimeMillis()
+                      : utils::CurrentTimeMillis();
 
     // loop through all configured measIds and evaluate their conditions against 
     //  the current measurements
@@ -307,22 +142,22 @@ void UeRrcTask::evaluateMeasurements()
         auto &rc = rcIt->second;
         auto &state = m_measConfig.measIdStates[measId];
 
-        if (state.reported)
+        if (state.isReported)
             continue; // already reported for this config (one-shot)
 
         bool eventSatisfied = false;
-        std::vector<TriggeredNeighbor> triggered;
+
 
         // check for each event type, and evaluate according to the relevant conditions
-        switch (rc.event)
+        switch (rc.eventKind)
         {
-        case EMeasEvent::A2:
+        case nr::rrc::common::HandoverEventType::A2:
         {
             // A2 - just compare serving cell rsrp to threshold
-            eventSatisfied = evaluateA2(servingRsrp, rc.a2Threshold, rc.hysteresis);
+            eventSatisfied = rc.evaluateA2(servingRsrp);
             break;
         }
-        case EMeasEvent::A3:
+        case nr::rrc::common::HandoverEventType::A3:
         {
             // A3 - compare each neighbor cell's RSRP to the serving cell RSRP + offset
             for (auto cm : allMeas)
@@ -331,37 +166,54 @@ void UeRrcTask::evaluateMeasurements()
                     continue;
                 // log each neighbor check
                 m_logger->debug("A3 check cid=%d rsrp=%d (serving=%d offset=%d hyst=%d)",
-                                cm.first, cm.second, servingRsrp, rc.a3Offset, rc.hysteresis);
-                if (evaluateA3_cell(servingRsrp, cm.second, rc.a3Offset, rc.hysteresis))
+                                cm.first, cm.second, servingRsrp, rc.a3_offsetDb, rc.a3_hysteresisDb);
+                if (rc.evaluateA3Cell(servingRsrp, cm.second))
                 {
                     m_logger->debug("A3 condition satisfied for cid=%d rsrp=%d", cm.first, cm.second);
-                    triggered.push_back({cm.first, cm.second});
+                    state.triggeredNeighbors.push_back({cm.first, cm.second});
                     eventSatisfied = true;
                 }
             }
             break;
         }
-        case EMeasEvent::A5:
+        case nr::rrc::common::HandoverEventType::A5:
         {
-            bool servCond = evaluateA5_serving(servingRsrp, rc.a5Threshold1, rc.hysteresis);
+            bool servCond = rc.evaluateA5Serving(servingRsrp);
             if (servCond)
             {
                 for (auto cm : allMeas)
                 {
                     if (cm.first == servingCellId)
                         continue;
-                    if (evaluateA5_neighbor(cm.second, rc.a5Threshold2, rc.hysteresis))
+                    if (rc.evaluateA5Neighbor(cm.second))
                     {
-                        triggered.push_back({cm.first, cm.second});
+                        state.triggeredNeighbors.push_back({cm.first, cm.second});
                         eventSatisfied = true;
                     }
                 }
             }
             break;
         }
-        case EMeasEvent::D1:
+        case nr::rrc::common::HandoverEventType::D1:
         {
-            // D1 is consumed by CHO condition-group evaluation, not MeasurementReport.
+            // TODO: not implemented
+            eventSatisfied = false;
+            break;
+        }
+        case nr::rrc::common::HandoverEventType::CondD1:
+        {
+            eventSatisfied = rc.evaluateCondD1(m_base->UeLocation); 
+            break;
+        }
+        case nr::rrc::common::HandoverEventType::CondT1:
+        {
+            eventSatisfied = rc.evaluateCondT1(now_sat / 1000); // convert ms to sec for this check
+            break;
+        }
+        case nr::rrc::common::HandoverEventType::CondA3:
+        case nr::rrc::common::HandoverEventType::UNKNOWN:
+        default:
+        {
             eventSatisfied = false;
             break;
         }
@@ -379,52 +231,76 @@ void UeRrcTask::evaluateMeasurements()
 
             // check that condition has been satisfied for at least timeToTrigger,
             //  and if so, send report
-            if (elapsed >= rc.timeToTriggerMs)
+            if (elapsed >= rc.timeToTriggerMs())
             {
                 m_logger->info("Measurement event %s triggered for measId %d (serving RSRP=%d dBm)",
-                               ToJson(rc.event).str().c_str(), measId, servingRsrp);
+                               rc.eventType.c_str(), measId, servingRsrp);
 
-                // Sort triggered neighbors by RSRP descending
-                std::sort(triggered.begin(), triggered.end(),
-                         [](const auto &a, const auto &b) { return a.rsrp > b.rsrp; });
+                state.isSatisfied = true;
+                
+                // // Sort triggered neighbors by RSRP descending
+                // std::sort(triggered.begin(), triggered.end(),
+                //          [](const auto &a, const auto &b) { return a.rsrp > b.rsrp; });
 
-                // Limit to maxReportCells
-                if (static_cast<int>(triggered.size()) > rc.maxReportCells)
-                    triggered.resize(rc.maxReportCells);
+                // // Limit to maxReportCells
+                // if (static_cast<int>(triggered.size()) > rc.maxReportCells)
+                //     triggered.resize(rc.maxReportCells);
 
-                sendMeasurementReport(measId, servingCellId, servingRsrp, triggered);
-                state.reported = true;
+                // sendMeasurementReport(measId, servingCellId, servingRsrp, triggered);
+                // state.isReported = true;
             }
             else
             {
                 m_logger->debug("Measurement event %s measId %d not triggered, awaiting TTT (elapsed=%d, TTT=%d)",
-                    ToJson(rc.event).str().c_str(), measId, elapsed, rc.timeToTriggerMs);
+                    rc.eventType.c_str(), measId, elapsed, rc.timeToTriggerMs());
 
             }            
         }
         else
-        // the condition is not satisfied, reset time-to-trigger tracking
+        // no condition is satisfied, reset time-to-trigger tracking
         {
             state.enteringTimestamp = 0;
+            state.isSatisfied = false;
+            state.isReported = false;
+        }
+         }
+     }
+
+void UeRrcTask::measurementReporting(int servingCellId, int servingRsrp)
+{
+
+    // loop through each MeasId and check if its conditions are satisfied, 
+    //and if so, generate and send a MeasurementReport message to the gNB
+
+    // int servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
+    // int servingRsrp = getServingCellRsrp(servingCellId, allMeas);
+
+    for (auto &[measId, mid] : m_measConfig.measIds)
+    {
+        // current state of this MeasId
+        auto &state = m_measConfig.measIdStates[measId];
+        // ptr to the report config for this MeasId
+        auto rc = m_measConfig.reportConfigs[mid.reportConfigId];
+
+        // if conditions are satisfied and not yet reported, send report
+        if (state.isSatisfied && !state.isReported) {
+
+            // Sort triggered neighbors by RSRP descending
+            std::sort(state.triggeredNeighbors.begin(), state.triggeredNeighbors.end(),
+                        [](const auto &a, const auto &b) { return a.rsrp > b.rsrp; });
+
+            // Limit to maxReportCells for this report config
+            if (static_cast<int>(state.triggeredNeighbors.size()) > rc.maxReportCells)
+                state.triggeredNeighbors.resize(rc.maxReportCells);
+
+            sendMeasurementReport(measId, servingCellId, servingRsrp, state.triggeredNeighbors);
+
+            // its now reported, set flag
+            state.isReported = true;
+
         }
     }
-}
 
-/**
- * @brief Converts an RSRP value in dBm to the ASN.1 encoded long value 
- *  expected by the MeasurementReport message.
- * Per TS 38.133 Table 10.1.6.1-1, the RSRP value in dBm is mapped to 
- *  an integer value from 0 to 127 by adding 156.
- * 
- * @param rsrpDbm 
- * @return (long) The ASN.1 encoded RSRP value, clipped to the range 0..127. 
- */
-static long rsrpToAsn(int rsrpDbm)
-{
-    int val = rsrpDbm + 156;
-    if (val < 0) val = 0;
-    if (val > 127) val = 127;
-    return static_cast<long>(val);
 }
 
 
@@ -467,7 +343,7 @@ void UeRrcTask::sendMeasurementReport(int measId, int servingCellId, int serving
         *servMo->measResultServingCell.physCellId = servingCellId;
 
         auto *servRsrp = asn::New<long>();
-        *servRsrp = rsrpToAsn(servingRsrp);
+        *servRsrp = nr::rrc::common::mtqToASNValue(servingRsrp);
         servMo->measResultServingCell.measResult.cellResults.resultsSSB_Cell =
             asn::New<ASN_RRC_MeasQuantityResults>();
         servMo->measResultServingCell.measResult.cellResults.resultsSSB_Cell->rsrp = servRsrp;
@@ -501,7 +377,7 @@ void UeRrcTask::sendMeasurementReport(int measId, int servingCellId, int serving
             }
 
             auto *nbRsrp = asn::New<long>();
-            *nbRsrp = rsrpToAsn(nb.rsrp);
+            *nbRsrp = nr::rrc::common::mtqToASNValue(nb.rsrp);
             measResultNR->measResult.cellResults.resultsSSB_Cell =
                 asn::New<ASN_RRC_MeasQuantityResults>();
             measResultNR->measResult.cellResults.resultsSSB_Cell->rsrp = nbRsrp;
@@ -622,7 +498,8 @@ void UeRrcTask::applyMeasConfig(const UeMeasConfig &cfg)
         else
             addedReportConfigs.push_back(id);
         m_measConfig.reportConfigs[id] = rc;
-        m_logger->info("Applied MeasConfig reportConfigId=%d event=%s", id, ToJson(rc.event).str().c_str());
+        m_logger->info("Applied MeasConfig reportConfigId=%d event=%s", id,
+                       nr::rrc::common::ToString(rc.eventKind).c_str());
     }
 
     for (auto &[id, mid] : cfg.measIds)

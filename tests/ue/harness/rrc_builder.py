@@ -531,6 +531,7 @@ class RrcCodec:
             "candidateId": int,
             "measIds": [int, ...],
             "condRrcReconfig": bytes,
+                        "executionPriority": int,   # Optional, mapped to condExecutionPriority-r17
           }
 
         candidate_ids_to_remove is a list of CondReconfigId values.
@@ -551,6 +552,10 @@ class RrcCodec:
                 cond_rrc = cand.get("condRrcReconfig")
                 if cond_rrc is not None:
                     item["condRRCReconfig"] = cond_rrc
+
+                execution_priority = cand.get("executionPriority")
+                if execution_priority is not None:
+                    item["condExecutionPriority-r17"] = int(execution_priority)
 
                 add_mod_list.append(item)
 
@@ -837,6 +842,40 @@ class RrcCodec:
             event_id = ("eventA2", {
                 "a2-Threshold": ("rsrp", rsrp_range),
                 "reportOnLeave": False,
+                "hysteresis": hyst_val,
+                "timeToTrigger": ttt_str,
+            })
+        elif event == "d1":
+            threshold_m = int(round(float(cfg.get("d1ThresholdM", 1000.0))))
+            threshold_m = max(0, min(20000, threshold_m))
+
+            ref_type = str(cfg.get("d1ReferenceType", "fixed")).lower()
+            if ref_type == "nadir":
+                ref_loc = ("nadirReferenceLocation-r17", None)
+            else:
+                lon_deg = float(cfg.get("d1LongitudeDeg", 0.0))
+                lat_deg = float(cfg.get("d1LatitudeDeg", 0.0))
+                h_m = int(round(float(cfg.get("d1HeightM", 0.0))))
+
+                lon_udeg = int(round(lon_deg * 1_000_000.0))
+                lat_udeg = int(round(lat_deg * 1_000_000.0))
+
+                lon_udeg = max(-180000000, min(180000000, lon_udeg))
+                lat_udeg = max(-90000000, min(90000000, lat_udeg))
+                h_m = max(-1000, min(10000, h_m))
+
+                ref_loc = (
+                    "fixedReferenceLocation-r17",
+                    {
+                        "longitude-r17": lon_udeg,
+                        "latitude-r17": lat_udeg,
+                        "height-r17": h_m,
+                    },
+                )
+
+            event_id = ("eventD1-r17", {
+                "distanceThresh-r17": threshold_m,
+                "referenceLocation-r17": ref_loc,
                 "hysteresis": hyst_val,
                 "timeToTrigger": ttt_str,
             })

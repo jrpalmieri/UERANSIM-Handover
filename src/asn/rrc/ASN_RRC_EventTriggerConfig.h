@@ -50,6 +50,10 @@ typedef enum ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation
 	/* Extensions may appear below */
 	
 } ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR;
+typedef enum ASN_RRC_EventTriggerConfig__latitudeSign {
+	ASN_RRC_EventTriggerConfig__latitudeSign_north	= 0,
+	ASN_RRC_EventTriggerConfig__latitudeSign_south	= 1
+} e_ASN_RRC_EventTriggerConfig__latitudeSign;
 typedef enum ASN_RRC_EventTriggerConfig__reportAmount {
 	ASN_RRC_EventTriggerConfig__reportAmount_r1	= 0,
 	ASN_RRC_EventTriggerConfig__reportAmount_r2	= 1,
@@ -95,8 +99,8 @@ typedef struct ASN_RRC_EventTriggerConfig {
 				BOOLEAN_t	 reportOnLeave;
 				ASN_RRC_Hysteresis_t	 hysteresis;
 				ASN_RRC_TimeToTrigger_t	 timeToTrigger;
-				BOOLEAN_t	 useWhiteCellList;
-				
+				BOOLEAN_t	 useAllowedCellList;
+
 				/* Context for parsing across buffer boundaries */
 				asn_struct_ctx_t _asn_ctx;
 			} *eventA3;
@@ -105,8 +109,8 @@ typedef struct ASN_RRC_EventTriggerConfig {
 				BOOLEAN_t	 reportOnLeave;
 				ASN_RRC_Hysteresis_t	 hysteresis;
 				ASN_RRC_TimeToTrigger_t	 timeToTrigger;
-				BOOLEAN_t	 useWhiteCellList;
-				
+				BOOLEAN_t	 useAllowedCellList;
+
 				/* Context for parsing across buffer boundaries */
 				asn_struct_ctx_t _asn_ctx;
 			} *eventA4;
@@ -116,8 +120,8 @@ typedef struct ASN_RRC_EventTriggerConfig {
 				BOOLEAN_t	 reportOnLeave;
 				ASN_RRC_Hysteresis_t	 hysteresis;
 				ASN_RRC_TimeToTrigger_t	 timeToTrigger;
-				BOOLEAN_t	 useWhiteCellList;
-				
+				BOOLEAN_t	 useAllowedCellList;
+
 				/* Context for parsing across buffer boundaries */
 				asn_struct_ctx_t _asn_ctx;
 			} *eventA5;
@@ -126,21 +130,22 @@ typedef struct ASN_RRC_EventTriggerConfig {
 				BOOLEAN_t	 reportOnLeave;
 				ASN_RRC_Hysteresis_t	 hysteresis;
 				ASN_RRC_TimeToTrigger_t	 timeToTrigger;
-				BOOLEAN_t	 useWhiteCellList;
+				BOOLEAN_t	 useAllowedCellList;
 				
 				/* Context for parsing across buffer boundaries */
 				asn_struct_ctx_t _asn_ctx;
 			} *eventA6;
 			struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17 {
-				long	 distanceThresh_r17;
+				long	 distanceThreshFromReference1_r17;   /* INTEGER (1..65525) */
+				long	 distanceThreshFromReference2_r17;   /* INTEGER (1..65525) */
 				struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17 {
 					ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR present;
 					union ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_u {
 						struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17__fixedReferenceLocation_r17 {
-							long	 longitude_r17;
-							long	 latitude_r17;
-							long	 height_r17;
-							
+							long	 latitudeSign;    /* e_ASN_RRC_EventTriggerConfig__latitudeSign */
+							long	 degreesLatitude;  /* INTEGER (0..8388607) */
+							long	 degreesLongitude; /* INTEGER (-8388608..8388607) */
+
 							/* Context for parsing across buffer boundaries */
 							asn_struct_ctx_t _asn_ctx;
 						} *fixedReferenceLocation_r17;
@@ -150,13 +155,16 @@ typedef struct ASN_RRC_EventTriggerConfig {
 						 * possible extensions are below.
 						 */
 					} choice;
-					
+
 					/* Context for parsing across buffer boundaries */
 					asn_struct_ctx_t _asn_ctx;
-				} referenceLocation_r17;
-				ASN_RRC_Hysteresis_t	 hysteresis;
+				} referenceLocation1_r17;
+				struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17
+					referenceLocation2_r17;
+				BOOLEAN_t	 reportOnLeave_r17;
+				long	 hysteresisLocation_r17;             /* INTEGER (0..32768) */
 				ASN_RRC_TimeToTrigger_t	 timeToTrigger;
-				
+
 				/* Context for parsing across buffer boundaries */
 				asn_struct_ctx_t _asn_ctx;
 			} *eventD1_r17;

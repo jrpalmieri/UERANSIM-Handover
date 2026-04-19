@@ -116,7 +116,7 @@ static nr::gnb::ESib19EphemerisMode ReadSib19EphemerisMode(const YAML::Node &nod
 
 static void ReadTargetCellSelector(
     const YAML::Node &entry,
-    nr::gnb::GnbHandoverConfig::GnbChoCandidateProfileConfig &item,
+    nr::gnb::GnbChoCandidateProfileConfig &item,
     const std::string &pathForErrors)
 {
     if (!yaml::HasField(entry, "targetCellId"))
@@ -145,16 +145,12 @@ static void ReadTargetCellSelector(
 
 static std::string ReadHandoverEventType(const YAML::Node &node)
 {
-    auto value = node.as<std::string>();
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::toupper(ch));
-    });
-
-    if (value == "A2" || value == "A3" || value == "A5" || value == "D1")
-        return value;
+    auto parsed = nr::rrc::common::ParseHandoverEventType(node.as<std::string>());
+    if (parsed.has_value())
+        return nr::rrc::common::ToString(*parsed);
 
     throw std::runtime_error(
-        "Field handover.events[].eventType has invalid value, expected A2, A3, A5 or D1");
+        "Field handover.events[].eventType has invalid value, expected A2, A3, A5, D1, condA3, condD1 or condT1");
 }
 
 static std::string ReadDistanceType(const YAML::Node &node)
@@ -171,109 +167,169 @@ static std::string ReadDistanceType(const YAML::Node &node)
         "Field handover.*.distanceType has invalid value, expected 'fixed' or 'nadir'");
 }
 
-static nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig ReadHandoverEvent(
+static nr::rrc::common::E_TTT_ms ReadTtt(const YAML::Node &node)
+{
+    auto value = node.as<std::string>();
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+
+    if (value == "ms0")
+        return nr::rrc::common::E_TTT_ms::ms0;
+    if (value == "ms40")
+        return nr::rrc::common::E_TTT_ms::ms40;
+    if (value == "ms64")
+        return nr::rrc::common::E_TTT_ms::ms64;
+    if (value == "ms80")
+        return nr::rrc::common::E_TTT_ms::ms80;
+    if (value == "ms100")
+        return nr::rrc::common::E_TTT_ms::ms100;
+    if (value == "ms128")
+        return nr::rrc::common::E_TTT_ms::ms128;
+    if (value == "ms160")
+        return nr::rrc::common::E_TTT_ms::ms160;
+    if (value == "ms256")
+        return nr::rrc::common::E_TTT_ms::ms256;
+    if (value == "ms320")
+        return nr::rrc::common::E_TTT_ms::ms320;
+    if (value == "ms480")
+        return nr::rrc::common::E_TTT_ms::ms480;
+    if (value == "ms512")
+        return nr::rrc::common::E_TTT_ms::ms512;
+    if (value == "ms640")
+        return nr::rrc::common::E_TTT_ms::ms640;
+    if (value == "ms1024")
+        return nr::rrc::common::E_TTT_ms::ms1024;
+    if (value == "ms1280")
+        return nr::rrc::common::E_TTT_ms::ms1280;
+    if (value == "ms2560")
+        return nr::rrc::common::E_TTT_ms::ms2560;
+    if (value == "ms5120")
+        return nr::rrc::common::E_TTT_ms::ms5120;
+
+    throw std::runtime_error(
+        "Field TTT has invalid value, expected one of: ms0, ms40, ms64, ms80, ms100, ms128, ms160, ms256, ms320, ms480, ms512, ms640, ms1024, ms1280, ms2560, ms5120");
+}
+
+static nr::rrc::common::EventReferenceLocation ReadReferencePosition(const YAML::Node &node, const std::string &pathForErrors)
+{
+    nr::rrc::common::EventReferenceLocation pos{};
+
+    if (yaml::HasField(node, "latitude"))
+        pos.latitudeDeg = yaml::GetDouble(node, "latitude", -90.0, 90.0);
+    else
+        throw std::runtime_error(pathForErrors + " must have latitude field");
+
+    if (yaml::HasField(node, "longitude"))
+        pos.longitudeDeg = yaml::GetDouble(node, "longitude", -180.0, 180.0);
+    else
+        throw std::runtime_error(pathForErrors + " must have longitude field");
+
+    return pos;
+}
+
+static nr::rrc::common::ReportConfigEvent ReadHandoverEvent(
     const YAML::Node &entry,
-    const nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig &defaults,
+    const nr::rrc::common::ReportConfigEvent &defaults,
     const std::string &pathForErrors)
 {
     if (!entry.IsMap())
         throw std::runtime_error("Each " + pathForErrors + " entry must be a map");
 
-    nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig item = defaults;
+    nr::rrc::common::ReportConfigEvent item = defaults;
     if (!yaml::HasField(entry, "eventType"))
         throw std::runtime_error("Each " + pathForErrors + " entry must define eventType");
     item.eventType = ReadHandoverEventType(entry["eventType"]);
+    auto parsedEvent = nr::rrc::common::ParseHandoverEventType(item.eventType);
+    if (!parsedEvent.has_value())
+        throw std::runtime_error(pathForErrors + ".eventType is invalid after normalization");
+    item.eventKind = *parsedEvent;
 
+    // A2
     if (yaml::HasField(entry, "a2ThresholdDbm"))
-        item.a2ThresholdDbm = yaml::GetInt32(entry, "a2ThresholdDbm", -156, -31);
+        item.a2_thresholdDbm = yaml::GetInt32(entry, "a2ThresholdDbm", -156, -31);
+    if (yaml::HasField(entry, "a2HysteresisDb"))
+        item.a2_hysteresisDb = yaml::GetInt32(entry, "a2HysteresisDb", 0, 30);
+    
+    // A3
     if (yaml::HasField(entry, "a3OffsetDb"))
-        item.a3OffsetDb = yaml::GetInt32(entry, "a3OffsetDb", std::nullopt, std::nullopt);
+        item.a3_offsetDb = yaml::GetInt32(entry, "a3OffsetDb", std::nullopt, std::nullopt);
+    if (yaml::HasField(entry, "a3HysteresisDb"))
+        item.a3_hysteresisDb = yaml::GetInt32(entry, "a3HysteresisDb", 0, 30);
+
+    // A5
     if (yaml::HasField(entry, "a5Threshold1Dbm"))
-        item.a5Threshold1Dbm = yaml::GetInt32(entry, "a5Threshold1Dbm", -156, -31);
+        item.a5_threshold1Dbm = yaml::GetInt32(entry, "a5Threshold1Dbm", -156, -31);
     if (yaml::HasField(entry, "a5Threshold2Dbm"))
-        item.a5Threshold2Dbm = yaml::GetInt32(entry, "a5Threshold2Dbm", -156, -31);
-    if (yaml::HasField(entry, "distanceThreshold"))
-        item.distanceThreshold = yaml::GetInt32(entry, "distanceThreshold", 0, 10000000);
-    if (yaml::HasField(entry, "hysteresisDb"))
-        item.hysteresisDb = yaml::GetInt32(entry, "hysteresisDb", 0, 30);
-    if (yaml::HasField(entry, "hysteresisM"))
-        item.hysteresisM = yaml::GetInt32(entry, "hysteresisM", 0, 10000000);
-    if (yaml::HasField(entry, "tttMs"))
-        item.tttMs = yaml::GetInt32(entry, "tttMs", 0, 60000);
-    if (yaml::HasField(entry, "ntnTriggerEnabled"))
-        item.ntnTriggerEnabled = yaml::GetBool(entry, "ntnTriggerEnabled");
-    if (yaml::HasField(entry, "useTimer"))
-        item.timerSec = yaml::GetBool(entry, "useTimer");
-    if (yaml::HasField(entry, "timerSec"))
-        item.timerSec = yaml::GetInt32(entry, "timerSec", 0, 5400);
-    if (yaml::HasField(entry, "distanceType"))
-        item.distanceType = ReadDistanceType(entry["distanceType"]);
+        item.a5_threshold2Dbm = yaml::GetInt32(entry, "a5Threshold2Dbm", -156, -31);
+    if (yaml::HasField(entry, "a5HysteresisDb"))
+        item.a5_hysteresisDb = yaml::GetInt32(entry, "a5HysteresisDb", 0, 30);
 
-    if (yaml::HasField(entry, "referencePosition"))
+        // D1
+    if (yaml::HasField(entry, "d1DistanceThreshold1"))
+        item.d1_distanceThreshFromReference1 = yaml::GetInt32(entry, "d1DistanceThreshold1", 0, 10000000);
+    if (yaml::HasField(entry, "d1DistanceThreshold2"))
+        item.d1_distanceThreshFromReference2 = yaml::GetInt32(entry, "d1DistanceThreshold2", 0, 10000000);
+    if (yaml::HasField(entry, "d1HysteresisLocation"))
+        item.d1_hysteresisLocation = yaml::GetInt32(entry, "d1HysteresisLocation", 0, 10000000);
+    if (yaml::HasField(entry, "d1ReferenceLocation1"))
     {
-        auto ref = entry["referencePosition"];
+        auto ref = entry["d1ReferenceLocation1"];
         if (!ref.IsMap())
-            throw std::runtime_error(pathForErrors + ".referencePosition must be a map");
+            throw std::runtime_error(pathForErrors + ".d1ReferenceLocation1 must be a map");
 
-        nr::gnb::GnbHandoverConfig::GnbHandoverReferencePosition pos{};
-        if (yaml::HasField(ref, "useCurrPosition"))
-            pos.useCurrPosition = yaml::GetBool(ref, "useCurrPosition");
-
-        if (yaml::HasField(ref, "latitude"))
-            pos.latitude = yaml::GetDouble(ref, "latitude", -90.0, 90.0);
-        if (yaml::HasField(ref, "longitude"))
-            pos.longitude = yaml::GetDouble(ref, "longitude", -180.0, 180.0);
-        if (yaml::HasField(ref, "altitude"))
-            pos.altitude = yaml::GetDouble(ref, "altitude", -10000.0, 10000000.0);
-
-        item.referencePosition = pos;
-        if (!pos.useCurrPosition)
-            item.referencePositionEcef = GeoToEcef(GeoPosition{pos.latitude, pos.longitude, pos.altitude});
+        item.d1_referenceLocation1 = ReadReferencePosition(ref, pathForErrors + ".d1ReferenceLocation1");
     }
-
-    if (item.referencePosition.has_value() && !item.referencePositionEcef.has_value())
+    if (yaml::HasField(entry, "d1ReferenceLocation2"))
     {
-        const auto &pos = *item.referencePosition;
-        item.referencePositionEcef = GeoToEcef(GeoPosition{pos.latitude, pos.longitude, pos.altitude});
-    }
+        auto ref = entry["d1ReferenceLocation2"];
+        if (!ref.IsMap())
+            throw std::runtime_error(pathForErrors + ".d1ReferenceLocation2 must be a map");
 
+        item.d1_referenceLocation2 = ReadReferencePosition(ref, pathForErrors + ".d1ReferenceLocation2");
+    }
+    
+    // condT1
+    if (yaml::HasField(entry, "thresholdSecTS"))
+        item.condT1_thresholdSecTS = yaml::GetInt32(entry, "thresholdSecTS", 0, 5400);
+    if (yaml::HasField(entry, "durationSec"))
+        item.condT1_durationSec = yaml::GetInt32(entry, "durationSec", 0, 6000);        
+
+
+    // condD1
+    if (yaml::HasField(entry, "condD1DistanceThreshold1"))
+        item.condD1_distanceThreshFromReference1 = yaml::GetInt32(entry, "condD1DistanceThreshold1", 0, 10000000);
+    if (yaml::HasField(entry, "condD1DistanceThreshold2"))
+        item.condD1_distanceThreshFromReference2 = yaml::GetInt32(entry, "condD1DistanceThreshold2", 0, 10000000);
+    if (yaml::HasField(entry, "condD1ReferenceLocation1"))
+    {
+        auto ref = entry["condD1ReferenceLocation1"];
+        if (!ref.IsMap())
+            throw std::runtime_error(pathForErrors + ".condD1ReferenceLocation1 must be a map");
+
+        item.condD1_referenceLocation1 = ReadReferencePosition(ref, pathForErrors + ".condD1ReferenceLocation1");
+    }
+    if (yaml::HasField(entry, "condD1ReferenceLocation2"))
+    {
+        auto ref = entry["condD1ReferenceLocation2"];
+        if (!ref.IsMap())
+            throw std::runtime_error(pathForErrors + ".condD1ReferenceLocation2 must be a map");
+
+        item.condD1_referenceLocation2 = ReadReferencePosition(ref, pathForErrors + ".condD1ReferenceLocation2");
+    }
+    if (yaml::HasField(entry, "ttt"))
+       item.ttt = ReadTtt(entry["ttt"]);
+    
     return item;
 }
 
-static std::vector<nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig>
-ReadLegacyHandoverEvents(const YAML::Node &handoverNode,
-    const nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig &defaults)
-{
-    std::vector<nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig> events{};
-    auto eventTypeNode = handoverNode["eventType"];
-    if (!eventTypeNode)
-        return events;
 
-    if (eventTypeNode.IsSequence())
-    {
-        for (const auto &entry : eventTypeNode)
-        {
-            auto item = defaults;
-            item.eventType = ReadHandoverEventType(entry);
-            events.push_back(item);
-        }
-    }
-    else
-    {
-        auto item = defaults;
-        item.eventType = ReadHandoverEventType(eventTypeNode);
-        events.push_back(item);
-    }
-
-    return events;
-}
-
-static std::vector<nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig>
+static std::vector<nr::rrc::common::ReportConfigEvent>
 ReadHandoverEvents(const YAML::Node &handoverNode,
-    const nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig &defaults,
+    const nr::rrc::common::ReportConfigEvent &defaults,
     const std::string &basePath)
 {
-    std::vector<nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig> events{};
+    std::vector<nr::rrc::common::ReportConfigEvent> events{};
     auto eventsNode = handoverNode["events"];
     if (!eventsNode)
         return events;
@@ -289,12 +345,12 @@ ReadHandoverEvents(const YAML::Node &handoverNode,
     return events;
 }
 
-static std::vector<nr::gnb::GnbHandoverConfig::GnbChoCandidateProfileConfig>
+static std::vector<nr::gnb::GnbChoCandidateProfileConfig>
 ReadChoCandidateProfiles(const YAML::Node &handoverNode,
-    const nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig &defaults,
+    const nr::rrc::common::ReportConfigEvent &defaults,
     const std::string &basePath)
 {
-    std::vector<nr::gnb::GnbHandoverConfig::GnbChoCandidateProfileConfig> out{};
+    std::vector<nr::gnb::GnbChoCandidateProfileConfig> out{};
 
     YAML::Node profilesNode{};
     std::string profilesPath{};
@@ -302,24 +358,6 @@ ReadChoCandidateProfiles(const YAML::Node &handoverNode,
     {
         profilesNode = handoverNode["choCandidateProfiles"];
         profilesPath = basePath + ".choCandidateProfiles";
-    }
-    else if (yaml::HasField(handoverNode, "ChoCandidateteProfiles"))
-    {
-        // Keep compatibility for transitional naming/typo variants.
-        profilesNode = handoverNode["ChoCandidateteProfiles"];
-        profilesPath = basePath + ".ChoCandidateteProfiles";
-    }
-    else if (yaml::HasField(handoverNode, "candidateProfiles"))
-    {
-        // Backward-compatible alias for prior schema.
-        profilesNode = handoverNode["candidateProfiles"];
-        profilesPath = basePath + ".candidateProfiles";
-    }
-    else if (yaml::HasField(handoverNode, "choEvents"))
-    {
-        // Backward-compatible alias for older configs.
-        profilesNode = handoverNode["choEvents"];
-        profilesPath = basePath + ".choEvents";
     }
 
     if (!profilesNode)
@@ -333,7 +371,7 @@ ReadChoCandidateProfiles(const YAML::Node &handoverNode,
         if (!entry.IsMap())
             throw std::runtime_error("Each " + profilesPath + "[] entry must be a map");
 
-        nr::gnb::GnbHandoverConfig::GnbChoCandidateProfileConfig profile{};
+        nr::gnb::GnbChoCandidateProfileConfig profile{};
 
         if (yaml::HasField(entry, "candidateProfileId"))
             profile.candidateProfileId = yaml::GetInt32(entry, "candidateProfileId", 0, std::nullopt);
@@ -400,31 +438,7 @@ static void ReadHandoverConfigSection(
     const std::string &basePath,
     nr::gnb::GnbHandoverConfig &out)
 {
-    nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig defaults{};
-    if (yaml::HasField(handover, "a2ThresholdDbm"))
-        defaults.a2ThresholdDbm = yaml::GetInt32(handover, "a2ThresholdDbm", -156, -31);
-    if (yaml::HasField(handover, "a3OffsetDb"))
-        defaults.a3OffsetDb = yaml::GetInt32(handover, "a3OffsetDb", std::nullopt, std::nullopt);
-    if (yaml::HasField(handover, "a5Threshold1Dbm"))
-        defaults.a5Threshold1Dbm = yaml::GetInt32(handover, "a5Threshold1Dbm", -156, -31);
-    if (yaml::HasField(handover, "a5Threshold2Dbm"))
-        defaults.a5Threshold2Dbm = yaml::GetInt32(handover, "a5Threshold2Dbm", -156, -31);
-    if (yaml::HasField(handover, "hysteresisDb"))
-        defaults.hysteresisDb = yaml::GetInt32(handover, "hysteresisDb", 0, 30);
-    if (yaml::HasField(handover, "distanceThreshold"))
-        defaults.distanceThreshold = yaml::GetInt32(handover, "distanceThreshold", 0, 10000000);
-    if (yaml::HasField(handover, "hysteresisM"))
-        defaults.hysteresisM = yaml::GetInt32(handover, "hysteresisM", 0, 10000000);
-    if (yaml::HasField(handover, "tttMs"))
-        defaults.tttMs = yaml::GetInt32(handover, "tttMs", 0, 60000);
-    if (yaml::HasField(handover, "ntnTriggerEnabled"))
-        defaults.ntnTriggerEnabled = yaml::GetBool(handover, "ntnTriggerEnabled");
-    if (yaml::HasField(handover, "timerSec"))
-        defaults.timerSec = yaml::GetInt32(handover, "timerSec", 0, 5400);
-    if (yaml::HasField(handover, "useTimer"))
-        defaults.useTimer = yaml::GetBool(handover, "useTimer");
-    if (yaml::HasField(handover, "distanceType"))
-        defaults.distanceType = ReadDistanceType(handover["distanceType"]);
+    nr::rrc::common::ReportConfigEvent defaults{};
 
     if (yaml::HasField(handover, "choEnabled"))
         out.choEnabled = yaml::GetBool(handover, "choEnabled");
@@ -433,8 +447,6 @@ static void ReadHandoverConfigSection(
         out.choDefaultProfileId = yaml::GetInt32(handover, "choDefaultProfileId", 0, std::nullopt);
 
     auto events = ReadHandoverEvents(handover, defaults, basePath);
-    if (events.empty() && basePath == "handover")
-        events = ReadLegacyHandoverEvents(handover, defaults);
     if (!events.empty())
         out.events = std::move(events);
 
@@ -443,29 +455,6 @@ static void ReadHandoverConfigSection(
         out.candidateProfiles = std::move(candidateProfiles);
 }
 
-static void ResolveEventReferencePosition(
-    nr::gnb::GnbHandoverConfig::GnbHandoverEventConfig &event,
-    const GeoPosition &geoLocation,
-    const std::string &pathForErrors)
-{
-    if (!event.referencePosition.has_value())
-        return;
-
-    auto &ref = *event.referencePosition;
-    if (ref.useCurrPosition)
-    {
-        ref.latitude = geoLocation.latitude;
-        ref.longitude = geoLocation.longitude;
-        ref.altitude = geoLocation.altitude;
-    }
-
-    event.referencePositionEcef = GeoToEcef(GeoPosition{ref.latitude, ref.longitude, ref.altitude});
-
-    if (event.distanceType == "fixed" && !event.referencePositionEcef.has_value())
-    {
-        throw std::runtime_error(pathForErrors + " requires referencePosition for distanceType=fixed");
-    }
-}
 
 static void ValidateHandoverTargetCellId(
     bool targetCellCalculated,
@@ -475,42 +464,6 @@ static void ValidateHandoverTargetCellId(
 {
     if (targetCellCalculated || !targetCellId.has_value())
         return;
-
-    for (const auto &neighbor : neighbors)
-    {
-        if (neighbor.nci == *targetCellId)
-            return;
-    }
-
-    throw std::runtime_error(pathForErrors + ".targetCellId must exist in neighborList");
-}
-
-static void NormalizeHandoverConfig(
-    nr::gnb::GnbHandoverConfig &cfg,
-    const GeoPosition &geoLocation,
-    const std::vector<nr::gnb::GnbNeighborConfig> &neighbors,
-    const std::string &basePath)
-{
-    for (size_t i = 0; i < cfg.events.size(); i++)
-    {
-        auto eventPath = basePath + ".events[" + std::to_string(i) + "]";
-        ResolveEventReferencePosition(cfg.events[i], geoLocation, eventPath);
-        ValidateHandoverTargetCellId(cfg.events[i].targetCellCalculated, cfg.events[i].targetCellId,
-                                     neighbors, eventPath);
-    }
-
-    for (size_t i = 0; i < cfg.candidateProfiles.size(); i++)
-    {
-        auto profilePath = basePath + ".choCandidateProfiles[" + std::to_string(i) + "]";
-        ValidateHandoverTargetCellId(cfg.candidateProfiles[i].targetCellCalculated,
-                                     cfg.candidateProfiles[i].targetCellId, neighbors, profilePath);
-
-        for (size_t j = 0; j < cfg.candidateProfiles[i].conditions.size(); j++)
-        {
-            auto eventPath = profilePath + ".conditions[" + std::to_string(j) + "]";
-            ResolveEventReferencePosition(cfg.candidateProfiles[i].conditions[j], geoLocation, eventPath);
-        }
-    }
 }
 
 static nr::gnb::GnbConfig *ReadConfigYaml()
@@ -573,6 +526,7 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
     if (yaml::HasField(config, "position"))
     {
         auto pos = config["position"];
+        result->geoLocation.isValid = true;
         result->geoLocation.latitude = yaml::GetDouble(pos, "latitude", -90.0, 90.0);
         result->geoLocation.longitude = yaml::GetDouble(pos, "longitude", -180.0, 180.0);
         result->geoLocation.altitude = yaml::GetDouble(pos, "altitude", std::nullopt, std::nullopt);
@@ -750,8 +704,6 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
             }
         }
     }
-
-    NormalizeHandoverConfig(result->handover, result->geoLocation, result->neighborList, "handover");
 
     // Consolidated hierarchy: NTN uses the same handover parameter set.
     result->ntn.ntnHandover = result->handover;

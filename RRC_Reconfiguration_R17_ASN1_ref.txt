@@ -1,4 +1,3 @@
---ASN.1 snippets of relevant IEs for handover in RRCReconfiguration
 RRCReconfiguration ::=                  SEQUENCE { 
     rrc-TransactionIdentifier               RRC-TransactionIdentifier, 
     criticalExtensions                      CHOICE { 
@@ -7,14 +6,13 @@ RRCReconfiguration ::=                  SEQUENCE {
     } 
 } 
 
-RRCReconfiguration-IEs ::= SEQUENCE {
-    radioBearerConfig                   RadioBearerConfig                                   OPTIONAL,
-    secondaryCellGroup                  OCTET STRING (CONTAINING CellGroupConfig)           OPTIONAL,
-    measConfig                          MeasConfig                                          OPTIONAL,
-    lateNonCriticalExtension            OCTET STRING                                        OPTIONAL,
-    nonCriticalExtension                RRCReconfiguration-v1530-IEs                        OPTIONAL
-}
-
+RRCReconfiguration-IEs ::=              SEQUENCE { 
+    radioBearerConfig                       RadioBearerConfig                                                      OPTIONAL, -- Need M
+    secondaryCellGroup                      OCTET STRING (CONTAINING CellGroupConfig)                              OPTIONAL, -- Cond SCG
+    measConfig                              MeasConfig                                                             OPTIONAL, -- Need M
+    lateNonCriticalExtension                OCTET STRING OPTIONAL,
+    nonCriticalExtension                    RRCReconfiguration-v1530-IEs                                           OPTIONAL 
+} 
 RRCReconfiguration-v1530-IEs ::=            SEQUENCE { 
     masterCellGroup                         OCTET STRING (CONTAINING CellGroupConfig)                              OPTIONAL, -- Need M
     fullConfig                              ENUMERATED {true}                                                      OPTIONAL, -- Cond FullConfig
@@ -33,10 +31,8 @@ RRCReconfiguration-v1560-IEs ::=         SEQUENCE {
     mrdc-SecondaryCellGroupConfig            SetupRelease { MRDC-SecondaryCellGroupConfig }                        OPTIONAL,   -- Need M
     radioBearerConfig2                       OCTET STRING (CONTAINING RadioBearerConfig)                           OPTIONAL,   -- Need M
     sk-Counter                               SK-Counter                                                            OPTIONAL,   -- Need N
-    nonCriticalExtension                     RRCReconfiguration-v1610-IEs    
-}
-
--- Release 16: Introduction of Conditional Reconfiguration (CHO)
+    nonCriticalExtension                     RRCReconfiguration-v1610-IEs                                          OPTIONAL 
+} 
 RRCReconfiguration-v1610-IEs ::=        SEQUENCE { 
     otherConfig-v1610                       OtherConfig-v1610                                                    OPTIONAL, -- Need M
     bap-Config-r16                          SetupRelease { BAP-Config-r16 }                                      OPTIONAL, -- Need M
@@ -52,8 +48,6 @@ RRCReconfiguration-v1610-IEs ::=        SEQUENCE {
  targetCellSMTC-SCG-r16                  SSB-MTC                                                              OPTIONAL, -- Need S
     nonCriticalExtension                    RRCReconfiguration-v1700-IEs OPTIONAL 
 } 
-
--- not used
 RRCReconfiguration-v1700-IEs ::=        SEQUENCE { 
     otherConfig-v1700                       OtherConfig-v1700                                              OPTIONAL, -- Need M
     sl-L2RelayUE-Config-r17                 SetupRelease { SL-L2RelayUE-Config-r17 }                       OPTIONAL, -- Need M
@@ -68,7 +62,6 @@ RRCReconfiguration-v1700-IEs ::=        SEQUENCE {
     ue-TxTEG-RequestUL-TDOA-Config-r17      SetupRelease {UE-TxTEG-RequestUL-TDOA-Config-r17}              OPTIONAL,  -- Need M
     nonCriticalExtension                    SEQUENCE {} OPTIONAL 
 } 
-
 
 MeasConfig ::=                      SEQUENCE { 
     measObjectToRemoveList              MeasObjectToRemoveList                                              OPTIONAL,   -- Need N
@@ -89,22 +82,9 @@ MeasConfig ::=                      SEQUENCE {
     interFrequencyConfig-NoGap-r16      ENUMERATED {true}                                                   OPTIONAL  -- Need R
     ]] 
 } 
-
 MeasObjectToRemoveList ::=              SEQUENCE (SIZE (1..maxNrofObjectId)) OF MeasObjectId 
 MeasIdToRemoveList ::=                  SEQUENCE (SIZE (1..maxNrofMeasId)) OF MeasId 
 ReportConfigToRemoveList ::=            SEQUENCE (SIZE (1..maxReportConfigId)) OF ReportConfigId 
-
-MeasObjectId ::=                    INTEGER (1..maxNrofObjectId) 
-MeasId ::=                          INTEGER (1..maxNrofMeasId) 
-ReportConfigId ::=                          INTEGER (1..maxReportConfigId) 
-
-MeasIdToAddModList ::=              SEQUENCE (SIZE (1..maxNrofMeasId)) OF MeasIdToAddMod 
-MeasIdToAddMod ::=                  SEQUENCE { 
-    measId                              MeasId, 
-    measObjectId                        MeasObjectId, 
-    reportConfigId                      ReportConfigId 
-} 
-
 
 MeasObjectToAddModList ::=                  SEQUENCE (SIZE (1..maxNrofObjectId)) OF MeasObjectToAddMod 
 MeasObjectToAddMod ::=                      SEQUENCE { 
@@ -121,7 +101,8 @@ MeasObjectToAddMod ::=                      SEQUENCE {
     } 
 } 
 
--- RF specific IEs, not needed in simulator
+MeasObjectId ::=                    INTEGER (1..maxNrofObjectId) 
+
 MeasObjectNR ::=                    SEQUENCE { 
     ssbFrequency                        ARFCN-ValueNR                                                   OPTIONAL,   -- Cond SSBorAssociatedSSB
     ssbSubcarrierSpacing                SubcarrierSpacing                                               OPTIONAL,   -- Cond SSBorAssociatedSSB
@@ -164,6 +145,15 @@ MeasObjectNR ::=                    SEQUENCE {
     ]] 
 } 
 
+MeasIdToAddModList ::=              SEQUENCE (SIZE (1..maxNrofMeasId)) OF MeasIdToAddMod 
+MeasIdToAddMod ::=                  SEQUENCE { 
+    measId                              MeasId, 
+    measObjectId                        MeasObjectId, 
+    reportConfigId                      ReportConfigId 
+} 
+
+MeasId ::=                          INTEGER (1..maxNrofMeasId) 
+
 ReportConfigToAddModList ::=        SEQUENCE (SIZE (1..maxReportConfigId)) OF ReportConfigToAddMod 
 ReportConfigToAddMod ::=            SEQUENCE { 
     reportConfigId                      ReportConfigId, 
@@ -174,6 +164,8 @@ ReportConfigToAddMod ::=            SEQUENCE {
         reportConfigNR-SL-r16               ReportConfigNR-SL-r16 
     } 
 } 
+
+ReportConfigId ::=                          INTEGER (1..maxReportConfigId) 
 
 ReportConfigNR ::=                          SEQUENCE { 
     reportType                                  CHOICE { 
@@ -283,16 +275,8 @@ EventTriggerConfig::=                       SEQUENCE {
     ]] 
 } 
 
-ReferenceLocation-r17 ::= OCTET STRING (Containing Ellipsoid-Point)
-
-Ellipsoid-Point ::= SEQUENCE {
-    latitudeSign        ENUMERATED {north, south}, -- 1 bit
-    degreesLatitude     INTEGER (0..8388607),-- 23 bit field
-    degreesLongitude    INTEGER (-8388608..8388607)-- 24 bit field
-}
-
+ReferenceLocation-r17 ::= OCTET STRING 
 HysteresisLocation-r17 ::=          INTEGER (0..32768) 
-
 ReportInterval ::=                  ENUMERATED {ms120, ms240, ms480, ms640, ms1024, ms2048, ms5120, ms10240, ms20480, ms40960, 
                                                     min1,min6, min12, min30 } 
 
@@ -361,20 +345,12 @@ CondTriggerConfig-r16 ::=        SEQUENCE {
 
 NR-RS-Type ::=                              ENUMERATED {ssb, csi-rs} 
 
--- The CHO Container
-
 ConditionalReconfiguration-r16 ::=   SEQUENCE { 
     attemptCondReconfig-r16              ENUMERATED {true}              OPTIONAL,   -- Cond CHO
     condReconfigToRemoveList-r16         CondReconfigToRemoveList-r16   OPTIONAL,   -- Need N
     condReconfigToAddModList-r16         CondReconfigToAddModList-r16   OPTIONAL,   -- Need N
     ... 
 } 
-
-CondReconfigId-r16 ::=                    INTEGER (1.. maxNrofCondCells-r16) 
-
-CondReconfigToRemoveList-r16 ::=     SEQUENCE (SIZE (1.. maxNrofCondCells-r16)) OF CondReconfigId-r16 
-
--- The Individual Candidate Satellite Entry
 
 CondReconfigToAddModList-r16 ::= SEQUENCE (SIZE (1.. maxNrofCondCells-r16)) OF CondReconfigToAddMod-r16 
 CondReconfigToAddMod-r16 ::=     SEQUENCE { 
@@ -387,7 +363,11 @@ CondReconfigToAddMod-r16 ::=     SEQUENCE {
     ]] 
 } 
 
+CondReconfigToRemoveList-r16 ::=     SEQUENCE (SIZE (1.. maxNrofCondCells-r16)) OF CondReconfigId-r16 
+
 CondReconfigExecCondSCG-r17 ::=  SEQUENCE (SIZE (1..2)) OF MeasId 
+
+CondReconfigId-r16 ::=                    INTEGER (1.. maxNrofCondCells-r16) 
 
 TimeToTrigger ::=                   ENUMERATED { 
                                         ms0, ms40, ms64, ms80, ms100, ms128, ms160, ms256, 
@@ -416,241 +396,3 @@ MeasReportQuantity ::=                      SEQUENCE {
     rsrq                                        BOOLEAN,
     sinr                                        BOOLEAN 
 } 
-
--- Useful message hierarchies
-
--- EventA3 Definition (eventTriggered)
-ReportConfigToAddMod {
-    reportConfigId    ReportConfigId,
-    reportConfig {
-        ReportConfigNR {
-            reportType {
-                eventTriggered  {
-                    eventId {
-                        eventA3 {
-                            a3-Offset              INT(-30..30),   -- 1 unit = 0.5db
-                            reportOnLeave          BOOLEAN,        -- true = trigger when leaving curr cell
-                            hysteresis             INT(0..30),    -- 1 unit = 0.5db
-                            timeToTrigger          TimeToTrigger,  -- ms 
-                            useAllowedCellList     BOOLEAN              
-                        },
-                        ...
-                    },
-                    ...
-                },
-                ...
-            }
-        }
-    }
-}
-
--- Event D1 Definition (eventTriggered)
-
-ReportConfigToAddMod {
-    reportConfigId    ReportConfigId,
-    reportConfig {
-        ReportConfigNR {
-            reportType {
-                eventTriggered  {
-                    eventId {
-                        eventD1-r17 {
-                            distanceThreshFromReference1-r17            INTEGER(1..65525), 
-                            distanceThreshFromReference2-r17            INTEGER(1..65525), 
-                            referenceLocation1-r17                      ReferenceLocation-r17, 
-                            referenceLocation2-r17                      ReferenceLocation-r17, 
-                            reportOnLeave-r17                           BOOLEAN,
-                            hysteresisLocation-r17                      HysteresisLocation-r17, 
-                            timeToTrigger-r17                           TimeToTrigger 
-                        },
-                                ...
-                    },
-                    ...
-                },
-                ...
-            }
-        }
-    }
-}
-
-
--- Conditional EventD1 (condTriggerConfig-r16)
---   Definition: Distance between UE and a reference location referenceLocation1 becomes larger than configured 
---     threshold distanceThreshFromReference1 and distance between UE and a reference location referenceLocation2 
---     of conditional reconfiguration candidate becomes shorter than configured threshold distanceThreshFromReference2;
---  distanceThreshFromReference1, distanceThreshFromReference2 = distance from a reference location configured 
---     with referenceLocation1 or referenceLocation2. Each step represents 50m.
---  referenceLocation1, referenceLocation2 = reference locations used for condEventD1. The referenceLocation1 
---     is associated to serving cell and referenceLocation2 is associated to candidate target cell.
-
-ReportConfigToAddMod {
-    reportConfigId    ReportConfigId,
-    reportConfig {
-        ReportConfigNR {
-            reportType {
-                condTriggerConfig-r16  {
-                    condEventId {
-                        condEventD1-r17  { 
-                            distanceThreshFromReference1-r17 INTEGER(0..65525), 
-                            distanceThreshFromReference2-r17 INTEGER(0..65525), 
-                            referenceLocation1-r17           ReferenceLocation-r17, 
-                            referenceLocation2-r17           ReferenceLocation-r17, 
-                            hysteresisLocation-r17           HysteresisLocation-r17, 
-                            timeToTrigger-r17                TimeToTrigger 
-                        }, 
-                    }
-                }
-            }
-        }
-    }
-}
-
-
--- Conditional EventT1 (condTriggerConfig-r16)
---   Definition: Time measured at UE becomes more than configured threshold t1-Threshold but is less than 
---    t1-Threshold + duration;
---   t1-Threshold = number of UTC seconds in 10 ms units since 00:00:00 on Gregorian calendar date 1 January, 1900 
---     (midnight between Sunday, December 31, 1899 and Monday, January 1, 1900).
---   duration = This field is used for defining the leaving condition T1-2 for conditional HO event condEventT1. 
---      Each step represents 100ms.
-
-ReportConfigToAddMod {
-    reportConfigId    ReportConfigId,
-    reportConfig {
-        ReportConfigNR {
-            reportType {
-                condTriggerConfig-r16  {
-                    condEventT1-r17  { 
-                        t1-Threshold-r17                 INTEGER (0..549755813887), 
-                        duration-r17                     INTEGER (1..6000) 
-                    }, 
-                    ...
-                },
-                ...
-            }
-        }
-    }
-}
-
-
--- Full Message Structure (for IEs used in this simulator), with sub-definitions inserted:
-RRCReconfiguration { 
-    rrc-TransactionIdentifier               RRC-TransactionIdentifier, 
-    RRCReconfiguration-IEs {
-        radioBearerConfig                   RadioBearerConfig,
-        secondaryCellGroup                  OCTET STRING (CONTAINING CellGroupConfig),
-
-        measConfig {
-            measObjectToRemoveList              MeasObjectToRemoveList,
-            measObjectToAddModList {
-        
-                { 
-                    measObjectId                                MeasObjectId, 
-                    measObject { 
-                        measObjectNR {
-                        } 
-                    } 
-                },
-                ... 
-            },
-
-            reportConfigToRemoveList            ReportConfigToRemoveList,
-            ReportConfigToAddModList {
-                {
-                    reportConfigId    ReportConfigId,
-                    reportConfig {
-                        ReportConfigNR {
-                            reportType CHOICE {
-                                eventTriggered  {
-                                    eventId {
-                                        eventA3 {
-                                            a3-Offset              INT(-30..30),   -- 1 unit = 0.5db
-                                            reportOnLeave          BOOLEAN,        -- true = trigger when leaving curr cell
-                                            hysteresis             INT(0..30),    -- 1 unit = 0.5db
-                                            timeToTrigger          TimeToTrigger,  -- ms 
-                                            useAllowedCellList     BOOLEAN              
-                                        },
-                                        ...
-                                    }
-                                }
-                                
-                                condTriggerConfig-r16  {
-                                    condEventId {
-                                        condEventD1-r17  { 
-                                            distanceThreshFromReference1-r17 INTEGER(0..65525), 
-                                            distanceThreshFromReference2-r17 INTEGER(0..65525), 
-                                            referenceLocation1-r17           ReferenceLocation-r17, 
-                                            referenceLocation2-r17           ReferenceLocation-r17, 
-                                            hysteresisLocation-r17           HysteresisLocation-r17, 
-                                            timeToTrigger-r17                TimeToTrigger 
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                ...
-            }
-            measIdToRemoveList                  MeasIdToRemoveList,
-            measIdToAddModList {
-                {
-                    measId              INT (1..64),
-                    measObjectId        INT (1..64),
-                    reportConfigId      INT (1..64)
-                },
-                ...
-            }
-        },
-
-        lateNonCriticalExtension            OCTET STRING,
-        nonCriticalExtension {
-
-            RRCReconfiguration-v1530-IEs {
-                masterCellGroup                     OCTET STRING (CONTAINING CellGroupConfig),
-                fullConfig                          ENUMERATED {true}, -- true = replace current configs with configs in this message
-                dedicatedNAS-MessageList            SEQUENCE (SIZE(1..maxDRB)) OF DedicatedNAS-Message,
-                masterKeyUpdate                     MasterKeyUpdate,
-                sk-Counter                          SK-Counter,
-                nonCriticalExtension {
-
-                    RRCReconfiguration-v1540-IEs { 
-                        otherConfig-v1540                       OtherConfig-v1540                                                      OPTIONAL, -- Need M
-                        nonCriticalExtension {
-
-                            RRCReconfiguration-v1560-IEs { 
-                                mrdc-SecondaryCellGroupConfig            SetupRelease { MRDC-SecondaryCellGroupConfig }                        OPTIONAL,   -- Need M
-                                radioBearerConfig2                       OCTET STRING (CONTAINING RadioBearerConfig)                           OPTIONAL,   -- Need M
-                                sk-Counter                               SK-Counter                                                            OPTIONAL,   -- Need N
-                                nonCriticalExtension  {
-
-                                    RRCReconfiguration-v1610-IEs {
-
-                                        conditionalReconfiguration-r16 {
-
-                                            attemptCondReconfig-r16             ENUMERATED {true},
-                                            condReconfigToRemoveList-r16        CondReconfigToRemoveList-r16,
-                                            condReconfigToAddModList-r16 {
-                                                {
-                                                    condReconfigId-r16               CondReconfigId-r16, 
-                                                    condExecutionCond-r16            SEQUENCE (SIZE (1..2)) OF MeasId                      OPTIONAL,    -- Need M
-                                                    condRRCReconfig-r16              OCTET STRING (CONTAINING RRCReconfiguration)          OPTIONAL,    -- Cond condReconfigAdd
-                                                    ..., 
-                                                    [[ 
-                                                    condExecutionCondSCG-r17         OCTET STRING (CONTAINING CondReconfigExecCondSCG-r17) OPTIONAL  -- Need M
-                                                    ]] 
-
-                                                }
-
-                                            }
-                                        }
-
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}

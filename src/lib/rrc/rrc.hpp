@@ -8,21 +8,18 @@
 
 #pragma once
 
+#include <lib/rrc/common/channels.hpp>
+
+namespace nr::rrc
+{
+
+using RrcChannel = common::RrcChannel;
+
+} // namespace nr::rrc
+
 namespace rrc
 {
 
-enum class RrcChannel
-{
-    BCCH_BCH,
-    BCCH_DL_SCH,
-    DL_CCCH,
-    DL_DCCH,
-    PCCH,
-    UL_CCCH,
-    UL_CCCH1,
-    UL_DCCH,
-    DL_CHO,         // Custom channel for Conditional Handover configuration
-    DL_SIB19,       // Custom channel for SIB19 NTN configuration (Rel-17)
-};
+using RrcChannel = nr::rrc::RrcChannel;
 
-} // namespace nr::rrc
+} // namespace rrc

@@ -17,6 +17,7 @@
 #include <gnb/sat_time.hpp>
 #include <utils/common.hpp>
 #include <utils/common_types.hpp>
+#include <utils/position_calcs.hpp>
 
 namespace nr::gnb
 {
@@ -57,8 +58,8 @@ static bool PropagateFull(const SatTleEntry &entry,
         double lonDeg = geo.longitude * (180.0 / M_PI);
         double altM   = geo.altitude  * 1000.0;
 
-        out.pos   = GeoToEcef(GeoPosition{latDeg, lonDeg, altM});
-        out.nadir = GeoToEcef(GeoPosition{latDeg, lonDeg, 0.0});
+        out.pos = GeoToEcef(GeoPosition{latDeg, lonDeg, altM});
+        out.nadir = ComputeNadir(out.pos);
         return true;
     }
     catch (const std::exception &)

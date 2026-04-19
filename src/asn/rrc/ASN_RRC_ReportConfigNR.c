@@ -6,10 +6,12 @@
  */
 
 #include "ASN_RRC_ReportConfigNR.h"
+#include "ASN_RRC_CondTriggerConfig-r16.h"
 
 #include "ASN_RRC_PeriodicalReportConfig.h"
 #include "ASN_RRC_EventTriggerConfig.h"
 #include "ASN_RRC_ReportCGI.h"
+
 static asn_per_constraints_t asn_PER_type_ASN_RRC_reportType_constr_2 CC_NOTUSED = {
 	{ APC_CONSTRAINED | APC_EXTENSIBLE,  1,  1,  0,  1 }	/* (0..1,...) */,
 	{ APC_UNCONSTRAINED,	-1, -1,  0,  0 },
@@ -95,12 +97,24 @@ static asn_TYPE_member_t asn_MBR_ASN_RRC_reportType_2[] = {
 		0, 0, /* No default value */
 		"ext1"
 		},
+	{ ATF_POINTER, 1, offsetof(struct ASN_RRC_ReportConfigNR__reportType, choice.condTriggerConfig_r16),
+		(ASN_TAG_CLASS_CONTEXT | (4 << 2)),
+		-1,   /* IMPLICIT tag */
+		&asn_DEF_ASN_RRC_CondTriggerConfig_r16,
+		0,
+		{ 0, 0, 0 },
+		0, 0,
+		"condTriggerConfig-r16"
+	},
+
 };
 static const asn_TYPE_tag2member_t asn_MAP_ASN_RRC_reportType_tag2el_2[] = {
     { (ASN_TAG_CLASS_CONTEXT | (0 << 2)), 0, 0, 0 }, /* periodical */
     { (ASN_TAG_CLASS_CONTEXT | (1 << 2)), 1, 0, 0 }, /* eventTriggered */
     { (ASN_TAG_CLASS_CONTEXT | (2 << 2)), 2, 0, 0 }, /* reportCGI */
-    { (ASN_TAG_CLASS_CONTEXT | (3 << 2)), 3, 0, 0 } /* ext1 */
+    { (ASN_TAG_CLASS_CONTEXT | (3 << 2)), 3, 0, 0 }, /* ext1 */
+	{ (ASN_TAG_CLASS_CONTEXT | (4 << 2)), 4, 0, 0 }  /* condTriggerConfig-r16 */
+
 };
 static asn_CHOICE_specifics_t asn_SPC_ASN_RRC_reportType_specs_2 = {
 	sizeof(struct ASN_RRC_ReportConfigNR__reportType),
@@ -108,7 +122,7 @@ static asn_CHOICE_specifics_t asn_SPC_ASN_RRC_reportType_specs_2 = {
 	offsetof(struct ASN_RRC_ReportConfigNR__reportType, present),
 	sizeof(((struct ASN_RRC_ReportConfigNR__reportType *)0)->present),
 	asn_MAP_ASN_RRC_reportType_tag2el_2,
-	4,	/* Count of tags in the map */
+	5,	/* Count of tags in the map */
 	0, 0,
 	2	/* Extensions start */
 };
@@ -123,7 +137,7 @@ asn_TYPE_descriptor_t asn_DEF_ASN_RRC_reportType_2 = {
 	0,	/* No tags (count) */
 	{ 0, &asn_PER_type_ASN_RRC_reportType_constr_2, CHOICE_constraint },
 	asn_MBR_ASN_RRC_reportType_2,
-	4,	/* Elements count */
+	5,	/* Elements count */
 	&asn_SPC_ASN_RRC_reportType_specs_2	/* Additional specs */
 };
 

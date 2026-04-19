@@ -1,8 +1,8 @@
 # UE Operations Reference
 
-This document describes the operations that the UERANSIM **UE (User Equipment)** performs when communicating with a **gNB (gNodeB)**. For each operation it lists the **triggering event**, the **5G procedure context**, and the **functions** (with source file locations) that implement the behaviour.
+This document describes the operations that the UERANSIM **UE (User Equipment)** performs when communicating with a **gNB (gNodeB)**. For each operation it lists the **triggering event**, the **5G procedure context**, and the **functions** (with source file locations) that implement the behavior.
 
-> **Scope:** This covers the UERANSIM-Handover fork of UERANSIM, which extends the upstream project with measurement event evaluation (A2/A3/A5), MeasurementReport generation, intra-5G-SA handover execution, and Conditional Handover (CHO) support.
+> **Scope:** This covers the UERANSIM-Handover fork of UERANSIM, which extends the upstream project with measurement event evaluation (A2/A3/A5), MeasurementReport generation, intra-5G-SA handover execution, Conditional Handover (CHO) and Non-Terrestrial Network (NTN) support.
 
 > **Depth convention:** For each operation the *top-level handler* is shown, along with the key *sub-functions* it invokes (two levels). Lower-level utility calls (ASN.1 encode/decode wrappers, NTS push helpers) are described once in the Architecture section and not repeated.
 
@@ -51,21 +51,26 @@ The UE is built as a set of cooperating **NTS (Non-blocking Task Signaling) task
 │  └─ Usim     │  USIM credential store
 └──────┬───────┘
        │
-┌──────┴───────┐                       ┌──────────────┐
-│  UeRrcTask   │◄─────────────────────►│  UeRlsTask   │  (Radio Link Simulation)
+┌──────┴───────┐                       ┌──────────── ──┐
+│  UeRrcTask   │◄─────────────────────►│  UeRlsTask    │  (Radio Link Simulation)
 │  (RRC / Uu)  │                       │  ├─ RlsCtlTask│
-│  ├─ MeasProv │  OOB meas provider    │  └─ RlsUdpTask│
-└──────────────┘                       └──────┬───────┘
+│              │                       │  └─ RlsUdpTask│
+└──────────────┘                       └──────┬────── ─┘
                                               │
+                                              |
+                                              |      (RF simulated via UDP)
+                                              |
                                        ┌──────┴───────┐
-                                       │   gNB(s)     │  (via UDP)
+                                       │   gNB(s)     │
                                        └──────────────┘
 ```
 
+Examples of how these components interact are provided below.
+
 ### Key NTS Message Types
 
-| Message | Direction | Purpose |
-|---------|-----------|---------|
+| Message | Direction | Purposes |
+|---------|-----------|----------|
 | `NmUeRlsToRrc` | RLS → RRC | `SIGNAL_CHANGED`, `DOWNLINK_RRC_DELIVERY`, `RADIO_LINK_FAILURE` |
 | `NmUeRrcToRls` | RRC → RLS | `ASSIGN_CURRENT_CELL`, `RRC_PDU_DELIVERY`, `RESET_STI` |
 | `NmUeRrcToNas` | RRC → NAS | `RRC_CONNECTION_SETUP`, `RRC_CONNECTION_RELEASE`, `NAS_DELIVERY`, `ACTIVE_CELL_CHANGED`, `RRC_ESTABLISHMENT_FAILURE`, `RADIO_LINK_FAILURE`, `PAGING` |
@@ -111,19 +116,19 @@ The UE is built as a set of cooperating **NTS (Non-blocking Task Signaling) task
 ### Triggering Event
 **User launches the `nr-ue` binary** with a YAML configuration file (e.g. `./nr-ue -c config/free5gc-ue.yaml`).
 
-### 5G Context
-Before the UE can communicate with any gNB it must read its configuration, instantiate all internal NTS tasks, and begin idle-mode cell selection.
+### Initialization
+Before the UE can communicate with any gNB it must read its configuration, instantiate all internal NTS tasks, and start the simulated RF network connection to gNB(s).  If any gNBs are detected, it begins RRC_IDLE cell selection.
 
 ### Sequence of Operations
 
-| Step | Action | Function / File |
+| Step | Action | Key Function(s) / File(s) |
 |------|--------|-----------------|
 | 1 | Parse command-line options and read YAML config | `ReadOptions()`, `ReadConfigYaml()` in `src/ue.cpp` |
 | 2 | Create the `UeControllerTask` and start it | `main()` in `src/ue.cpp` |
 | 3 | Instantiate `UserEquipment` – creates the task base | `UserEquipment::UserEquipment()` in `src/ue/ue.cpp` |
-| 3a | — Create `NasTask` (housing `NasMm`, `NasSm`, `Usim`) | `NasTask::NasTask()` in `src/ue/nas/task.cpp` |
-| 3b | — Create `UeRrcTask` (RRC layer) | `UeRrcTask::UeRrcTask()` in `src/ue/rrc/task.cpp` |
-| 3c | — Create `UeAppTask` (application, CLI, TUN) | `UeAppTask()` in `src/ue/app/task.cpp` |
+| 3a | — Create `UeAppTask` (application, CLI, TUN) | `UeAppTask()` in `src/ue/app/task.cpp` |
+| 3b | — Create `NasTask` (housing `NasMm`, `NasSm`, `Usim`) | `NasTask::NasTask()` in `src/ue/nas/task.cpp` |
+| 3c | — Create `UeRrcTask` (RRC layer) | `UeRrcTask::UeRrcTask()` in `src/ue/rrc/task.cpp` |
 | 3d | — Create `UeRlsTask` (radio link simulation) | `UeRlsTask()` in `src/ue/rls/task.cpp` |
 | 4 | Start all tasks: `nasTask→start()`, `rrcTask→start()`, `rlsTask→start()`, `appTask→start()` | `UserEquipment::start()` in `src/ue/ue.cpp` |
 | 5 | **NasTask::onStart()**: initialize USIM, start SM and MM sub-layers, set periodic timers (`NAS_TIMER_CYCLE` at 1 s, `MM_CYCLE` at 1.1 s) | `NasTask::onStart()` in `src/ue/nas/task.cpp` |
@@ -131,13 +136,22 @@ Before the UE can communicate with any gNB it must read its configuration, insta
 | 7 | RRC initial state is `RRC_IDLE`; NAS initial state is `RM_DEREGISTERED` / `CM_IDLE` / `MM_DEREGISTERED` | Constructor defaults in `src/ue/rrc/task.cpp`, `src/ue/nas/mm/base.cpp` |
 | 8 | Enter the main event loop | `main()` → `Loop()` in `src/ue.cpp` |
 
-### Key Constants
+## 2. RF Layer Simulation (RLS)
+
+The UE communicates with GNBs over UDP connections.  This avoids having to simulate complex RF parameters.  The RLS layer operates as follows:
+
+1. The UE periodically sends "Heartbeat" messages to all gNBs it is aware of.  Awareness is by including the IP address of each gNB that the UE could communicate with in its config file. The Heartbeat message is a small packet that only contains some UE-unique IDs that are useful to identify it to the gNBs, and the UE's location.  Most importantly, the Heartbeat packet includes the source UDP port on which the gNB can reach the UE.
+
+2. The UE expects that gNBs will provide an acknowledgement to the heartbeat (Heartbeat-Ack) within a period of time of receiving the Heartbeat message.  Failure to receive the Heartbeat-Ack is interpreted as a radio link failure (which triggers a disconnection if teh UE was in RRC_CONNECTED mode and returns the UE to RRC_IDLE mode).  Teh Heartbeat-Ack is also a small packet with information that identifies the sending gNB and, most importantly, a simulated Reference Signal Received Power (RSRP) value that is intended to simulate the signal strength the UE would measure for RF carriers received from this gNB.
+
+3. Besides Heartbeat/Heartbeat-Ack messages, all other communications over the RLS layer are considered encapsulated packets destined for a higher layer endpoint on the UE or gNB. Messages received from the gNB are forwarded using the RlsToRrc message to the UE's RRC Task for processing.  Message received from the RRC Task are sent out over the RLS connection to the gNB to which the UE is connected (or attempting to connect to).
+
+
+### Key RLS Constants
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
 | `TIMER_PERIOD_MACHINE_CYCLE` | 2500 ms | RRC periodic cycle interval |
-| `NTS_TIMER_INTERVAL_NAS_TIMER_CYCLE` | 1000 ms | NAS timer tick interval |
-| `NTS_TIMER_INTERVAL_MM_CYCLE` | 1100 ms | MM state machine cycle interval |
 
 ---
 

@@ -39,6 +39,25 @@ class TestUeChoAsnBuilderHelpers:
         assert item["condExecutionCond"] == [21, 22]
         assert item["condRRCReconfig"] == b"\x01\x02"
 
+    def test_payload_add_mod_with_execution_priority(self):
+        codec = RrcCodec.__new__(RrcCodec)
+        codec._asn1 = None
+
+        payload = codec.build_conditional_reconfiguration_payload(
+            candidates_to_add_mod=[
+                {
+                    "candidateId": 4,
+                    "measIds": [11],
+                    "condRrcReconfig": b"\x03\x04",
+                    "executionPriority": 7,
+                }
+            ]
+        )
+
+        item = payload["condReconfigToAddModList"][0]
+        assert item["condReconfigId"] == 4
+        assert item["condExecutionPriority-r17"] == 7
+
     def test_payload_remove_only(self):
         codec = RrcCodec.__new__(RrcCodec)
         codec._asn1 = None

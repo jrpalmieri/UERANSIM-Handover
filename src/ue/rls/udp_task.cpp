@@ -35,8 +35,6 @@ RlsUdpTask::RlsUdpTask(TaskBase *base, RlsSharedContext *shCtx, const std::vecto
     for (auto &ip : searchSpace)
         m_searchSpace.emplace_back(ip, cons::RadioLinkPort);
 
-    m_simPos = GeoPosition{};
-
     handoverEnabled = m_base->config->useHandoverMeasFramework;
 
 }
@@ -55,7 +53,7 @@ void RlsUdpTask::onLoop()
     if (current - m_lastLoop > m_loopCounter)
     {
         m_lastLoop = current;
-        heartbeatCycle(current, m_simPos);
+        heartbeatCycle(current);
     }
     uint8_t buffer[BUFFER_SIZE];
     InetAddress peerAddress;
@@ -203,8 +201,7 @@ void RlsUdpTask::onSignalChangeOrLost(int cellId)
     m_ctlTask->push(std::move(w));
 }
 
-void RlsUdpTask::heartbeatCycle(uint64_t time,
-                                const GeoPosition &simPos)
+void RlsUdpTask::heartbeatCycle(uint64_t time)
 {
     std::set<std::pair<uint64_t, int>> toRemove;
 
@@ -235,13 +232,13 @@ void RlsUdpTask::heartbeatCycle(uint64_t time,
 
     // Send HEARTBEATs
     //   for all the IP addresses in the "search space", send a HEARTBEAT message 
-    //   with the simulated position of the UE
+    //   with the UE position from TaskBase::UeLocation (single source of truth)
     for (auto &addr : m_searchSpace)
     {
            rls::RlsHeartBeat msg{m_shCtx->sti, m_shCtx->senderId, m_shCtx->cRnti.load()};
-        msg.simPos.latitude = simPos.latitude;
-        msg.simPos.longitude = simPos.longitude;
-        msg.simPos.altitude = simPos.altitude;
+        msg.simPos.latitude = m_base->UeLocation.latitude;
+        msg.simPos.longitude = m_base->UeLocation.longitude;
+        msg.simPos.altitude = m_base->UeLocation.altitude;
         sendRlsPdu(addr, msg);
     }
 }

@@ -11,6 +11,7 @@
 #include <gnb/types.hpp>
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
+#include <lib/rrc/rrc.hpp>
 
 namespace nr::gnb
 {
@@ -75,41 +76,36 @@ Json ToJson(const GnbConfig &v)
     {
         Json eventJson = Json::Obj({
             {"event-type", event.eventType},
-            {"a2-threshold-dbm", event.a2ThresholdDbm},
-            {"a3-offset-db", event.a3OffsetDb},
-            {"a5-threshold1-dbm", event.a5Threshold1Dbm},
-            {"a5-threshold2-dbm", event.a5Threshold2Dbm},
-            {"distance-threshold", event.distanceThreshold},
-            {"hysteresis-db", event.hysteresisDb},
-            {"hysteresis-m", event.hysteresisM},
-            {"ttt-ms", event.tttMs},
-            {"ntn-trigger-enabled", event.ntnTriggerEnabled},
-            {"timerSec", event.timerSec},
-            {"useTimer", event.useTimer},
-            {"distance-type", event.distanceType},
-            {"target-cell-calculated", event.targetCellCalculated},
+            {"event-kind", nr::rrc::common::ToString(event.eventKind)},
+            {"ttt", std::string{E_TTT_ms_to_string(event.ttt)}},
+            {"a2-threshold-dbm", event.a2_thresholdDbm},
+            {"a3-offset-db", event.a3_offsetDb},
+            {"a5-threshold1-dbm", event.a5_threshold1Dbm},
+            {"a5-threshold2-dbm", event.a5_threshold2Dbm},
+            {"d1-distance-threshold1", event.d1_distanceThreshFromReference1},
+            {"d1-distance-threshold2", event.d1_distanceThreshFromReference2},
+            {"cond-t1-threshold-sec-ts", event.condT1_thresholdSecTS},
+            {"cond-t1-duration-sec", event.condT1_durationSec},
+            {"cond-d1-distance-threshold1", event.condD1_distanceThreshFromReference1},
+            {"cond-d1-distance-threshold2", event.condD1_distanceThreshFromReference2},
+            {"a3-hysteresis-db", event.a3_hysteresisDb},
+            {"d1-hysteresis-m", event.d1_hysteresisLocation},
+            {"a5-hysteresis-db", event.a5_hysteresisDb},
+            {"cond-d1-hysteresis-m", event.condD1_hysteresisLocation},
         });
 
-        if (event.targetCellId)
-            eventJson.put("target-cell-id", *event.targetCellId);
-
-        if (event.referencePosition)
-        {
-            eventJson.put("reference-position", Json::Obj({
-                {"use-current-position", event.referencePosition->useCurrPosition},
-                {"latitude", std::to_string(event.referencePosition->latitude)},
-                {"longitude", std::to_string(event.referencePosition->longitude)},
-                {"altitude", std::to_string(event.referencePosition->altitude)},
-            }));
-        }
-        if (event.referencePositionEcef)
-        {
-            eventJson.put("reference-position-ecef", Json::Obj({
-                {"x", std::to_string(event.referencePositionEcef->x)},
-                {"y", std::to_string(event.referencePositionEcef->y)},
-                {"z", std::to_string(event.referencePositionEcef->z)},
-            }));
-        }
+        eventJson.put("d1-reference-location1",
+                      Json::Obj({{"latitude", std::to_string(event.d1_referenceLocation1.latitudeDeg)},
+                                 {"longitude", std::to_string(event.d1_referenceLocation1.longitudeDeg)}}));
+        eventJson.put("d1-reference-location2",
+                      Json::Obj({{"latitude", std::to_string(event.d1_referenceLocation2.latitudeDeg)},
+                                 {"longitude", std::to_string(event.d1_referenceLocation2.longitudeDeg)}}));
+        eventJson.put("cond-d1-reference-location1",
+                      Json::Obj({{"latitude", std::to_string(event.condD1_referenceLocation1.latitudeDeg)},
+                                 {"longitude", std::to_string(event.condD1_referenceLocation1.longitudeDeg)}}));
+        eventJson.put("cond-d1-reference-location2",
+                      Json::Obj({{"latitude", std::to_string(event.condD1_referenceLocation2.latitudeDeg)},
+                                 {"longitude", std::to_string(event.condD1_referenceLocation2.longitudeDeg)}}));
 
         handoverEvents.push(std::move(eventJson));
     }
@@ -122,38 +118,24 @@ Json ToJson(const GnbConfig &v)
         {
             Json eventJson = Json::Obj({
                 {"event-type", event.eventType},
-                {"a2-threshold-dbm", event.a2ThresholdDbm},
-                {"a3-offset-db", event.a3OffsetDb},
-                {"a5-threshold1-dbm", event.a5Threshold1Dbm},
-                {"a5-threshold2-dbm", event.a5Threshold2Dbm},
-                {"distance-threshold", event.distanceThreshold},
-                {"hysteresis-db", event.hysteresisDb},
-                {"hysteresis-m", event.hysteresisM},
-                {"ttt-ms", event.tttMs},
-                {"ntn-trigger-enabled", event.ntnTriggerEnabled},
-                {"timerSec", event.timerSec},
-                {"useTimer", event.useTimer},
-                {"distance-type", event.distanceType},
-                {"target-cell-calculated", event.targetCellCalculated},
+                {"event-kind", nr::rrc::common::ToString(event.eventKind)},
+                {"a2-threshold-dbm", event.a2_thresholdDbm},
+                {"a3-offset-db", event.a3_offsetDb},
+                {"a5-threshold1-dbm", event.a5_threshold1Dbm},
+                {"a5-threshold2-dbm", event.a5_threshold2Dbm},
+                {"d1-distance-threshold1", event.d1_distanceThreshFromReference1},
+                {"d1-distance-threshold2", event.d1_distanceThreshFromReference2},
+                {"a3-hysteresis-db", event.a3_hysteresisDb},
+                {"a5-hysteresis-db", event.a5_hysteresisDb},
+                {"d1-hysteresis-m", event.d1_hysteresisLocation},
             });
 
-            if (event.referencePosition)
-            {
-                eventJson.put("reference-position", Json::Obj({
-                    {"use-current-position", event.referencePosition->useCurrPosition},
-                    {"latitude", std::to_string(event.referencePosition->latitude)},
-                    {"longitude", std::to_string(event.referencePosition->longitude)},
-                    {"altitude", std::to_string(event.referencePosition->altitude)},
-                }));
-            }
-            if (event.referencePositionEcef)
-            {
-                eventJson.put("reference-position-ecef", Json::Obj({
-                    {"x", std::to_string(event.referencePositionEcef->x)},
-                    {"y", std::to_string(event.referencePositionEcef->y)},
-                    {"z", std::to_string(event.referencePositionEcef->z)},
-                }));
-            }
+            eventJson.put("d1-reference-location1",
+                          Json::Obj({{"latitude", std::to_string(event.d1_referenceLocation1.latitudeDeg)},
+                                     {"longitude", std::to_string(event.d1_referenceLocation1.longitudeDeg)}}));
+            eventJson.put("d1-reference-location2",
+                          Json::Obj({{"latitude", std::to_string(event.d1_referenceLocation2.latitudeDeg)},
+                                     {"longitude", std::to_string(event.d1_referenceLocation2.longitudeDeg)}}));
 
             conditionEntries.push(std::move(eventJson));
         }

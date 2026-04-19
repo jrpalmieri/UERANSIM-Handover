@@ -226,7 +226,7 @@ struct UeConfig
     MeasSourceConfig measSourceConfig{};
     
     // UE position from config (for D1 handover events)
-    std::optional<UePosition> initialPosition{};
+    std::optional<GeoPosition> initialPosition{};
 
     NtnConfig ntn{};
 
@@ -285,6 +285,16 @@ struct CellMeasurement
 };
 
 /**
+ * @brief Struct to store measurement events for a cellId.
+ */
+struct TriggeredNeighbor
+{
+    int cellId;
+    int rsrp;
+};
+
+
+/**
  * @brief comparator for the CellMeasurement set, so that it can stay sorted by rsrp in 
  *  descending order (stronger signals first if rsrp is negative)
  * 
@@ -316,6 +326,112 @@ struct ActiveCellInfo
     [[nodiscard]] bool hasValue() const;
 };
 
+struct UeMeasObject
+{
+    int measObjectId{};
+    int ssbFrequency{};     // SSB ARFCN (simplified — we use cellId matching instead)
+};
+
+/**
+ * @brief Struct to represent a Measurement Identity, which binds together:
+ * - measId: the identifier used in MeasurementReport messages
+ * - measObjectId: the measurement object (frequency) to which this measId applies
+ * - reportConfigId: the report configuration (event trigger) that uses this measId
+ *
+ */
+struct UeMeasId
+{
+    int measId{};           // maps to the measId in MeasurementReport messages
+    int measObjectId{};     // maps to the measObjectId in UeMeasObject, 
+                            //  which defines the frequency to measure
+    int reportConfigId{};   // maps to the reportConfigId in UeReportConfig, 
+                            //  which defines the event trigger conditions for this measId
+};
+
+
+/**
+ * @brief Struct to track the state of a specific measurement Id event trigger,
+ *  including:
+ * - enteringTimestamp: when the event condition was first satisfied 
+ *  (for time-to-trigger tracking)
+ * - reported: whether the event has already been reported (for one-shot reporting)
+ * 
+ */
+struct MeasIdState
+{
+    // Time (ms) when the entering condition was first satisfied,
+    // or 0 if not currently satisfied.
+    int64_t enteringTimestamp{};
+    
+    // True once the condition has been satisfied for time-to-trigger duration.
+    bool   isSatisfied{};         
+
+    // True once the event has been reported (for one-shot reporting).
+    bool   isReported{};
+
+    std::vector<TriggeredNeighbor> triggeredNeighbors; // List of neighbors that triggered the event (for reporting)
+};
+
+
+/**
+ * @brief Struct used to store measurement configurations and state inside the RRC task.
+ *  Includes:
+ * - Measurement objects (frequencies to measure)
+ * - Report configurations (event triggers)
+ * - Measurement identities (binding objects to triggers)
+ * - Runtime state for each measId (time-to-trigger tracking)
+ * 
+ */
+struct UeMeasConfig
+{
+    // RRCReconfiguration-v1530 fullConfig=true indicates full configuration
+    // replacement semantics for measurement-related state.
+    bool fullConfig{};
+
+    // Delta signaling remove lists (if present) from ASN MeasConfig.
+    std::vector<int> measObjectsToRemove;
+    std::vector<int> reportConfigsToRemove;
+    std::vector<int> measIdsToRemove;
+
+    std::unordered_map<int, UeMeasObject>    measObjects;   // key = measObjectId
+    std::unordered_map<int, nr::rrc::common::ReportConfigEvent>  reportConfigs; // key = reportConfigId
+    std::unordered_map<int, UeMeasId>        measIds;       // key = measId
+
+    // Per-measId runtime state
+    std::unordered_map<int, MeasIdState>     measIdStates;  // key = measId
+};
+
+/**
+ * @brief A single Conditional Handover candidate (CondReconfigToAddMod).
+ *
+ * Per 3GPP TS 38.331 §5.3.5.8.6 (Release 16/17), the gNB pre-configures
+ * one or more CHO candidates.  Each candidate carries:
+ *  - Target cell parameters (technically this is a ReconfigWithSync message, but
+ *      for simulation we only need to store the PCI, C-RNTI, T304).
+ *  - A condition group: one or more ReportConfigEvents evaluated with
+ *    AND logic.  All conditions in the group must be simultaneously
+ *    satisfied for the candidate to trigger.
+ *
+ * Multiple candidates in the CHO list are treated as OR – if any of
+ * the candidates have a condition group that is fully satisfied,
+ * handover is triggered.  UE must determine which to trigger.
+ */
+struct ChoCandidate
+{
+    int candidateId{};          // condReconfigId
+    int targetPci{};            // Target cell PCI
+    int newCRNTI{};             // C-RNTI assigned by target cell
+    int t304Ms{1000};           // T304 supervision timer (ms)
+    int txId{0};              // ASN.1 transactionId for the ReconfigurationWithSync message to apply on trigger
+    int executionPriority{0x7FFFFFFF}; // Lower = higher priority; max = unset
+
+    // List of all MeasIds whose conditions apply to this candidate (from condExecutionCond).
+    std::vector<int> measIds;
+
+    /* Runtime state */
+    bool executed{};            // Whether this candidate has been executed
+    double triggerMargin{};     // Computed when all conditions met (for tie-breaking)
+};
 
 
 struct UeSharedContext
@@ -362,6 +478,9 @@ struct TaskBase
     UeRrcTask *rrcTask{};
     UeRlsTask *rlsTask{};
     utils::SatTime *satTime{};
+
+    // lat/long/alt position of the UE
+    GeoPosition UeLocation{};
 };
 
 struct RrcTimers

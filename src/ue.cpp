@@ -331,20 +331,15 @@ static nr::ue::UeConfig *ReadConfigYaml()
 
     }
 
-    // --- UE position (optional, for D1 distance-based CHO events) ---
+    // UE initial position
     if (yaml::HasField(config, "position"))
     {
         auto posNode = config["position"];
-        nr::ue::GeoPosition geo{};
+        GeoPosition geo{};
         geo.latitude  = posNode["latitude"].as<double>(0.0);
         geo.longitude = posNode["longitude"].as<double>(0.0);
         geo.altitude  = posNode["altitude"].as<double>(0.0);
-
-        nr::ue::UePosition pos{};
-        pos.geo = geo;
-        pos.ecef = nr::ue::geoToEcef(geo);
-
-        result->initialPosition = pos;
+        result->initialPosition = geo;
     }
 
     if (yaml::HasField(config, "ntn"))
