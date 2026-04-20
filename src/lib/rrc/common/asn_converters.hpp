@@ -10,9 +10,16 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <string_view>
+
+#include <OCTET_STRING.h>
+
+#include <lib/asn/utils.hpp>
+#include <utils/bit_buffer.hpp>
+#include <utils/octet_string.hpp>
 #include <lib/rrc/common/event_types.hpp>
 
 namespace nr::rrc::common
@@ -114,12 +121,12 @@ inline int hysteresisLocationFromASNValue(long val)
 
 // converts a distanceThreshold in meters to the ASN Value,
 //      which is an integer representing 50m steps,
-//      with valid range of 0..65525 (i.e. 0..3,276,250 m)
+//      with valid range of 1..65525 (i.e. 50..3,276,250 m)
 inline long distanceThresholdToASNValue(int distanceM)
 {
     int val = distanceM / 50;
-    if (val < 0)
-        val = 0;
+    if (val < 1)
+        val = 1;
     if (val > 65525)
         val = 65525;
     return static_cast<long>(val);
@@ -172,6 +179,61 @@ inline long t1ThresholdToASNValue(uint64_t thresholdSec)
 inline uint64_t t1ThresholdFromASNValue(long val)
 {
     return (static_cast<uint64_t>(val) / 100) - NTP_EPOCH_TO_UNIX_EPOCH;
+}
+
+inline void referenceLocationToAsnValue(const EventReferenceLocation &location, OCTET_STRING_t &target)
+{
+    constexpr int kLatBits = 23;
+    constexpr int kLonBits = 24;
+    constexpr int kLatMax = (1 << kLatBits) - 1;
+    constexpr int kLonOffset = 1 << (kLonBits - 1);
+    constexpr int kLonMin = -kLonOffset;
+    constexpr int kLonMax = kLonOffset - 1;
+
+    const double clampedLatitude = std::clamp(location.latitudeDeg, -90.0, 90.0);
+    const double clampedLongitude = std::clamp(location.longitudeDeg, -180.0, 180.0);
+
+    const int latitudeSign = clampedLatitude < 0.0 ? 1 : 0;
+    const int degreesLatitude = std::clamp(static_cast<int>(
+                                            std::llround(std::fabs(clampedLatitude) * 8388608.0 / 90.0)),
+        0,
+        kLatMax);
+    const int degreesLongitude = std::clamp(static_cast<int>(std::llround(clampedLongitude * 16777216.0 / 360.0)),
+        kLonMin,
+        kLonMax);
+
+    uint8_t encoded[6] = {0, 0, 0, 0, 0, 0};
+    BitBuffer bitBuffer{encoded};
+    bitBuffer.writeBits(latitudeSign, 1);
+    bitBuffer.writeBits(degreesLatitude, kLatBits);
+    bitBuffer.writeBits(degreesLongitude + kLonOffset, kLonBits);
+
+    asn::SetOctetString(target, OctetString::FromArray(encoded, 6));
+}
+
+inline bool referenceLocationFromAsnValue(const OCTET_STRING_t &source, EventReferenceLocation &location)
+{
+    if (source.buf == nullptr || source.size != 6)
+        return false;
+
+    constexpr int kLatBits = 23;
+    constexpr int kLonBits = 24;
+    constexpr int kLonOffset = 1 << (kLonBits - 1);
+
+    BitBuffer bitBuffer{source.buf};
+    const int latitudeSign = bitBuffer.readBits(1);
+    const int degreesLatitude = bitBuffer.readBits(kLatBits);
+    const int degreesLongitude = bitBuffer.readBits(kLonBits) - kLonOffset;
+
+    double latitudeDeg = static_cast<double>(degreesLatitude) * 90.0 / 8388608.0;
+    if (latitudeSign == 1)
+        latitudeDeg = -latitudeDeg;
+
+    const double longitudeDeg = static_cast<double>(degreesLongitude) * 360.0 / 16777216.0;
+
+    location.latitudeDeg = latitudeDeg;
+    location.longitudeDeg = longitudeDeg;
+    return true;
 }
 
 

@@ -18,6 +18,7 @@
 #include <gnb/ngap/task.hpp>
 #include <gnb/sat_time.hpp>
 #include <lib/asn/utils.hpp>
+#include <lib/rrc/common/sat_calc.hpp>
 #include <lib/rrc/encode.hpp>
 #include <lib/rrc/common/asn_converters.hpp>
 #include <utils/common.hpp>
@@ -67,9 +68,6 @@
 #include <utility>
 
 #include <libsgp4/DateTime.h>
-#include <libsgp4/Eci.h>
-#include <libsgp4/SGP4.h>
-#include <libsgp4/Tle.h>
 #include <gnb/sat_tle_store.hpp>
 
 const int MIN_RSRP = cons::MIN_RSRP; // minimum RSRP value (in dBm) to use when no measurement is available
@@ -85,176 +83,19 @@ namespace nr::gnb
 {
 
 using HandoverEventType = nr::rrc::common::HandoverEventType;
+using nr::rrc::common::ReportConfigEvent;
+using nr::rrc::common::SatEcefState;
+using nr::rrc::common::EventReferenceLocation;
+using nr::rrc::common::NeighborEndpoint;
+using nr::rrc::common::mtqFromASNValue;
+using nr::rrc::common::mtqToASNValue;
+using nr::rrc::common::hysteresisFromASNValue;
+using nr::rrc::common::hysteresisToASNValue;
+using nr::rrc::common::referenceLocationToAsnValue;
+using nr::rrc::common::tttMsToASNValue;
+using nr::rrc::common::distanceThresholdToASNValue;
+using nr::rrc::common::t304MsToEnum;
 
-/* ================================================================== */
-/*  ASN value conversion helpers                                      */
-/* ================================================================== */
-
-// // convert from dB to the ASN MeasTriggerQuantityOffset
-// //      which is an integer representing 0.5 dB steps, 
-// //      with valid range of 0..30 (i.e. 0..15 dB)
-// static long mtqOffsetToASNValue(int offsetDb)
-// {
-
-//     int val = offsetDb * 2;
-//     if (val < 0)
-//         val = 0;
-//     if (val > 30)
-//         val = 30;
-//     return static_cast<long>(val);
-// }
-
-// // convert from ASN MeasTriggerQuantityOffset back to dB
-// static int mtqOffsetFromASNValue(long val)
-// {
-//     return static_cast<int>(val) / 2;
-// }
-
-// // // convert a Measure Trigger Quantity (generally an RSRP) in dBm to the ASN MTQ
-// // //      which is an integer representing 1 dBm starting at -156dBm
-// // //      with valid range of 0..127  (i.e. -156..-29 dBm)
-// // static long mtqToASNValue(int dbm)
-// // {
-// //     int val = dbm + 156;
-// //     if (val < 0)
-// //         val = 0;
-// //     if (val > 127)
-// //         val = 127;
-// //     return static_cast<long>(val);
-// // }
-
-// // // convert an ASN MTQ value back to dBm
-// // static int mtqFromASNValue(long val)
-// // {
-// //     return static_cast<int>(val) - 156;
-    
-// // }
-
-// // convert a hysteresis value to an ASN Hysteresis 
-// //      which is an integer representing 0.5 dB steps, 
-// //      with valid range of 0..30 (i.e. 0..15 dB)
-// static long hysteresisToASNValue(int db)
-// {
-//     int val = db * 2;
-//     if (val < 0)
-//         val = 0;
-//     if (val > 30)
-//         val = 30;
-//     return static_cast<long>(val);
-// }
-
-// // convert an ASN Hysteresis value back to dB
-// static int hysteresisFromASNValue(long val)
-// {
-//     return static_cast<int>(val) / 2;
-// }
-
-
-// // Convert an E_TTT_ms enum to the corresponding ASN_RRC_TimeToTrigger enum value
-// static long tttMsToASNValue(nr::rrc::common::E_TTT_ms tttMs)
-// {
-
-//     // the enum now matches the ASN values directly, so we can just static_cast it
-//     return static_cast<long>(tttMs);
-// }
-
-
-// // convert a hysteresis location in meters to an ASN HysteresisLocation
-// //      which is an integer representing 10m steps, 
-// //      with valid range of 0..32768 (i.e. 0..327680 m)
-// static long hysteresisLocationToASNValue(int hysteresisLocation)
-// {
-//     int val = hysteresisLocation / 10;
-//     if (val < 0)
-//         val = 0;
-//     if (val > 32768)
-//         val = 32768;
-//     return static_cast<long>(val);
-// }
-
-// // convert an ASN HysteresisLocation back to meters
-// static int hysteresisLocationFromASNValue(long val)
-// {
-//     return static_cast<int>(val) * 10;
-// }
-
-// // converts a distanceThreshold in meters to the ASN Value,
-// //      which is an integer representing 50m steps,
-// //      with valid range of 0..65525 (i.e. 0..3,276,250 m)
-// static long distanceThresholdToASNValue(int distanceM)
-// {
-//     int val = distanceM / 50;
-//     if (val < 0)
-//         val = 0;
-//     if (val > 65525)
-//         val = 65525;
-//     return static_cast<long>(val);
-// }
-
-// // convert an ASN distanceThreshold value back to meters
-// static int distanceThresholdFromASNValue(long val)
-// {
-//     return static_cast<int>(val) * 50;
-// }
-
-// // converts a T1 duration in second to the ASN Value, 
-// //      which is an integer representing 100ms steps, 
-// //      with valid range of 0..6000 (i.e. 0..600s)
-// static long durationToASNValue(int durationSec)
-// {
-//     int val = durationSec * 10; // convert from seconds to 100ms steps
-//     if (val < 1)
-//         val = 1;
-//     if (val > 6000)
-//         val = 6000;
-//     return static_cast<long>(val);
-// }
-
-// // converts an ASN t1 duration value back to seconds
-// static int durationFromASNValue(long val)
-// {
-//     return static_cast<int>(val) / 10;
-// }
-
-// // converts a T1 threshold in ms to the ASN Value
-// //      which is an integer representing 10ms steps,
-// //      with valid range of 0..549755813887 (i.e. 0..5497558138870 ms)
-// //      Note: starting point is January 1, 1900, 00:00:00 UTC (NTP Epoch),
-// //          so this is an absolute timestamp rather than a relative duration.
-// //
-// //      This function will convert the unix epoch-based value to the 
-// //          NTP Epoch value, then apply the unit scaling.
-// static long t1ThresholdToASNValue(uint64_t thresholdSec)
-// {
-//     uint64_t val = thresholdSec + NTP_EPOCH_TO_UNIX_EPOCH; // convert from unix epoch to NTP epoch
-//     val = val * 100; // convert from seconds to 10ms steps
-//     if (val > 549755813887)
-//         val = 549755813887;
-//     return static_cast<long>(val);
-// }
-
-// // convert an ASN T1 threshold value back to seconds.
-// //    also converts from NTP epoch back to unix epoch by subtracting the offset
-// static uint64_t t1ThresholdFromASNValue(long val)
-// {
-//     return (static_cast<uint64_t>(val) / 100) - NTP_EPOCH_TO_UNIX_EPOCH;
-// }
-
-// static long t304MsToEnum(int ms)
-// {
-//     switch (ms)
-//     {
-//     case 50:    return 0;
-//     case 100:   return 1;
-//     case 150:   return 2;
-//     case 200:   return 3;
-//     case 500:   return 4;
-//     case 1000:  return 5;
-//     case 2000:  return 6;
-//     case 10000: return 7;
-//     default:    return 5; // default ms1000
-//     }
-// }
 
 
 
@@ -263,8 +104,8 @@ using HandoverEventType = nr::rrc::common::HandoverEventType;
 /* ====================================== */
 
 
-static int calcLatLongDistance(const nr::rrc::common::EventReferenceLocation &pos1,
-                        const nr::rrc::common::EventReferenceLocation &pos2)
+static int calcLatLongDistance(const EventReferenceLocation &pos1,
+                        const EventReferenceLocation &pos2)
 {
     GeoPosition a{pos1.latitudeDeg, pos1.longitudeDeg, 0.0};
     GeoPosition b{pos2.latitudeDeg, pos2.longitudeDeg, 0.0};
@@ -313,184 +154,175 @@ bool isCondTriggerConfigEventType(HandoverEventType eventType)
     return nr::rrc::common::IsConditionalEvent(eventType);
 }
 
-
-
-/* ================================================================== */
-/*  Satellite geometry helpers for conditional-handover trigger calcs */
-/* ================================================================== */
-
-/// Satellite ECEF position and its ground-track nadir (altitude = 0), both in meters.
-struct SatPvEcef
+static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
 {
-    EcefPosition pos{};
-    EcefPosition nadir{};
-};
-
-/// Propagate a TLE at a given DateTime and fill pos/nadir.
-/// Returns false silently on any libsgp4 exception.
-static bool PropagateToEcef(const SatTleEntry &entry,
-                             const libsgp4::DateTime &dt,
-                             SatPvEcef &out)
-{
-    try
-    {
-        libsgp4::Tle tle(entry.line1, entry.line2);
-        libsgp4::SGP4 sgp4(tle);
-        libsgp4::Eci eci = sgp4.FindPosition(dt);
-        libsgp4::CoordGeodetic geo = eci.ToGeodetic();
-
-        double latDeg = geo.latitude  * (180.0 / M_PI);
-        double lonDeg = geo.longitude * (180.0 / M_PI);
-        double altM   = geo.altitude  * 1000.0;
-
-        out.pos = GeoToEcef(GeoPosition{latDeg, lonDeg, altM});
-        out.nadir = ComputeNadir(out.pos);
-        return true;
-    }
-    catch (...)
-    {
-        return false;
-    }
+    const libsgp4::DateTime unixEpoch(1970, 1, 1, 0, 0, 0);
+    auto delta = dateTime - unixEpoch;
+    return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
 }
 
-/// Scan forward from `startSec` seconds past `epoch` until the satellite's
-/// elevation from `obs` drops below `thetaDeg`.  Uses a 10-second coarse step
-/// followed by a 1-second binary search.
-///
-/// @param tleEntry      TLE of the satellite to track
-/// @param obs           Observer ECEF position (meters)
-/// @param epoch         Reference DateTime (typically "now")
-/// @param startSec      Start offset in seconds from epoch (0 = now)
-/// @param thetaDeg      Exit-angle threshold (degrees)
-/// @param maxLookaheadSec  Search window cap (seconds past startSec)
-/// @param[out] nadirDistM  ECEF distance from obs to satellite nadir at exit
-/// @return              Seconds from epoch at which elevation falls below thetaDeg
-static int FindExitTimeSec(const SatTleEntry &tleEntry,
-                            const EcefPosition &obs,
-                            const libsgp4::DateTime &epoch,
-                            int startSec,
-                            int thetaDeg,
-                            int maxLookaheadSec,
-                            double &nadirDistM)
-{
-    static constexpr int STEP_SEC = 10;
 
-    nadirDistM = 0.0;
-    int tLow   = startSec;
-    int tHigh  = startSec;
-    bool found = false;
-
-    for (int t = startSec + STEP_SEC; t <= startSec + maxLookaheadSec; t += STEP_SEC)
-    {
-        SatPvEcef st{};
-        if (!PropagateToEcef(tleEntry, epoch.AddSeconds(t), st))
-            continue;
-        if (ElevationAngleDeg(obs, st.pos) < static_cast<double>(thetaDeg))
-        {
-            tLow  = t - STEP_SEC;
-            tHigh = t;
-            found = true;
-            break;
-        }
-    }
-
-    if (!found)
-    {
-        // Satellite remains above threshold throughout the lookahead window
-        int tEnd = startSec + maxLookaheadSec;
-        SatPvEcef st{};
-        if (PropagateToEcef(tleEntry, epoch.AddSeconds(tEnd), st))
-            nadirDistM = EcefDistance(obs, st.nadir);
-        return tEnd;
-    }
-
-    // Binary-search to narrow down to ±1 second
-    while (tHigh - tLow > 1)
-    {
-        int tMid = (tLow + tHigh) / 2;
-        SatPvEcef st{};
-        if (!PropagateToEcef(tleEntry, epoch.AddSeconds(tMid), st))
-        {
-            tLow = tMid;
-            continue;
-        }
-        if (ElevationAngleDeg(obs, st.pos) >= static_cast<double>(thetaDeg))
-            tLow = tMid;
-        else
-            tHigh = tMid;
-    }
-
-    // Record nadir distance at the exit instant
-    SatPvEcef exitSt{};
-    if (PropagateToEcef(tleEntry, epoch.AddSeconds(tHigh), exitSt))
-        nadirDistM = EcefDistance(obs, exitSt.nadir);
-
-    return tHigh;
-}
 
 /**
  * @brief Compute the conditional-handover trigger conditions for the serving gNB.
  *
- * Propagates the gNB's own TLE forward in time until its elevation angle
- * (as seen from the UE) drops below thetaExitDeg.  The crossing time
- * (T_exit) is returned as triggerTimerSec; the UE-to-nadir distance at
- * that instant is returned as distanceThresholdM (useful as a D1 trigger
- * distance threshold).
- *
- * @param ownTle           TLE of the serving (own) satellite gNB
- * @param ueEcef           ECEF position of the UE (meters)
- * @param thetaExitDeg     Minimum elevation angle threshold (integer degrees)
- * @param[out] triggerTimerSec      Seconds until the gNB exits coverage (T_exit)
- * @param[out] distanceThresholdM   Nadir distance (meters) from UE at T_exit
  */
-static void calculateTriggerConditions(const SatTleEntry &ownTle,
-                                        const EcefPosition &ueEcef,
-                                        int thetaExitDeg,
-                                        int &triggerTimerSec,
-                                        int &distanceThresholdM)
+void GnbRrcTask::calculateTriggerConditions(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, const int ownPci, RrcUeContext *ue)
 {
-    static constexpr int MAX_LOOKAHEAD_SEC = 7200; // 2-hour horizon
 
-    triggerTimerSec    = NTN_DEFAULT_T_SERVICE_SEC;
-    distanceThresholdM = 0;
-
-    libsgp4::DateTime now = sat_time::Now();
-
-    // If already below the threshold right now, exit immediately
-    SatPvEcef curState{};
-    if (!PropagateToEcef(ownTle, now, curState))
-        return;
-
-    if (ElevationAngleDeg(ueEcef, curState.pos) < static_cast<double>(thetaExitDeg))
+    // if in NTN mode, we use the TLE of our own satellite to calculate the trigger conditions.
+    if (m_config->ntn.ntnEnabled)
     {
-        triggerTimerSec    = 0;
-        distanceThresholdM = static_cast<int>(EcefDistance(ueEcef, curState.nadir));
+
+        auto ownTleOpt   = m_base->satTleStore->find(ownPci);
+        const int theta  = m_config->ntn.elevationMinDeg;
+
+        if (!ownTleOpt.has_value() || !ue->uePosition.isValid)
+        {
+            m_logger->warn("UE[%d] Dynamic trigger: own TLE or UE position unavailable, "
+                           "using defaults (t=%ds d=%dm)",
+                           ue->ueId, dynTriggerParams.condT1_thresholdSec, dynTriggerParams.condD1_distanceThresholdFromReference1);
+            return;
+        }
+
+        // convert ue position from lat/long/alt to ECEF for the calculation
+        EcefPosition ueEcef = GeoToEcef(ue->uePosition);
+        const SatTleEntry &ownTle = m_config->ntn.ownTle.value();
+        m_logger->debug("UE[%d]: Calculating Dynamic trigger conditions for NTN using TLE: %s / %s",
+                         ue->ueId, ownTle.line1.c_str(), ownTle.line2.c_str());
+
+
+        static constexpr int MAX_LOOKAHEAD_SEC = 7200; // 2-hour horizon
+
+        // get current sat time
+        libsgp4::DateTime now = sat_time::Now();
+        const int satNowSec = static_cast<int>(DateTimeToUnixMillis(now) / 1000);
+
+        // get the Ecef of the current location
+        SatEcefState curState{};
+        if (!nr::rrc::common::PropagateTleToEcef(ownTle.line1, ownTle.line2, now, curState))
+            return;
+
+        // If already below the threshold right now, set trigger for right now
+        if (ElevationAngleDeg(ueEcef, curState.pos) < static_cast<double>(theta))
+        {
+            dynTriggerParams.condT1_thresholdSec = satNowSec;
+            dynTriggerParams.condT1_durationSec = 100;
+            {
+                auto refGeo = EcefToGeo(curState.pos);
+                dynTriggerParams.condD1_referenceLocation1 = {refGeo.latitude, refGeo.longitude};
+            }
+            dynTriggerParams.condD1_distanceThresholdFromReference1 = static_cast<int>(EcefDistance(ueEcef, curState.nadir));
+            dynTriggerParams.condD1_referenceLocation2 = {ue->uePosition.latitude, ue->uePosition.longitude};
+            dynTriggerParams.condD1_distanceThresholdFromReference2 = 0;
+            dynTriggerParams.condD1_hysteresisLocation = 10;
+
+            dynTriggerParams.d1_distanceThresholdFromReference1 = dynTriggerParams.condD1_distanceThresholdFromReference1;
+            dynTriggerParams.d1_referenceLocation1 = dynTriggerParams.condD1_referenceLocation1;
+            dynTriggerParams.d1_distanceThresholdFromReference2 = dynTriggerParams.condD1_distanceThresholdFromReference2;
+            dynTriggerParams.d1_referenceLocation2 = dynTriggerParams.condD1_referenceLocation2;
+            dynTriggerParams.d1_hysteresisLocation = dynTriggerParams.condD1_hysteresisLocation;
+
+            return;
+        }
+
+        // find the exit time (t_exit) and the nadir distance at exit (nadirAtExitM) by propagating the 
+        //  TLE forward in time until the elevation drops below the threshold
+        EcefPosition nadirAtExitM{};
+        int tExit = nr::rrc::common::FindExitTimeSec(ownTle.line1,
+                                                    ownTle.line2,
+                                                    ueEcef,
+                                                    now,
+                                                    0,
+                                                    theta,
+                                                    MAX_LOOKAHEAD_SEC,
+                                                    nadirAtExitM);
+
+        dynTriggerParams.condT1_thresholdSec = satNowSec + tExit;
+        dynTriggerParams.condT1_durationSec = 100;
+
+        // d1 is comparing UE pos to nadir pos at exit, and if over threhold, that means teh sat is beyond the elevation angle threshold
+        {
+            auto refGeo = EcefToGeo(nadirAtExitM);
+            dynTriggerParams.condD1_referenceLocation1 = {refGeo.latitude, refGeo.longitude};
+        }
+        dynTriggerParams.condD1_distanceThresholdFromReference1 = static_cast<int>(EcefDistance(ueEcef, nadirAtExitM));
+        // d2 we set to dummy vals that will always be true, since we just case about triggering the handover once the sat is beyond the elevation threshold
+        dynTriggerParams.condD1_referenceLocation2 = {ue->uePosition.latitude, ue->uePosition.longitude};
+        dynTriggerParams.condD1_distanceThresholdFromReference2 = 1;
+        dynTriggerParams.condD1_hysteresisLocation = 10;
+
+        dynTriggerParams.d1_distanceThresholdFromReference1 = dynTriggerParams.condD1_distanceThresholdFromReference1;
+        dynTriggerParams.d1_referenceLocation1 = dynTriggerParams.condD1_referenceLocation1;
+        dynTriggerParams.d1_distanceThresholdFromReference2 = dynTriggerParams.condD1_distanceThresholdFromReference2;
+        dynTriggerParams.d1_referenceLocation2 = dynTriggerParams.condD1_referenceLocation2;
+        dynTriggerParams.d1_hysteresisLocation = dynTriggerParams.condD1_hysteresisLocation;
+
+        return;
+    }
+    // for non-NTN mode, we use gnb location and a fixed distance threshold to calculate the trigger conditions.
+    else
+    {
+        // obtain gnb location
+        EventReferenceLocation gnbPos{};
+        {
+            // lock mutex to safely read gNB position
+            std::lock_guard<std::mutex> lock(m_base->gnbPositionMutex);
+            gnbPos.latitudeDeg = m_base->gnbPosition.latitude;
+            gnbPos.longitudeDeg = m_base->gnbPosition.longitude;
+        }
+        
+        m_logger->debug("UE[%d]: Calculating Dynamic trigger conditions for non-NTN using gNB location (lat=%.4f, long=%.4f)",
+                         ue->ueId, gnbPos.latitudeDeg, gnbPos.longitudeDeg);
+        
+        // for timer, use config values as deltas, add to current time
+        dynTriggerParams.condT1_thresholdSec +=  utils::CurrentTimeMillis() / 1000;
+
+        // d1 is comparing UE pos to gNB pos, and if over threshold, that means the UE is far enough from the gNB to trigger the handover
+        dynTriggerParams.condD1_referenceLocation1 = gnbPos;
+        // distance threshold is default set in config
+        dynTriggerParams.condD1_referenceLocation2 = {ue->uePosition.latitude, ue->uePosition.longitude};
+        dynTriggerParams.condD1_distanceThresholdFromReference2 = 1;
+        dynTriggerParams.condD1_hysteresisLocation = 10;
+
+        dynTriggerParams.d1_referenceLocation1 = dynTriggerParams.condD1_referenceLocation1;
+        // distance threshold is default set in config
+        dynTriggerParams.d1_distanceThresholdFromReference2 = dynTriggerParams.condD1_distanceThresholdFromReference2;
+        dynTriggerParams.d1_referenceLocation2 = dynTriggerParams.condD1_referenceLocation2;
+        dynTriggerParams.d1_hysteresisLocation = dynTriggerParams.condD1_hysteresisLocation;
+
         return;
     }
 
-    double nadirAtExitM = 0.0;
-    int tExit = FindExitTimeSec(ownTle, ueEcef, now, 0, thetaExitDeg, MAX_LOOKAHEAD_SEC, nadirAtExitM);
-
-    triggerTimerSec    = tExit;
-    distanceThresholdM = static_cast<int>(nadirAtExitM);
 }
 
 
 static int selectChoCandidateProfile(
     const GnbHandoverConfig &config, Logger *logger)
 {
-    std::vector<const GnbChoCandidateProfileConfig *> selected{};
-
     if (!config.choEnabled)
         return -1;
 
-    return config.choDefaultProfileId;
+    // Find the profile whose candidateProfileId matches choDefaultProfileId
+    for (size_t i = 0; i < config.candidateProfiles.size(); ++i)
+    {
+        if (config.candidateProfiles[i].candidateProfileId == config.choDefaultProfileId)
+            return static_cast<int>(i);
+    }
+    if (!config.candidateProfiles.empty()) {
+        if (logger)
+            logger->warn("CHO profile with candidateProfileId=%d not found; using first profile.", config.choDefaultProfileId);
+        return 0;
+    }
+    if (logger)
+        logger->warn("No CHO candidate profiles defined.");
+    return -1;
 }
 
 
 
 
-static const nr::rrc::common::ReportConfigEvent *findEventConfigByKind(
+static const ReportConfigEvent *findEventConfigByKind(
     const GnbHandoverConfig &config, HandoverEventType eventType)
 {
     for (const auto &event : config.events)
@@ -501,7 +333,7 @@ static const nr::rrc::common::ReportConfigEvent *findEventConfigByKind(
     return nullptr;
 }
 
-[[maybe_unused]] static const nr::rrc::common::ReportConfigEvent *findEventConfigByType(
+[[maybe_unused]] static const ReportConfigEvent *findEventConfigByType(
     const GnbHandoverConfig &config, const std::string &eventType)
 {
     auto parsed = nr::rrc::common::ParseHandoverEventType(eventType);
@@ -534,7 +366,7 @@ using ScoredNeighbor = std::pair<const GnbNeighborConfig *, int>;
  *      angle from the UE is >= thetaExitDeg (i.e., the satellite will be in
  *      coverage when the serving gNB exits coverage).
  *   3. Computes the candidate's own exit time (t_exit_new) and scores it by
- *      transit time = t_exit_new - T_exit.  Longer transit → lower (better) score.
+ *      transit time = t_exit_new - T_exit.  Longer transit → higher (better) score.
  *
  * Falls back to the first non-serving neighbor when the UE position is
  * unknown or no elevation-qualified candidates are found.
@@ -557,9 +389,7 @@ static std::vector<ScoredNeighbor> prioritizeNeighbors(
     int tExitSec,
     int elevationMinDeg)
 {
-    std::vector<ScoredNeighbor> prioritized{};
-
-    // Helper: return first non-serving neighbor as a fallback
+    // Helper: return first non-serving neighbor as a fallback.
     auto fallback = [&]() -> std::vector<ScoredNeighbor> {
         std::vector<ScoredNeighbor> fb{};
         for (const auto &nb : neighborList)
@@ -573,68 +403,64 @@ static std::vector<ScoredNeighbor> prioritizeNeighbors(
         return fb;
     };
 
-    // If UE position is unavailable or cache is empty, use config-order fallback
-    bool hasUePos = (ueEcef.x != 0.0 || ueEcef.y != 0.0 || ueEcef.z != 0.0);
+    const bool hasUePos = (ueEcef.x != 0.0 || ueEcef.y != 0.0 || ueEcef.z != 0.0);
     if (!hasUePos || neighborhoodCache.empty())
         return fallback();
 
-    static constexpr int MAX_LOOKAHEAD_SEC = 7200; // 2-hour horizon
+    static constexpr int MAX_LOOKAHEAD_SEC = 7200;
+    const libsgp4::DateTime now = sat_time::Now();
 
-    libsgp4::DateTime now    = sat_time::Now();
-    libsgp4::DateTime tExitDt = now.AddSeconds(tExitSec);
+    auto stateResolver = [&](int pci, int offsetSec, SatEcefState &state) -> bool {
+        auto tleOpt = tleStore.find(pci);
+        if (!tleOpt.has_value())
+            return false;
+        return nr::rrc::common::PropagateTleToEcef(tleOpt->line1, tleOpt->line2, now.AddSeconds(offsetSec), state);
+    };
 
-    for (int pci : neighborhoodCache)
+    auto endpointResolver = [&](int pci, NeighborEndpoint &endpoint) -> bool {
+        for (const auto &nb : neighborList)
+        {
+            if (nb.getPci() != pci)
+                continue;
+
+            if (nb.ipAddress.empty())
+                return false;
+
+            endpoint.ipAddress = nb.ipAddress;
+            endpoint.port = nb.xnPort.value_or(0);
+            return true;
+        }
+        return false;
+    };
+
+    const auto ranked = nr::rrc::common::PrioritizeTargetSats(servingPci,
+                                                               neighborhoodCache,
+                                                               ueEcef,
+                                                               tExitSec,
+                                                               elevationMinDeg,
+                                                               MAX_LOOKAHEAD_SEC,
+                                                               stateResolver,
+                                                               endpointResolver);
+    if (ranked.empty())
+        return fallback();
+
+    std::vector<ScoredNeighbor> prioritized{};
+    prioritized.reserve(ranked.size());
+
+    for (const auto &[pci, score] : ranked)
     {
-        if (pci == servingPci)
-            continue;
-
-        // Must be in the runtime neighbor store to be a usable CHO target
-        const GnbNeighborConfig *nbCfg = nullptr;
         for (const auto &nb : neighborList)
         {
             if (nb.getPci() == pci)
             {
-                nbCfg = &nb;
+                prioritized.emplace_back(&nb, score);
                 break;
             }
         }
-        if (!nbCfg)
-            continue;
-
-        // Need a TLE to propagate the satellite
-        auto tleOpt = tleStore.find(pci);
-        if (!tleOpt.has_value())
-            continue;
-
-        // (2) Check that this satellite is above theta_e from the UE at T_exit
-        SatPvEcef stateAtExit{};
-        if (!PropagateToEcef(*tleOpt, tExitDt, stateAtExit))
-            continue;
-
-        if (ElevationAngleDeg(ueEcef, stateAtExit.pos) < static_cast<double>(elevationMinDeg))
-            continue;
-
-        // (3) Find this satellite's own exit time starting from T_exit
-        double nadirDummy = 0.0;
-        int tNeighborExit = FindExitTimeSec(
-            *tleOpt, ueEcef, now,
-            tExitSec, elevationMinDeg,
-            MAX_LOOKAHEAD_SEC, nadirDummy);
-
-        // Transit time = how long the candidate stays above elevationMinDeg after T_exit
-        int transitSec = tNeighborExit - tExitSec;
-
-        // Lower score = higher priority; negate so longest transit sorts first
-        prioritized.emplace_back(nbCfg, -transitSec);
     }
 
     if (prioritized.empty())
         return fallback();
-
-    std::sort(prioritized.begin(), prioritized.end(),
-              [](const ScoredNeighbor &a, const ScoredNeighbor &b) {
-                  return a.second < b.second;
-              });
 
     return prioritized;
 }
@@ -881,7 +707,7 @@ void GnbRrcTask::receiveMeasurementReport(int ueId, int cRnti,
         {
             auto *ssbCell = servMO->measResultServingCell.measResult.cellResults.resultsSSB_Cell;
             if (ssbCell && ssbCell->rsrp)
-                servingRsrp = nr::rrc::common::mtqFromASNValue(*ssbCell->rsrp);
+                servingRsrp = mtqFromASNValue(*ssbCell->rsrp);
         }
     }
 
@@ -910,7 +736,7 @@ void GnbRrcTask::receiveMeasurementReport(int ueId, int cRnti,
                     int rsrp = MIN_RSRP;
                     auto *ssbCell = nr->measResult.cellResults.resultsSSB_Cell;
                     if (ssbCell && ssbCell->rsrp)
-                        rsrp = nr::rrc::common::mtqFromASNValue(*ssbCell->rsrp);
+                        rsrp = mtqFromASNValue(*ssbCell->rsrp);
 
                     m_logger->debug("  Neighbor PCI=%d RSRP=%ddBm", pci, rsrp);
 
@@ -963,7 +789,7 @@ void GnbRrcTask::sendHandoverCommand(int ueId, int targetPci, int newCrnti, int 
     // ---- Build CellGroupConfig with ReconfigurationWithSync ----
     ASN_RRC_ReconfigurationWithSync rws{};
     rws.newUE_Identity = static_cast<long>(hoCrnti);
-    rws.t304 = nr::rrc::common::t304MsToEnum(t304Ms);
+    rws.t304 = t304MsToEnum(t304Ms);
 
     // Set target cell PCI via spCellConfigCommon
     ASN_RRC_ServingCellConfigCommon scc{};
@@ -1090,18 +916,20 @@ void clearMeasConfig(RrcUeContext *ue)
  * the Conditional Handover ASN types.  Otherwise, a default MeasConfig will be created 
  * using normal "eventTriggered" reporting events.
  * 
- * @param ue 
- * @param selectedEvents 
+ * @param ue The UE RRC context
+ * @param selectedEvents The list of selected handover events
+ * @param dynTriggerParams allows the caller to override certain event trigger parameters when building the event.
+ * @param isChoRequest if true, creates a MeasConfig suitable for a Conditional Handover procedure, using the CHO-specific ASN types.  If false, creates a default MeasConfig using normal "eventTriggered" reporting events.
+ * @param choProfileId if isChoRequest is true, the CHO candidate profile ID to use when building the CHO-specific MeasConfig.  Ignored if isChoRequest is false.
  * @return ASN_RRC_MeasConfig* 
  */
 std::vector<long> GnbRrcTask::createMeasConfig(
     ASN_RRC_MeasConfig *&mc,
     RrcUeContext *ue,
-    std::vector<nr::rrc::common::ReportConfigEvent> selectedEvents,
-    bool isChoRequest,
-    int trigger_timer_sec,
-    int distance_threshold_m,
-    int choProfileId)
+    std::vector<ReportConfigEvent> selectedEvents,
+    const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
+    int choProfileId
+)
 {
     std::vector<long> usedMeasIds{};
 
@@ -1141,8 +969,9 @@ std::vector<long> GnbRrcTask::createMeasConfig(
     for (size_t i = 0; i < selectedEvents.size(); i++)
     {
         const auto &event = selectedEvents[i];
+        bool cho_event = !isEventTriggerEventType(event.eventKind);
         const auto eventKind = event.eventKind;
-        const auto eventType = nr::rrc::common::ToString(eventKind);
+        const auto eventType = nr::rrc::common::HandoverEventTypeToString(eventKind);
         // pull a ReportConfigId value that does not conflict with existing active ReportConfigIds
         const long reportConfigId = getNewReportConfigId(ue);
         // pull a MeasId value that does not conflict with existing active MeasIds 
@@ -1156,7 +985,7 @@ std::vector<long> GnbRrcTask::createMeasConfig(
         auto *rcNR = rcMod->reportConfig.choice.reportConfigNR;
 
         // normal "eventTriggered" events
-        if (!isChoRequest)
+        if (!cho_event)
         {
             rcNR->reportType.present = ASN_RRC_ReportConfigNR__reportType_PR_eventTriggered;
             rcNR->reportType.choice.eventTriggered = asn::New<ASN_RRC_EventTriggerConfig>();
@@ -1169,9 +998,9 @@ std::vector<long> GnbRrcTask::createMeasConfig(
 
                 auto *a2 = et->eventId.choice.eventA2;
                 a2->a2_Threshold.present = ASN_RRC_MeasTriggerQuantity_PR_rsrp;
-                a2->a2_Threshold.choice.rsrp = nr::rrc::common::mtqToASNValue(event.a2_thresholdDbm);
-                a2->hysteresis = nr::rrc::common::hysteresisToASNValue(event.a2_hysteresisDb);
-                a2->timeToTrigger = nr::rrc::common::tttMsToASNValue(event.ttt);
+                a2->a2_Threshold.choice.rsrp = mtqToASNValue(event.a2_thresholdDbm);
+                a2->hysteresis = hysteresisToASNValue(event.a2_hysteresisDb);
+                a2->timeToTrigger = tttMsToASNValue(event.ttt);
                 a2->reportOnLeave = true;
 
                 // Ask UE to include neighbor measurements in A2 reports where possible.
@@ -1189,8 +1018,8 @@ std::vector<long> GnbRrcTask::createMeasConfig(
                 auto *a3 = et->eventId.choice.eventA3;
                 a3->a3_Offset.present = ASN_RRC_MeasTriggerQuantityOffset_PR_rsrp;
                 a3->a3_Offset.choice.rsrp = nr::rrc::common::mtqOffsetToASNValue(event.a3_offsetDb);
-                a3->hysteresis = nr::rrc::common::hysteresisToASNValue(event.a3_hysteresisDb);
-                a3->timeToTrigger = nr::rrc::common::tttMsToASNValue(event.ttt);
+                a3->hysteresis = hysteresisToASNValue(event.a3_hysteresisDb);
+                a3->timeToTrigger = tttMsToASNValue(event.ttt);
                 a3->reportOnLeave = true;
                 a3->useAllowedCellList = false;
 
@@ -1204,11 +1033,11 @@ std::vector<long> GnbRrcTask::createMeasConfig(
 
                 auto *a5 = et->eventId.choice.eventA5;
                 a5->a5_Threshold1.present = ASN_RRC_MeasTriggerQuantity_PR_rsrp;
-                a5->a5_Threshold1.choice.rsrp = nr::rrc::common::mtqToASNValue(event.a5_threshold1Dbm);
+                a5->a5_Threshold1.choice.rsrp = mtqToASNValue(event.a5_threshold1Dbm);
                 a5->a5_Threshold2.present = ASN_RRC_MeasTriggerQuantity_PR_rsrp;
-                a5->a5_Threshold2.choice.rsrp = nr::rrc::common::mtqToASNValue(event.a5_threshold2Dbm);
-                a5->hysteresis = nr::rrc::common::hysteresisToASNValue(event.a5_hysteresisDb);
-                a5->timeToTrigger = nr::rrc::common::tttMsToASNValue(event.ttt);
+                a5->a5_Threshold2.choice.rsrp = mtqToASNValue(event.a5_threshold2Dbm);
+                a5->hysteresis = hysteresisToASNValue(event.a5_hysteresisDb);
+                a5->timeToTrigger = tttMsToASNValue(event.ttt);
                 a5->reportOnLeave = true;
                 a5->useAllowedCellList = false;
 
@@ -1223,24 +1052,28 @@ std::vector<long> GnbRrcTask::createMeasConfig(
                 asn::MakeNew(et->eventId.choice.eventD1_r17);
 
                 auto *d1 = et->eventId.choice.eventD1_r17;
-                d1->distanceThreshFromReference1_r17 = nr::rrc::common::distanceThresholdToASNValue(event.d1_distanceThreshFromReference1);
-                d1->distanceThreshFromReference2_r17 = nr::rrc::common::distanceThresholdToASNValue(event.d1_distanceThreshFromReference2);
 
-                //d1->referenceLocation1_r17.present
+                // use dynamic trigger params for D1 since distance values can change with movement
+                d1->distanceThreshFromReference1_r17 =
+                    distanceThresholdToASNValue(dynTriggerParams.d1_distanceThresholdFromReference1);
+                d1->distanceThreshFromReference2_r17 =
+                    distanceThresholdToASNValue(dynTriggerParams.d1_distanceThresholdFromReference2);
 
+                referenceLocationToAsnValue(dynTriggerParams.d1_referenceLocation1, d1->referenceLocation1_r17);
+                referenceLocationToAsnValue(dynTriggerParams.d1_referenceLocation2, d1->referenceLocation2_r17);
+                d1->hysteresisLocation_r17 = nr::rrc::common::hysteresisLocationToASNValue(dynTriggerParams.d1_hysteresisLocation);
 
                 d1->reportOnLeave_r17 = true;
-                d1->hysteresisLocation_r17 = nr::rrc::common::hysteresisLocationToASNValue(event.d1_hysteresisLocation);
-                d1->timeToTrigger = nr::rrc::common::tttMsToASNValue(event.ttt);
+                d1->timeToTrigger = tttMsToASNValue(event.ttt);
 
                 m_logger->debug("UE[%d] MeasConfig measId=%ld event=D1 distThresh1=%dm distThresh2=%dm "
                                 "hysteresis=%dm "
                                 "ttt=%s",
                                 ue->ueId,
                                 measId,
-                                event.d1_distanceThreshFromReference1,
-                                event.d1_distanceThreshFromReference2,
-                                event.d1_hysteresisLocation,
+                                dynTriggerParams.d1_distanceThresholdFromReference1,
+                                dynTriggerParams.d1_distanceThresholdFromReference2,
+                                dynTriggerParams.d1_hysteresisLocation,
                                 nr::rrc::common::E_TTT_ms_to_string(event.ttt));
             }
             else 
@@ -1277,8 +1110,8 @@ std::vector<long> GnbRrcTask::createMeasConfig(
                 auto *a3 = ctc->condEventId.choice.condEventA3;
                 a3->a3_Offset.present = ASN_RRC_MeasTriggerQuantityOffset_PR_rsrp;
                 a3->a3_Offset.choice.rsrp = nr::rrc::common::mtqOffsetToASNValue(event.a3_offsetDb);
-                a3->hysteresis = nr::rrc::common::hysteresisToASNValue(event.a3_hysteresisDb);
-                a3->timeToTrigger = nr::rrc::common::tttMsToASNValue(event.ttt);
+                a3->hysteresis = hysteresisToASNValue(event.a3_hysteresisDb);
+                a3->timeToTrigger = tttMsToASNValue(event.ttt);
 
                 m_logger->debug("UE[%d] MeasConfig measId=%ld event=condEventA3 offset=%ddB hysteresis=%ddB ttt=%s",
                                 ue->ueId, measId, event.a3_offsetDb, event.a3_hysteresisDb, nr::rrc::common::E_TTT_ms_to_string(event.ttt));
@@ -1290,25 +1123,25 @@ std::vector<long> GnbRrcTask::createMeasConfig(
                 asn::MakeNew(ctc->condEventId.choice.condEventD1_r17);
 
                 auto *d1 = ctc->condEventId.choice.condEventD1_r17;
-                d1->distanceThreshFromReference1_r17 = nr::rrc::common::distanceThresholdToASNValue(event.condD1_distanceThreshFromReference1);
-                d1->distanceThreshFromReference2_r17 = nr::rrc::common::distanceThresholdToASNValue(event.condD1_distanceThreshFromReference2);
-                // d1->referenceLocation1_r17.choice
-                // auto *rl1 = asn::New<ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17>();
-                
-                // d1->referenceLocation1_r17 = referenceLocationToASNValue(event.condD1_referenceLocation1);
-                // d1->referenceLocation2_r17 = referenceLocationToASNValue(event.condD1_referenceLocation2);
 
-                d1->hysteresisLocation_r17 = nr::rrc::common::hysteresisLocationToASNValue(event.condD1_hysteresisLocation);
-                d1->timeToTrigger_r17 = nr::rrc::common::tttMsToASNValue(event.ttt);
+                // set trigger params from provided Trigger object
+                d1->distanceThreshFromReference1_r17 = distanceThresholdToASNValue(dynTriggerParams.condD1_distanceThresholdFromReference1);
+                d1->distanceThreshFromReference2_r17 = distanceThresholdToASNValue(dynTriggerParams.condD1_distanceThresholdFromReference2);
+                referenceLocationToAsnValue(dynTriggerParams.condD1_referenceLocation1, d1->referenceLocation1_r17);
+                referenceLocationToAsnValue(dynTriggerParams.condD1_referenceLocation2, d1->referenceLocation2_r17);
+                d1->hysteresisLocation_r17 = nr::rrc::common::hysteresisLocationToASNValue(dynTriggerParams.condD1_hysteresisLocation);
+
+                // use config for ttt
+                d1->timeToTrigger_r17 = tttMsToASNValue(event.ttt);
 
                 m_logger->debug("UE[%d] MeasConfig measId=%ld event=condEventD1 distThresh1=%dm distThresh2=%dm "
                                 "hysteresis=%dm "
                                 "ttt=%s",
                                 ue->ueId,
                                 measId,
-                                event.condD1_distanceThreshFromReference1,
-                                event.condD1_distanceThreshFromReference2,
-                                event.condD1_hysteresisLocation,
+                                dynTriggerParams.condD1_distanceThresholdFromReference1,
+                                dynTriggerParams.condD1_distanceThresholdFromReference2,
+                                dynTriggerParams.condD1_hysteresisLocation,
                                 nr::rrc::common::E_TTT_ms_to_string(event.ttt));
             }
             else if (eventKind == HandoverEventType::CondT1)
@@ -1317,11 +1150,12 @@ std::vector<long> GnbRrcTask::createMeasConfig(
                 asn::MakeNew(ctc->condEventId.choice.condEventT1_r17);
 
                 auto *t1 = ctc->condEventId.choice.condEventT1_r17;
-                t1->t1_Threshold_r17 = nr::rrc::common::t1ThresholdToASNValue(event.condT1_thresholdSecTS);
-                t1->duration_r17 = nr::rrc::common::durationToASNValue(event.condT1_durationSec);
+                // set trigger params from provided Trigger object
+                t1->t1_Threshold_r17 = nr::rrc::common::t1ThresholdToASNValue(dynTriggerParams.condT1_thresholdSec);
+                t1->duration_r17 = nr::rrc::common::durationToASNValue(dynTriggerParams.condT1_durationSec);
 
                 m_logger->debug("UE[%d] MeasConfig measId=%ld event=condEventT1 threshold=%dsec duration=%dsec",
-                                ue->ueId, measId, event.condT1_thresholdSecTS, event.condT1_durationSec);
+                                ue->ueId, measId, dynTriggerParams.condT1_thresholdSec, dynTriggerParams.condT1_durationSec);
             }
             else
             {
@@ -1349,7 +1183,7 @@ std::vector<long> GnbRrcTask::createMeasConfig(
             reportConfigId,
             eventKind,
             eventType,
-            choProfileId
+            cho_event ? choProfileId : 0   // used to mark events as associated with a CHO candidiate
         });
 
         usedMeasIds.push_back(measId);
@@ -1385,27 +1219,107 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
         ue->usedMeasIdentities.clear();
     }
 
+    // find all the events that need to be included in the reportConfig
+
     auto selectedEvents = m_config->handover.events;
     if (selectedEvents.empty())
     {
-        m_logger->warn("UE[%d] No non-CHO handover events configured; skipping MeasConfig", ue->ueId);
+        m_logger->warn("UE[%d] No non-CHO handover events configured", ue->ueId);
+       
+    }
 
-        // if conditional handover enabled, generate a CHO RRC message
-        if (m_config->handover.choEnabled)
-            processConditionalHandover(ue->ueId, "no-measconfig");
-        
+    // check for CHO enabled, and add CHO events to the event list
+    bool do_cho = m_config->handover.choEnabled;
+    int choProfileIdx = -1;
+    if (do_cho)
+    {
+        choProfileIdx = selectChoCandidateProfile(m_config->handover, m_logger.get());
+        if (choProfileIdx < 0)
+        {
+            m_logger->warn("UE[%d] CHO enabled but no CHO candidate profiles index found; skipping", 
+                        ueId);
+            do_cho = false;
+        }
+
+        // get the conditiuons
+        auto choProfile = m_config->handover.candidateProfiles[choProfileIdx];
+        if (choProfile.conditions.empty())
+        {
+            m_logger->warn("UE[%d] CHO enabled but selected profile has no events; skipping CHO", 
+                        ueId);
+            do_cho = false;
+        }
+        else
+        {
+            // add the CHO events to the list of events to configure in the MeasConfig
+            selectedEvents.insert(selectedEvents.end(), choProfile.conditions.begin(), choProfile.conditions.end());
+        }
+    }
+
+    if (selectedEvents.empty())
+    {
+        m_logger->warn("UE[%d] No handover events to configure after checking CHO conditions, exiting MeasConfig",
+             ue->ueId);
         return;
     }
 
+    bool need_location = false;
+    bool need_time = false;
     std::string eventList{};
     for (size_t i = 0; i < selectedEvents.size(); i++)
     {
+        if (selectedEvents[i].eventKind == HandoverEventType::CondD1 || selectedEvents[i].eventKind == HandoverEventType::D1)
+            need_location = true;
+
+        if (selectedEvents[i].eventKind == HandoverEventType::CondT1)
+            need_time = true;
+
         if (i != 0)
             eventList += ",";
-        eventList += nr::rrc::common::ToString(selectedEvents[i].eventKind);
+        eventList += nr::rrc::common::HandoverEventTypeToString(selectedEvents[i].eventKind);
     }
 
     m_logger->info("UE[%d] Sending MeasConfig with eventType(s)=%s", ue->ueId, eventList.c_str());
+
+    // Determine handover trigger conditions
+
+    // Here is where we call the satellite position calculations to determine the
+    // time and distance when this gnb will be out of range of teh UE, and use that to set the tServiceSec and the distance threshold for D1.
+    // We need this now to determine the time to use for evaluating which gnbs are in range
+
+    const int ownPci = cons::getPciFromNci(m_config->nci);
+
+    // create the dynamic trigger parameters object and load with config values
+    //   as defaults
+    nr::rrc::common::DynamicEventTriggerParams dynTriggerParams{};
+    for (const auto &event : selectedEvents)
+    {
+        if (event.eventKind == HandoverEventType::D1)
+        {
+            dynTriggerParams.d1_distanceThresholdFromReference1 = event.d1_distanceThreshFromReference1;
+            dynTriggerParams.d1_distanceThresholdFromReference2 = event.d1_distanceThreshFromReference2;
+            dynTriggerParams.d1_referenceLocation1 = event.d1_referenceLocation1;
+            dynTriggerParams.d1_referenceLocation2 = event.d1_referenceLocation2;
+            dynTriggerParams.d1_hysteresisLocation = event.d1_hysteresisLocation;
+        }
+        else if (event.eventKind == HandoverEventType::CondD1)
+        {
+            dynTriggerParams.condD1_distanceThresholdFromReference1 = event.condD1_distanceThreshFromReference1;
+            dynTriggerParams.condD1_distanceThresholdFromReference2 = event.condD1_distanceThreshFromReference2;
+            dynTriggerParams.condD1_referenceLocation1 = event.condD1_referenceLocation1;
+            dynTriggerParams.condD1_referenceLocation2 = event.condD1_referenceLocation2;
+            dynTriggerParams.condD1_hysteresisLocation = event.condD1_hysteresisLocation;
+        }
+        else if (event.eventKind == HandoverEventType::CondT1)
+        {
+            dynTriggerParams.condT1_thresholdSec = event.condT1_thresholdSecTS;
+            dynTriggerParams.condT1_durationSec = event.condT1_durationSec;
+        }
+    }
+    
+    // only run the dynamic parameters if we need location of time triggers
+    if (need_location || need_time)
+        calculateTriggerConditions(dynTriggerParams, ownPci, ue);
 
     // Build RRCReconfiguration with measConfig
     auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
@@ -1436,7 +1350,7 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
     ASN_RRC_MeasConfig *mc = nullptr;
     auto *mc_saved = asn::New<ASN_RRC_MeasConfig>();
 
-    auto usedMeasIds = createMeasConfig(mc, ue, selectedEvents, false, 0, 0, 0);
+    auto usedMeasIds = createMeasConfig(mc, ue, selectedEvents, dynTriggerParams, choProfileIdx);
     ies->measConfig = mc;
     
     if (!asn::DeepCopy(asn_DEF_ASN_RRC_MeasConfig, *mc, mc_saved))
@@ -1446,11 +1360,12 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
         m_logger->err("UE[%d] Failed to deep-copy MeasConfig for local storage", ue->ueId);
     }
 
+    // send the measConfig now, don't wait for CHO conditionals since they come from other GNBs
     sendRrcMessage(ue->ueId, pdu);
 
     // store the sent MeasConfig in UE context for potential future reference (e.g. handovers)
     if (mc_saved)
-        ue->sentMeasConfigs.push_back({mc_saved, usedMeasIds});
+        ue->sentMeasConfigs.emplace_back(mc_saved, usedMeasIds);
 
 
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
@@ -1458,9 +1373,9 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
     m_logger->info("UE[%d] MeasConfig (%zu measId entries) sent, txId=%ld",
                    ue->ueId, usedMeasIds.size(), txId);
 
-    // if conditional handover enabled, generate a CHO RRC message
-    if (m_config->handover.choEnabled)
-        processConditionalHandover(ue->ueId, "post-measconfig");
+    // if conditional handover enabled, see if wee need to generate a CHO RRC message
+    if (do_cho)
+        processConditionalHandover(ue->ueId, dynTriggerParams, choProfileIdx);
 }
 
 /**
@@ -1506,8 +1421,8 @@ void GnbRrcTask::evaluateHandoverDecision(int ueId, const std::string &eventType
     if (eventKind == HandoverEventType::A2)
     {
         // A2: serving RSRP < threshold - hysteresis
-        int hysteresisDb = nr::rrc::common::hysteresisFromASNValue(eventConfig->a2_hysteresisDb);
-        int thresholdDbm = nr::rrc::common::mtqFromASNValue(eventConfig->a2_thresholdDbm);
+        int hysteresisDb = hysteresisFromASNValue(eventConfig->a2_hysteresisDb);
+        int thresholdDbm = mtqFromASNValue(eventConfig->a2_thresholdDbm);
         shouldHandover = servingRsrp < (thresholdDbm - hysteresisDb);
         m_logger->debug("UE[%d] HandoverEval: event=A2 measId serving=%ddBm threshold=%ddBm hysteresis=%ddB "
                         "condition=(%d < %d) result=%s",
@@ -1519,7 +1434,7 @@ void GnbRrcTask::evaluateHandoverDecision(int ueId, const std::string &eventType
     {
         // A3: neighbor RSRP > serving RSRP + offset + hysteresis
         int offsetDb = nr::rrc::common::mtqOffsetFromASNValue(eventConfig->a3_offsetDb);
-        int hysteresisDb = nr::rrc::common::hysteresisFromASNValue(eventConfig->a3_hysteresisDb);
+        int hysteresisDb = hysteresisFromASNValue(eventConfig->a3_hysteresisDb);
         shouldHandover = bestNeighPci >= 0 &&
                          bestNeighRsrp > (servingRsrp + offsetDb + hysteresisDb);
         m_logger->debug("UE[%d] HandoverEval: event=A3 serving=%ddBm bestNeighPci=%d bestNeigh=%ddBm "
@@ -1532,9 +1447,9 @@ void GnbRrcTask::evaluateHandoverDecision(int ueId, const std::string &eventType
     else if (eventKind == HandoverEventType::A5)
     {
         // A5: serving RSRP < threshold1 - hysteresis AND neighbor RSRP > threshold2 + hysteresis
-        int threshold1Dbm = nr::rrc::common::mtqFromASNValue(eventConfig->a5_threshold1Dbm);
-        int threshold2Dbm = nr::rrc::common::mtqFromASNValue(eventConfig->a5_threshold2Dbm);
-        int hysteresisDb = nr::rrc::common::hysteresisFromASNValue(eventConfig->a5_hysteresisDb);
+        int threshold1Dbm = mtqFromASNValue(eventConfig->a5_threshold1Dbm);
+        int threshold2Dbm = mtqFromASNValue(eventConfig->a5_threshold2Dbm);
+        int hysteresisDb = hysteresisFromASNValue(eventConfig->a5_hysteresisDb);
         shouldHandover = bestNeighPci >= 0 &&
                          servingRsrp < (threshold1Dbm - hysteresisDb) &&
                          bestNeighRsrp > (threshold2Dbm + hysteresisDb);
@@ -1554,10 +1469,10 @@ void GnbRrcTask::evaluateHandoverDecision(int ueId, const std::string &eventType
         int distThresh2 = nr::rrc::common::distanceThresholdFromASNValue(eventConfig->d1_distanceThreshFromReference2);
         int hysteresisM = nr::rrc::common::hysteresisLocationFromASNValue(eventConfig->d1_hysteresisLocation);
 
-        nr::rrc::common::EventReferenceLocation rl1 = eventConfig->d1_referenceLocation1;
-        nr::rrc::common::EventReferenceLocation rl2 = eventConfig->d1_referenceLocation2;
+        EventReferenceLocation rl1 = eventConfig->d1_referenceLocation1;
+        EventReferenceLocation rl2 = eventConfig->d1_referenceLocation2;
 
-        nr::rrc::common::EventReferenceLocation ue_pos = {
+        EventReferenceLocation ue_pos = {
             ue->uePosition.latitude,
             ue->uePosition.longitude
         };
@@ -1626,7 +1541,7 @@ void GnbRrcTask::evaluateHandoverDecision(int ueId, const std::string &eventType
  * @param ueId 
  * @param eventType 
  */
-void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventType)
+void GnbRrcTask::processConditionalHandover(int ueId, const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, int choProfileIdx)
 {
     // ue RRC context
     auto *ue = tryFindUeByUeId(ueId);
@@ -1636,83 +1551,17 @@ void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventTy
     // if we're still waiting to complete a prior CHO process, don't start another one
     if (ue->choPreparationPending)
         return;
-
-    // Step 1 - Determine handover trigger conditions
-
-    // Here is where we call the satellite position calculations to determine the
-    // time and distance when this gnb will be out of range of teh UE, and use that to set the tServiceSec and the distance threshold for D1.
-    // We need this now to determine the time to use for evaluating which gnbs are in range
-
-    int trigger_timer_sec = NTN_DEFAULT_T_SERVICE_SEC;
-    int distance_threshold_m = 0;
-
+    
     const int ownPci = cons::getPciFromNci(m_config->nci);
-    {
-        auto ownTleOpt   = m_base->satTleStore->find(ownPci);
-        const int theta  = m_config->ntn.elevationMinDeg;
-
-        if (ownTleOpt.has_value() && ue->uePosition.isValid)
-        {
-            // convert ue position from lat/long/alt to ECEF for the calculation
-            EcefPosition ueEcef = GeoToEcef(ue->uePosition);
-
-            calculateTriggerConditions(*ownTleOpt, ueEcef, theta,
-                                       trigger_timer_sec, distance_threshold_m);
-            m_logger->info("UE[%d] CHO trigger: T_exit=%ds d_exit=%dm theta=%ddeg",
-                           ueId, trigger_timer_sec, distance_threshold_m, theta);
-        }
-        else
-        {
-            m_logger->warn("UE[%d] CHO trigger: own TLE or UE position unavailable, "
-                           "using defaults (t=%ds d=%dm)",
-                           ueId, trigger_timer_sec, distance_threshold_m);
-        }
-    }
-
-    // store these so they can be used when the targets respond
-    ue->choPreparationTriggerTimerSec = trigger_timer_sec;
-    ue->choPreparationDistanceThreshold = distance_threshold_m;
-
-    // Step 2 - generate MeasConfig with MeasIds.
-    //   Note  - we could reuse existing MeasIds from non-CHO MeasConfigs, but
-    //   that gets complex.  Instead, we just create new ones that are CHO-specific
-
-
-    // select a CHO candidate profile from the active profile config.
-    auto choProfileIdx = selectChoCandidateProfile(m_config->handover, m_logger.get());
-    if (choProfileIdx < 0)
-    {
-        m_logger->warn("UE[%d] CHO prepare skipped: no CHO candidate profiles found for index %d", 
-                       ueId,
-                       m_config->handover.choDefaultProfileId);
-        return;
-    }
-
-    // create the MeasConfig
-    ASN_RRC_MeasConfig *mc = nullptr;
-    auto usedMeasIds = createMeasConfig(mc, ue, m_config->handover.candidateProfiles[choProfileIdx].conditions, 
-        true, trigger_timer_sec, distance_threshold_m, choProfileIdx);
-
-    if (!mc)
-    {
-        m_logger->warn("UE[%d] CHO prepare skipped (%s): no active MeasConfig identities",
-                       ueId,
-                       eventType.c_str());
-        return;
-    }
-
-    // store the MeasConfig in the UE context waiting for the responses from the targets
-    ue->choPreparationMeasConfig = std::move(mc);
-
-
-    // Step 3 - identify neighbor cells that are possible handover targets.
+    
+    // identify neighbor cells that are possible handover targets.
 
     // Take a snapshot of the runtime neighbor store once; all pointer lookups below
     // remain valid for the lifetime of this stack frame.
     const auto neighborSnapshot = m_base->neighbors->getAll();
 
     // prioritizeNeighbors returns a sorted vector of (neighborCell, score) pairs
-    //   (lower score = higher priority = longer transit time above theta_e)
+    //   (higher score = higher priority = longer transit time above theta_e)
     auto prioritizedNeighbors = prioritizeNeighbors(
         neighborSnapshot, ownPci,
         m_satNeighborhoodCache,
@@ -1720,7 +1569,7 @@ void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventTy
         ue->uePosition.isValid
             ? EcefPosition{ue->uePosition}
             : EcefPosition{},
-        trigger_timer_sec,
+        dynTriggerParams.condT1_thresholdSec,
         m_config->ntn.elevationMinDeg);
 
     // If the profile has a specific targetCellId, filter to that cell.
@@ -1733,9 +1582,8 @@ void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventTy
         const auto *targetNeighbor = findNeighborByNci(neighborSnapshot, *explicitTargetPci);
         if (!targetNeighbor)
         {
-            m_logger->warn("UE[%d] CHO prepare skipped (%s): targetCellId=0x%llx not in neighborList",
+            m_logger->warn("UE[%d] CHO prepare skipped: targetCellId=0x%llx not in neighborList",
                            ueId,
-                           eventType.c_str(),
                            static_cast<long long>(*explicitTargetPci));
             return;
         }
@@ -1746,7 +1594,7 @@ void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventTy
 
     if (prioritizedNeighbors.empty())
     {
-        m_logger->warn("UE[%d] CHO prepare skipped (%s): neighbor list is empty", ueId, eventType.c_str());
+        m_logger->warn("UE[%d] CHO prepare skipped: neighbor list is empty", ueId);
         return;
     }
 
@@ -1774,17 +1622,22 @@ void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventTy
         ue->choPreparationCandidateProfileId.reset();
         ue->choPreparationDistanceThreshold = 0;
         ue->choPreparationTriggerTimerSec = 0;
-        m_logger->warn("UE[%d] CHO prepare skipped (%s): prioritized neighbors have no valid score", ueId,
-                       eventType.c_str());
+        m_logger->warn("UE[%d] CHO prepare skipped: prioritized neighbors have no valid score", ueId);
         return;
     }
 
+    // loop through MeadIds to extract ones associated with the CHO events, and store those in the UE context for reference when we get the CHO response from NGAP
+    std::vector<long> usedMeasIds{};
+    for (const auto &measIdEntry : ue->usedMeasIdentities)
+    {
+        if (measIdEntry.choProfileId == choProfileIdx)
+        {
+            usedMeasIds.push_back(measIdEntry.measId);
+        }
+    }
     ue->choPreparationMeasIds = usedMeasIds;
 
-    int firstCandidatePci = ue->choPreparationCandidatePcis.front();
-    int firstCandidatePriority = ue->choPreparationCandidateScores[firstCandidatePci];
-
-    // Step 4 - send handover required to NGAP with CHO preparation flag for each candidate,
+    // Send handover required to NGAP with CHO preparation flag for each candidate,
     // so NGAP can prepare each target gNB and reply with CHO commands independently.
 
     for (int targetPci : ue->choPreparationCandidatePcis)
@@ -1797,15 +1650,22 @@ void GnbRrcTask::processConditionalHandover(int ueId, const std::string &eventTy
         m_base->ngapTask->push(std::move(w));
     }
 
-    m_logger->info("UE[%d] CHO prepare started (%s): measIds=%zu candidates=%zu targetPCI_1=%d "
-                   "priority_1=%d t-Service=%d",
+    std::string measIdsStr;
+    for (size_t i = 0; i < ue->choPreparationMeasIds.size(); ++i) {
+        if (i > 0) measIdsStr += ", ";
+        measIdsStr += std::to_string(ue->choPreparationMeasIds[i]);
+    }
+    std::string pcisStr;
+    for (size_t i = 0; i < ue->choPreparationCandidatePcis.size(); ++i) {
+        if (i > 0) pcisStr += ", ";
+        pcisStr += std::to_string(ue->choPreparationCandidatePcis[i]);
+    }
+    m_logger->info("UE[%d] CHO prepare send to NGAP: measIds=[%s] total_candidates=%zu targetPCIs=[%s]",
                    ue->ueId,
-                   eventType.c_str(),
-                   ue->choPreparationMeasIds.size(),
+                   measIdsStr.c_str(),
                    ue->choPreparationCandidatePcis.size(),
-                   firstCandidatePci,
-                   firstCandidatePriority,
-                   trigger_timer_sec);
+                   pcisStr.c_str()
+    );
 }
 
 /**
@@ -2001,7 +1861,6 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString
     // remove it from the pending list
     ue->choPreparationCandidatePcis.erase(itPendingPci);
 
-    // get its priority from the priority map
     
     // Create RRCReconfiguration message with the nested RRCReconfiguration from the target gNB, 
     //  and include the CHO conditional reconfiguration IEs with the candidate PCI and the MeasIds that 
@@ -2014,7 +1873,8 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString
 
     auto &reconfig = pdu->message.choice.c1->choice.rrcReconfiguration =
         asn::New<ASN_RRC_RRCReconfiguration>();
-    reconfig->rrc_TransactionIdentifier = getNextTid(ue->ueId);
+    int txId = getNextTid(ue->ueId);
+    reconfig->rrc_TransactionIdentifier = txId;
     reconfig->criticalExtensions.present =
         ASN_RRC_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration;
 
@@ -2033,24 +1893,24 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString
         asn::New<ASN_RRC_ConditionalReconfiguration::
                     ASN_RRC_ConditionalReconfiguration__condReconfigToAddModList>();
 
-    // if CHO measConfig has not be sent to UE yet, send it in this RRCreconfig.
-    //   and copy it to the MeasConfig list
-    if (ue->choPreparationMeasConfig)
-    {
-        auto *mc_saved = asn::New<ASN_RRC_MeasConfig>();
+    // // if CHO measConfig has not be sent to UE yet, send it in this RRCreconfig.
+    // //   and copy it to the MeasConfig list
+    // if (ue->choPreparationMeasConfig)
+    // {
+    //     auto *mc_saved = asn::New<ASN_RRC_MeasConfig>();
     
-        if (!asn::DeepCopy(asn_DEF_ASN_RRC_MeasConfig, *ue->choPreparationMeasConfig, mc_saved))
-        {
-            asn::Free(asn_DEF_ASN_RRC_MeasConfig, mc_saved);
-            mc_saved = nullptr;
-            m_logger->err("UE[%d] Failed to deep-copy MeasConfig for local storage", ue->ueId);
-        }
+    //     if (!asn::DeepCopy(asn_DEF_ASN_RRC_MeasConfig, *ue->choPreparationMeasConfig, mc_saved))
+    //     {
+    //         asn::Free(asn_DEF_ASN_RRC_MeasConfig, mc_saved);
+    //         mc_saved = nullptr;
+    //         m_logger->err("UE[%d] Failed to deep-copy MeasConfig for local storage", ue->ueId);
+    //     }
 
-        ies->measConfig = ue->choPreparationMeasConfig;
-        ue->choPreparationMeasConfig = nullptr; // transfer ownership to the message
-        if (mc_saved)
-            ue->sentMeasConfigs.push_back({mc_saved, ue->choPreparationMeasIds});
-    }
+    //     ies->measConfig = ue->choPreparationMeasConfig;
+    //     ue->choPreparationMeasConfig = nullptr; // transfer ownership to the message
+    //     if (mc_saved)
+    //         ue->sentMeasConfigs.push_back({mc_saved, ue->choPreparationMeasIds});
+    // }
 
     auto *addMod = asn::New<ASN_RRC_CondReconfigToAddMod>();
 
@@ -2071,8 +1931,8 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString
 
     addMod->condReconfigId = condReconfigId;
 
-    // assign a MeasId to this condReconfig
-    //  It will be the MeasId created as part of the 
+    // assign MeasId(s) to this condReconfig
+    //  It will be the MeasId(s) created as part of the earlier MeasConfig
     addMod->condExecutionCond =
         asn::New<ASN_RRC_CondReconfigToAddMod::ASN_RRC_CondReconfigToAddMod__condExecutionCond>();
     for (long measId : ue->choPreparationMeasIds)
@@ -2096,13 +1956,21 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString
     // free all the ASN structures we created (the nested RRCReconfig is now owned by the message and will be freed with it)
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
 
-    m_logger->info("UE[%d] CHO RRCReconfiguration sent with 1 candidate targetPCI=%d condReconfigId=%d "
-                    "measIds=%zu pendingCandidates=%zu",
+    std::string measIdsStr;
+    for (size_t i = 0; i < ue->choPreparationMeasIds.size(); ++i) {
+        if (i > 0) measIdsStr += ", ";
+        measIdsStr += std::to_string(ue->choPreparationMeasIds[i]);
+    }
+
+
+    m_logger->info("UE[%d] CHO RRCReconfiguration sent to UE with 1 candidate targetPCI=%d condReconfigId=%d "
+                    "measIds=[%s] pendingCandidates=%zu txId=%d",
                     ue->ueId,
                     candidatePci,
                     condReconfigId,
-                    ue->choPreparationMeasIds.size(),
-                    ue->choPreparationCandidatePcis.size());
+                    measIdsStr.c_str(),
+                    ue->choPreparationCandidatePcis.size(),
+                    txId);
 
     // remove this candidate from the pending list; if empty, clear the pending state
     ue->choPreparationCandidateScores.erase(candidatePci);
@@ -2112,8 +1980,6 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString
         ue->choPreparationCandidateScores.clear();
         ue->choPreparationMeasIds.clear();
         ue->choPreparationCandidateProfileId.reset();
-        ue->choPreparationDistanceThreshold = 0;
-        ue->choPreparationTriggerTimerSec = 0;
     }
 
     return;
@@ -2380,7 +2246,7 @@ int64_t GnbRrcTask::buildHandoverCommandForTransfer(int ueId, int targetPci, int
 
     ASN_RRC_ReconfigurationWithSync rws{};
     rws.newUE_Identity = static_cast<long>(hoCrnti);
-    rws.t304 = nr::rrc::common::t304MsToEnum(t304Ms);
+    rws.t304 = t304MsToEnum(t304Ms);
 
     ASN_RRC_ServingCellConfigCommon scc{};
     long pci = static_cast<long>(targetPci);
@@ -2429,7 +2295,7 @@ int64_t GnbRrcTask::buildHandoverCommandForTransfer(int ueId, int targetPci, int
         return -1;
     }
 
-    m_logger->info("UE[%d] Target generated handover command with txId=%ld targetPCI=%d newC-RNTI=%d", ueId,
+    m_logger->info("UE[%d] Target generated handover command with txId=%ld targetPCI=%d newCRNTI=%d", ueId,
                    txId, targetPci, hoCrnti);
     m_logger->debug("UE[%d] buildHandoverCommandForTransfer: encoded RRCReconfiguration size=%dB txId=%ld",
                     ueId, encoded.length(), txId);
@@ -2462,7 +2328,8 @@ bool GnbRrcTask::addPendingHandover(int ueId, const HandoverPreparationInfo &han
     auto *ctx = new RrcUeContext(ueId);
     ctx->ueId = ueId;
     ctx->handoverInProgress = true;
-    ctx->handoverTargetPci = m_base->config->getCellId();
+    ctx->handoverTargetPci = cons::getPciFromNci(m_config->nci);
+    ;
     ctx->cRnti = allocateCrnti();
 
     for (const auto &item : handoverPrep.measIdentities)

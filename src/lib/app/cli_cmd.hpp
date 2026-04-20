@@ -42,7 +42,7 @@ struct GnbCliCommand
     {
         STATUS,
         UI_STATUS,
-        INFO,
+        CONFIG_INFO,
         AMF_LIST,
         AMF_INFO,
         UE_LIST,
@@ -56,8 +56,12 @@ struct GnbCliCommand
         SAT_TLE,
         SAT_TIME,
         NEIGHBORS,
+        SET_RSRP, // New command
         VERSION,
     } present;
+    
+    // SET_RSRP
+    int rsrpValue{};
 
     // AMF_INFO
     int amfId{};
@@ -100,9 +104,11 @@ struct UeCliCommand
 {
     enum PR
     {
-        INFO,
+        CONFIG_INFO,
         STATUS,
         UI_STATUS,
+        SET_LOC_WGS84,
+        GET_LOC_WGS84,
         TIMERS,
         PS_ESTABLISH,
         PS_RELEASE,
@@ -111,12 +117,20 @@ struct UeCliCommand
         DE_REGISTER,
         SAT_TIME,
         RLS_STATE,
+        GNB_IP_ADD,
+        GNB_IP_REMOVE,
+        GNB_IP_LIST,
         COVERAGE,
         VERSION,
     } present;
 
     // DE_REGISTER
     EDeregCause deregCause{};
+
+    // SET_LOC_WGS84
+    double geoLat{};
+    double geoLon{};
+    double geoAlt{};
 
     // PS_RELEASE
     std::array<int8_t, 16> psIds{};
@@ -129,6 +143,9 @@ struct UeCliCommand
 
     // SAT_TIME
     SatTimeCliControl satTime{};
+
+    // GNB_IP_ADD / GNB_IP_REMOVE
+    std::string gnbIpJson{};
 
     explicit UeCliCommand(PR present) : present(present)
     {

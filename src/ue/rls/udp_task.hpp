@@ -76,6 +76,9 @@ class RlsUdpTask : public NtsTask
   public:
     void initialize(NtsTask *ctlTask);
     void send(int cellId, const rls::RlsMessage &msg);
+    int addSearchSpaceIps(const std::vector<std::string> &ipAddresses);
+    int removeSearchSpaceIps(const std::vector<std::string> &ipAddresses);
+    std::vector<std::string> listSearchSpaceIps() const;
 };
 
 } // namespace nr::ue

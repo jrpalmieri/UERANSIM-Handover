@@ -35,8 +35,6 @@
 //
 
 #include "task.hpp"
-#include "measurement.hpp"
-#include "position.hpp"
 #include "sib19.hpp"
 
 #include <algorithm>
@@ -46,6 +44,8 @@
 #include <unordered_set>
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/encode.hpp>
+#include <lib/rrc/common/sat_calc.hpp>
+#include <lib/rrc/common/asn_converters.hpp>
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
 #include <utils/sat_time.hpp>
@@ -107,76 +107,144 @@ int selectBestTerrestrial(const std::unordered_set<int> &nonSatPcis, const std::
     return bestPci;
 }
 
-int selectBestSatellite(const std::unordered_set<int> &satPcis)
+std::vector<nr::rrc::common::PciScore> UeRrcTask::selectBestSatellite(
+    int servingCellId,
+    const std::unordered_set<int> &satPcis)
 {
-    return -1;
-    // loop through SIB19 data for all satellite candidates and calculate the transit time
+    std::vector<nr::rrc::common::PciScore> empty{};
+    if (satPcis.empty())
+        return empty;
 
-    // for (int pci : satPcis)
-    // {
-    //     auto it = m_cellDesc.find(pci);
-    //     if (it == m_cellDesc.end())
-    //         continue;
+    const int64_t satNowMs = m_base->satTime != nullptr ? m_base->satTime->CurrentSatTimeMillis()
+                                                         : utils::CurrentTimeMillis();
 
-    //     auto &sib19 = it->second.sib19;
-    //     if (!sib19.hasSib19)
-    //         continue;
+    std::vector<int> satPciList{};
+    satPciList.reserve(satPcis.size());
+    for (int pci : satPcis)
+        satPciList.push_back(pci);
 
-    //     // only consider candidates with valid SIB19 ephemeris
-    //     if (!isSib19EphemerisValid(sib19, utils::CurrentTimeMillis()))
-    //         continue;
+    int servingPci = servingCellId;
+    auto servingIt = m_cellDesc.find(servingCellId);
+    if (servingIt != m_cellDesc.end() && servingIt->second.sib1.hasSib1)
+        servingPci = cons::getPciFromNci(servingIt->second.sib1.nci);
 
-    //     // calculate transit time based on current SIB19 ephemeris and satellite position extrapolation
-    //     //  (similar to the serving cell position calculation in evaluateConditionD1)
+    auto stateResolver = [&](int pci, int offsetSec, nr::rrc::common::SatEcefState &state) -> bool {
+        const int64_t targetSatMs = satNowMs + static_cast<int64_t>(offsetSec) * 1000LL;
 
+        const UeCellDesc *descForPci = nullptr;
+        std::optional<Sib19Info::PciEntry> entryForPci{};
 
-    // // calculate reference position for satellite, if serving cell is a sat
-    // //   used in all D1 condition checks that use nadir
-    // EcefPosition servingPosNadir{0, 0, 0};
+        for (const auto &[cellId, desc] : m_cellDesc)
+        {
+            if (!desc.sib19.hasSib19)
+                continue;
 
-    // bool servingPosValid = false;
-   
-    // // check if the serving cell ID is in the SIB19 map.  if it is, the serving cell is a sat
-    // auto servingIt = m_cellDesc.find(servingCellId);
-    // if (servingIt != m_cellDesc.end() && servingIt->second.sib19.hasSib19)
-    // {
-    //     auto &sib19 = servingIt->second.sib19;
-    //     //int64_t relativeNow = now - m_startedTime;
+            bool matches = false;
+            if (cellId == pci)
+                matches = true;
+            else if (desc.sib1.hasSib1 && cons::getPciFromNci(desc.sib1.nci) == pci)
+                matches = true;
+            if (desc.sib19.entriesByPci.count(pci) != 0)
+                matches = true;
 
-    //     // only use if the SIB19 data is current (within the validity threshold)
-    //     if (isSib19EphemerisValid(sib19, now))
-    //     {
-            
-    //         // get satellite's current position using current SIB19 ephemeris and
-    //         //   motion extrapolation based on time delta from SIB19 epoch to now
+            if (!matches)
+                continue;
 
-    //         double dtSec = (now - (sib19.ntnConfig.epochTime)*10) / 1000.0;  // sib19 epoch is counted in 10ms units
-    //         double satX, satY, satZ;
-    //         // if position is stored in SIB19 as ECEF position + velocity, apply delta based on time 
-    //         if (sib19.ntnConfig.ephemerisInfo.type == EEphemerisType::POSITION_VELOCITY)
-    //         {
-    //             extrapolateSatelliteEcefPosition(
-    //                 sib19.ntnConfig.ephemerisInfo.posVel,
-    //                 dtSec, satX, satY, satZ);
+            descForPci = &desc;
+            auto itEntry = desc.sib19.entriesByPci.find(pci);
+            if (itEntry != desc.sib19.entriesByPci.end())
+                entryForPci = itEntry->second;
+            break;
+        }
 
-    //             // convert position to nadir for distance calculations
-    //             servingPosNadir = computeNadir(satX, satY, satZ);
-    //             servingPosValid = true;
+        if (descForPci == nullptr)
+            return false;
 
-    //         }
-    //         // otherwise it is stored as orbital parameters that need to be converted to ECEF position
-    //         //   using the SIB19 epoch as reference time
-    //         else  // ORBITAL_PARAMETERS
-    //         {
-    //             int64_t epochMs = static_cast<int64_t>(sib19.ntnConfig.epochTime) * 10LL;
-    //             propagateKeplerian(
-    //                 sib19.ntnConfig.ephemerisInfo.orbital,
-    //                 epochMs, now, satX, satY, satZ);
-    //             servingPosNadir = computeNadir(satX, satY, satZ);
-    //             servingPosValid = true;
-    //         }
-    //     }
-    // }
+        const Sib19Info &sib19 = descForPci->sib19;
+        if (!isSib19EphemerisValid(sib19, satNowMs))
+            return false;
+
+        const NtnConfig &ntnCfg = entryForPci.has_value() ? entryForPci->ntnConfig : sib19.ntnConfig;
+        const int64_t epochMs = static_cast<int64_t>(ntnCfg.epochTime) * 10LL;
+
+        if (ntnCfg.ephemerisInfo.type == EEphemerisType::POSITION_VELOCITY)
+        {
+            const auto &pv = ntnCfg.ephemerisInfo.posVel;
+            const double dtSec = static_cast<double>(targetSatMs - epochMs) / 1000.0;
+            state.pos = ExtrapolateEcefPosition(EcefPosition{pv.positionX, pv.positionY, pv.positionZ},
+                                                EcefPosition{pv.velocityVX, pv.velocityVY, pv.velocityVZ},
+                                                dtSec);
+        }
+        else if (ntnCfg.ephemerisInfo.type == EEphemerisType::ORBITAL_PARAMETERS)
+        {
+            const auto &orb = ntnCfg.ephemerisInfo.orbital;
+            nr::rrc::common::KeplerianElementsRaw raw{};
+            raw.semiMajorAxis = orb.semiMajorAxis;
+            raw.eccentricity = orb.eccentricity;
+            raw.periapsis = orb.periapsis;
+            raw.longitude = orb.longitude;
+            raw.inclination = orb.inclination;
+            raw.meanAnomaly = orb.meanAnomaly;
+            state.pos = nr::rrc::common::PropagateKeplerianToEcef(raw, epochMs, targetSatMs);
+        }
+        else
+        {
+            return false;
+        }
+
+        state.nadir = ComputeNadir(state.pos);
+        return true;
+    };
+
+    auto endpointResolver = [&](int pci, nr::rrc::common::NeighborEndpoint &endpoint) -> bool {
+        if (m_base == nullptr || m_base->g_allCellMeasurements == nullptr)
+            return false;
+
+        int resolvedCellId = -1;
+        if (m_cellDesc.count(pci) != 0)
+        {
+            resolvedCellId = pci;
+        }
+        else
+        {
+            for (const auto &[cellId, desc] : m_cellDesc)
+            {
+                if (desc.sib1.hasSib1 && cons::getPciFromNci(desc.sib1.nci) == pci)
+                {
+                    resolvedCellId = cellId;
+                    break;
+                }
+            }
+        }
+
+        std::shared_lock lock(m_base->g_allCellMeasurements->cellMeasurementsMutex);
+        for (const auto &cm : m_base->g_allCellMeasurements->cellMeasurements)
+        {
+            if (cm.cellId != pci && cm.cellId != resolvedCellId)
+                continue;
+            if (cm.ip.empty())
+                continue;
+
+            endpoint.ipAddress = cm.ip;
+            endpoint.port = cons::RadioLinkPort;
+            return true;
+        }
+        return false;
+    };
+
+    static constexpr int MAX_LOOKAHEAD_SEC = 7200;
+    static constexpr int UE_ELEVATION_MIN_DEG = 5;
+
+    const EcefPosition ueEcef = EcefPosition{m_base->UeLocation};
+    return nr::rrc::common::PrioritizeTargetSats(servingPci,
+                                                 satPciList,
+                                                 ueEcef,
+                                                 0,
+                                                 UE_ELEVATION_MIN_DEG,
+                                                 MAX_LOOKAHEAD_SEC,
+                                                 stateResolver,
+                                                 endpointResolver);
+
 
 
 }
@@ -530,67 +598,6 @@ void UeRrcTask::parseConditionalReconfiguration(
 }
 
 
-
-
-
-// // Evaluate a single condition with time-to-trigger.
-// // Returns the margin (>0 = satisfied after TTT) and updates cond.satisfied.
-// static double evaluateConditionWithTTT(
-//     ChoCondition &cond,
-//     int64_t now,
-//     int servingRsrp,
-//     int targetRsrp,
-//     double ueDistance,
-//     Logger *logger,
-//     int candidateId)
-// {
-
-//     // if there is a timer criterion, check if it is met.
-//     bool timerMet = isTimerCriterionMet(cond, now, logger, candidateId);
-//     if (!timerMet)
-//         return -1.0;
-
-
-//     // evaluate the base condition first to see if it's currently met, and to get the margin for logging and tie-breaking.
-//     double margin = evaluateConditionRaw(cond, now, servingRsrp, targetRsrp,
-//                                           ueDistance, logger, candidateId);
-//     bool measurementMet = (margin > 0);
-
-//     if (measurementMet)
-//     {
-//         // check time-to-trigger
-
-//         // if this is teh first time condition is met, start the ttt timer
-//         if (cond.tttEnteringTimestamp == 0)
-//             cond.tttEnteringTimestamp = now;
-
-//         // check for condition held for duration of timer
-//         int64_t held = now - cond.tttEnteringTimestamp;
-//         if (held >= cond.timeToTriggerMs)
-//         {
-//             cond.satisfied = true;
-//             return margin;
-//         }
-//         else
-//         {
-//             cond.satisfied = false;
-//             return -1.0; // Not yet held long enough
-//         }
-//     }
-//     else
-//     {
-//         // reset the TTT timer if condition is not met
-//         if (cond.tttEnteringTimestamp != 0)
-//         {
-//             logger->debug("CHO candidate %d: %s condition no longer satisfied, resetting TTT",
-//                           candidateId, eventTypeName(cond.eventType));
-//             cond.tttEnteringTimestamp = 0;
-//         }
-//         cond.satisfied = false;
-//         return -1.0;
-//     }
-// }
-
 /**
  * @brief Evaluates each CHO candidate for condition satisfaction.  For candidates whose conditions 
  *  are all satisfied, triggers handover to the candidate.  Applies tie-breaking logic if more than 
@@ -608,12 +615,13 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
     if (m_choCandidates.empty() || m_handoverInProgress || m_measurementEvalSuspended)
         return false;
 
-    std::vector<int> triggeredCandidateIndices;  // indices of candidates whose conditions are currently satisfied
-    for (const auto &cand : m_choCandidates)
+    std::vector<int> triggeredCandidateIndices;  // vector indices of candidates whose conditions are currently satisfied
+    for (int i = 0; i < static_cast<int>(m_choCandidates.size()); i++)
     {
-        m_logger->debug("Evaluating CHO candidate %d: targetPCI=%d conditions=%s priority=%d executed=%s",
+        const auto &cand = m_choCandidates[i];
+        m_logger->debug("Evaluating CHO candidate %d: targetPCI=%d conditions=%s executed=%s",
                         cand.candidateId, cand.targetPci, conditionGroupStr(cand.measIds, m_measConfig).c_str(),
-                        cand.executionPriority, cand.executed ? "yes" : "no");
+                        cand.executed ? "yes" : "no");
 
         // check each condition for satisfaction
         std::size_t total_satisfied = 0;
@@ -630,7 +638,7 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
             m_logger->debug("CHO candidate %d: triggered by event group %s",
                             cand.candidateId, conditionGroupStr(cand.measIds, m_measConfig).c_str());
 
-            triggeredCandidateIndices.push_back(cand.candidateId);
+            triggeredCandidateIndices.push_back(i);
         }
     }
 
@@ -644,7 +652,7 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
     // One triggered candidate – no need for tie-breaking, just execute it.
     if (triggeredCandidateIndices.size() == 1)
     {
-        int ci = triggeredCandidateIndices[0];
+        auto ci = triggeredCandidateIndices[0];
         auto &cand = m_choCandidates[ci];
         m_logger->info("CHO candidate %d is only triggered candidate; executing handover to PCI %d",
                        cand.candidateId, cand.targetPci);
@@ -659,14 +667,31 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
     
     // generate list of PCIs that are sats
     std::unordered_set<int> satPcis;
-    std::map<int, int> PciToChoId;
+    std::map<int, int> PciToVecIdx;
     std::unordered_set<int> nonSatPcis;
     for (int ci : triggeredCandidateIndices)
     {
         auto &cand = m_choCandidates[ci];
-        PciToChoId[cand.targetPci] = ci;
-        auto it = m_cellDesc.find(cand.targetPci);
-        if (it != m_cellDesc.end() && it->second.sib19.hasSib19)
+        PciToVecIdx[cand.targetPci] = ci;
+        bool isSatCandidate = false;
+        for (const auto &[cellId, desc] : m_cellDesc)
+        {
+            (void)cellId;
+            if (!desc.sib19.hasSib19)
+                continue;
+            if (desc.sib19.entriesByPci.count(cand.targetPci) != 0)
+            {
+                isSatCandidate = true;
+                break;
+            }
+            if (desc.sib1.hasSib1 && cons::getPciFromNci(desc.sib1.nci) == cand.targetPci)
+            {
+                isSatCandidate = true;
+                break;
+            }
+        }
+
+        if (isSatCandidate)
         {
             satPcis.insert(cand.targetPci);
         }
@@ -676,113 +701,27 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
         }
     }
 
-    // select best sat
-    int bestSatPci = selectBestSatellite(satPcis);
+    int bestSatPci = -1;
+    const auto prioritizedSat = selectBestSatellite(servingCellId, satPcis);
+    if (!prioritizedSat.empty())
+        bestSatPci = prioritizedSat.front().first;
 
     // for non-SATs, we can apply the normal RSRP-based tie-breaking logic (highest RSRP wins)
     int bestNonSatPci = selectBestTerrestrial(nonSatPcis, allMeas);
 
     // for now, we pick the best SAT candidate if one exists, otherwise we pick the best non-SAT candidate.
     int bestPci = bestSatPci > 0 ? bestSatPci : bestNonSatPci;
+    if (bestPci <= 0 || PciToVecIdx.count(bestPci) == 0)
+    {
+        m_logger->warn("CHO tie-break could not choose a valid candidate");
+        return false;
+    }
 
-    auto &foundCand = m_choCandidates[PciToChoId[bestPci]];
+    auto &foundCand = m_choCandidates[PciToVecIdx[bestPci]];
     m_logger->info("CHO candidate %d selected as best candidate; executing handover to PCI %d",
                     foundCand.candidateId, foundCand.targetPci);
     executeChoCandidate(foundCand);
     return true;
-
-    // current satellite-domain time in milliseconds
-    // int64_t now = m_base->satTime != nullptr
-    //                   ? m_base->satTime->CurrentSatTimeMillis()
-    //                   : utils::CurrentTimeMillis();
-
-    // copy the current cell power measurements under lock to avoid holding the lock while evaluating conditions
-    // std::map<int, int> allMeas;
-    // {
-    //     std::shared_lock lock(m_base->cellDbMeasMutex);
-    //     allMeas = m_base->cellDbMeas;
-    // }
-
-    // current cellId
-    // int servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
-    // current cell RSRP
-    // int servingRsrp = getServingCellRsrp(servingCellId, allMeas);
-
-
-
-    // // Phase 1: Evaluate all conditions for all candidates.
-    // // Collect candidates whose entire condition group is satisfied.
-    // struct TriggeredCandidate
-    // {
-    //     int index;           // index into m_choCandidates
-    //     double minMargin;    // minimum margin across all conditions (bottleneck)
-    //     int targetRsrp;
-    // };
-    // std::vector<TriggeredCandidate> triggered;
-
-    // for (size_t ci = 0; ci < m_choCandidates.size(); ci++)
-    // {
-    //     auto &cand = m_choCandidates[ci];
-    //     // if this candidate is marked as executed, or if it has no conditions (invalid), then skip evaluating it
-    //     if (cand.executed || cand.conditions.empty())
-    //         continue;
-
-    //     // Find target cell RSRP for this candidate (used by A3, A5 conditions).
-    //     int targetRsrp = cons::MIN_RSRP;
-    //     for (auto &[cellId, meas] : allMeas)
-    //     {
-    //         // match by PCI value
-    //         if (cellId == cand.targetPci)
-    //         {
-    //             targetRsrp = meas;
-    //             break;
-    //         }
-    //         // if PCI match didn;t work, try matching by NCI
-    //         if (m_cellDesc.count(cellId))
-    //         {
-    //             int nciLow = cons::getPciFromNci(m_cellDesc[cellId].sib1.nci);
-    //             if (nciLow == cand.targetPci)
-    //             {
-    //                 targetRsrp = meas;
-    //                 break;
-    //             }
-    //         }
-    //     }
-
-    //     bool allSatisfied = true;
-    //     double minMargin = 1e9;
-
-    //     // loop through each condition in the candidate's condition group
-    //     for (auto &cond : cand.conditions)
-    //     {
-    //         // if condition is event D1 - calculate distance from UE to reference point
-    //         double servingD1DistanceM = 0.0;
-    //         if (cond.eventType == EChoEventType::D1)
-    //         {
-    //             // for fixed reference, calculate distance from UE to fixed point
-    //             if (cond.d1ReferenceType == ED1ReferenceType::Fixed)
-    //             {
-    //                 EcefPosition ref{cond.d1RefX, cond.d1RefY, cond.d1RefZ};
-    //                 servingD1DistanceM = ecefDistance(uePos.ecef, ref);
-    //                 servingPosValid = true;
-    //             }
-    //             // for nadir reference, calculate distance from UE to satellite nadir position (if available)
-    //             else if (cond.d1ReferenceType == ED1ReferenceType::Nadir && servingPosValid)
-    //             {
-    //                 servingD1DistanceM = ecefDistance(uePos.ecef, servingPosNadir);
-    //             }
-    //             // if not fixed and no valid distance found for serving cell — cannot evaluate D1 conditions for this candidate
-    //             //  so leave distance a 0, which will cause teh condition to be not satisfied and the TTT timer to reset
-    //             else {
-
-    //                 m_logger->debug("CHO candidate %d: D1 skipped – serving position unavailable",
-    //                                     cand.candidateId);
-    //             }
-
-    //             // D1 entering condition: distance > threshold + hysteresis.
-    //             cond.d1ResolvedThreshM = cond.d1ThresholdM + static_cast<double>(cond.hysteresis);
-    //         }
-
 
 }
 

@@ -81,14 +81,25 @@ opt::OptionsResult::OptionsResult(int argc, char **argv, const opt::OptionsDescr
     if (argc <= 0 && desc.helpIfEmpty)
         showHelp();
 
+    bool afterDoubleDash = false;
     for (int i = 0; i < argc; i++)
     {
         auto &arg = argv[i];
 
-        if (strlen(arg) == 0 || strcmp(arg, "-") == 0 || strcmp(arg, "--") == 0)
+        if (strlen(arg) == 0 || strcmp(arg, "-") == 0)
         {
             showError("Empty option is not allowed");
             break;
+        }
+
+        if (afterDoubleDash) {
+            m_positionalParams.emplace_back(arg);
+            continue;
+        }
+
+        if (strcmp(arg, "--") == 0) {
+            afterDoubleDash = true;
+            continue;
         }
 
         int dashCount = 0;

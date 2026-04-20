@@ -26,6 +26,10 @@ imei: '356938035643803'
 # IMEISV number of the device. It is used if no SUPI and IMEI is provided
 imeiSv: '4370816125816151'
 
+# Optional staged node name template (preview only, not active yet):
+# Supported UE tokens: {imsi}, {imsi[-N:]} (example below uses last 4 IMSI digits)
+# nodeNameTemplate: 'ue-{imsi[-4:]}'
+
 # Network mask used for the UE's TUN interface to define the subnet size
 tunNetmask: '255.255.255.0'
 

@@ -1,3 +1,11 @@
+### set-rsrp
+- Syntax: `set-rsrp <rsrp>`
+- Args/options:
+  - one positional integer value (dBm, e.g. -90)
+- Expected output:
+  - Success: `Updated fixed RSRP to <value> dBm`
+  - Error: `RSRP value out of range (must be between -140 and -40 dBm)`
+  - This sets the global fixed RSRP value for the gNB at runtime and switches to Fixed mode.
 # UERANSIM CLI Commands (UE and gNB)
 
 This document lists the runtime CLI commands supported by UERANSIM UE and gNB nodes, including
@@ -35,8 +43,8 @@ In interactive mode, type `commands` to list subcommands available for that node
 
 ## gNB Commands
 
-### info
-- Syntax: `info`
+### config-info
+- Syntax: `config-info`
 - Args/options: none
 - Expected output:
   - YAML object with full gNB config (`ToJson(*config)`).
@@ -217,8 +225,8 @@ In interactive mode, type `commands` to list subcommands available for that node
 
 ## UE Commands
 
-### info
-- Syntax: `info`
+### config-info
+- Syntax: `config-info`
 - Args/options: none
 - Expected output:
   - YAML object with UE identity/config summary, including fields like:

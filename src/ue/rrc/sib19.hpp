@@ -26,6 +26,7 @@
 #include <string>
 #include <unordered_map>
 
+#include <lib/rrc/common/sat_calc.hpp>
 #include <utils/json.hpp>
 #include <utils/position_calcs.hpp>
 
@@ -325,15 +326,7 @@ inline void extrapolateSatelliteEcefPosition(const SatPositionVelocity &posVel,
  */
 inline double solveKepler(double M, double e)
 {
-    double E = M;
-    for (int i = 0; i < 20; ++i)
-    {
-        double dE = (M - E + e * std::sin(E)) / (1.0 - e * std::cos(E));
-        E += dE;
-        if (std::fabs(dE) < 1e-12)
-            break;
-    }
-    return E;
+    return nr::rrc::common::SolveKepler(M, e);
 }
 
 /**
@@ -359,62 +352,18 @@ inline void propagateKeplerian(const SatOrbitalParameters &orb,
                                 int64_t epochMs, int64_t tMs,
                                 double &x, double &y, double &z)
 {
-    constexpr double TWO_PI  = 2.0 * M_PI;
-    constexpr double GM      = 3.986004418e14;  // m³/s²
-    constexpr double OMEGA_E = 7.2921150e-5;    // Earth rotation rate (rad/s)
-    constexpr double SCALE   = TWO_PI / (1LL << 28);
-
-    // Decode fixed-point integers → physical values
-    const double a     = static_cast<double>(orb.semiMajorAxis);
-    const double e     = static_cast<double>(orb.eccentricity) / static_cast<double>(1LL << 20);
-    const double omega = orb.periapsis   * SCALE;   // argument of perigee (rad)
-    const double Omega = orb.longitude   * SCALE;   // RAAN (rad)
-    const double inc   = orb.inclination * SCALE;   // inclination (rad)
-    const double M0    = orb.meanAnomaly * SCALE;   // mean anomaly at epoch (rad)
-
-    // Mean motion (rad/s)
-    const double n = std::sqrt(GM / (a * a * a));
-
-    // Propagate mean anomaly to target time
-    const double dtSec = static_cast<double>(tMs - epochMs) / 1000.0;
-    double M = std::fmod(M0 + n * dtSec, TWO_PI);
-    if (M < 0.0) M += TWO_PI;
-
-    // Eccentric anomaly via Newton-Raphson
-    const double E = solveKepler(M, e);
-
-    // True anomaly
-    const double nu = 2.0 * std::atan2(
-        std::sqrt(1.0 + e) * std::sin(E / 2.0),
-        std::sqrt(1.0 - e) * std::cos(E / 2.0));
-
-    // Orbital radius and position in perifocal frame
-    const double r    = a * (1.0 - e * std::cos(E));
-    const double xOrb = r * std::cos(nu);
-    const double yOrb = r * std::sin(nu);
-
-    // Rotation matrix: perifocal → ECI
-    const double cO = std::cos(Omega), sO = std::sin(Omega);
-    const double co = std::cos(omega), so = std::sin(omega);
-    const double ci = std::cos(inc),   si = std::sin(inc);
-
-    const double xEci = (cO*co - sO*so*ci) * xOrb + (-cO*so - sO*co*ci) * yOrb;
-    const double yEci = (sO*co + cO*so*ci) * xOrb + (-sO*so + cO*co*ci) * yOrb;
-    const double zEci = (so*si)            * xOrb + ( co*si)             * yOrb;
-
-    // ECI → ECEF: rotate by GMST at target time
-    // GMST (radians) from Unix epoch using the standard IAU formula
-    const double tSec = static_cast<double>(tMs) / 1000.0;
-    const double jd   = 2440587.5 + tSec / 86400.0;         // Julian date
-    const double d    = jd - 2451545.0;                      // days since J2000
-    double gmst = std::fmod((280.46061837 + 360.98564736629 * d) * (M_PI / 180.0), TWO_PI);
-    if (gmst < 0.0) gmst += TWO_PI;
-
-    x =  xEci * std::cos(gmst) + yEci * std::sin(gmst);
-    y = -xEci * std::sin(gmst) + yEci * std::cos(gmst);
-    z =  zEci;
-
-    (void)OMEGA_E;  // retained for reference; GMST formula subsumes it
+    const nr::rrc::common::KeplerianElementsRaw raw{
+        orb.semiMajorAxis,
+        orb.eccentricity,
+        orb.periapsis,
+        orb.longitude,
+        orb.inclination,
+        orb.meanAnomaly,
+    };
+    EcefPosition propagated = nr::rrc::common::PropagateKeplerianToEcef(raw, epochMs, tMs);
+    x = propagated.x;
+    y = propagated.y;
+    z = propagated.z;
 }
 
 /**

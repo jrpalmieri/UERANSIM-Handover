@@ -3,11 +3,10 @@
 //
 
 #include "task.hpp"
-#include "measurement.hpp"
-#include "position.hpp"
 
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/encode.hpp>
+#include <lib/rrc/common/asn_converters.hpp>
 #include <ue/nas/task.hpp>
 
 #include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
@@ -43,6 +42,21 @@
 
 namespace nr::ue
 {
+
+using nr::rrc::common::E_TTT_ms;
+using nr::rrc::common::HandoverEventType;
+using nr::rrc::common::ReportConfigEvent;
+using nr::rrc::common::hysteresisFromASNValue;
+using nr::rrc::common::mtqFromASNValue;
+using nr::rrc::common::mtqOffsetFromASNValue;
+using nr::rrc::common::referenceLocationFromAsnValue;
+using nr::rrc::common::t304EnumToMs;
+using nr::rrc::common::t1ThresholdFromASNValue;
+using nr::rrc::common::durationFromASNValue;
+using nr::rrc::common::distanceThresholdFromASNValue;
+using nr::rrc::common::hysteresisLocationFromASNValue;
+
+
 
 namespace
 {
@@ -156,7 +170,7 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
 
             // rc is the new UeReportConfig we will populate based on the 
             //  ASN ReportConfig and add to cfg.reportConfigs
-            nr::rrc::common::ReportConfigEvent rc{};
+            ReportConfigEvent rc{};
             rc.reportConfigId = static_cast<int>(item->reportConfigId);
 
             // eventTriggered reports
@@ -174,34 +188,34 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
                 {
                     auto *a2 = eTrig->eventId.choice.eventA2;
                     if (!a2) break;
-                    rc.eventKind = nr::rrc::common::HandoverEventType::A2;
-                    rc.a2_thresholdDbm = nr::rrc::common::mtqFromASNValue(measTriggerQuantityValue(a2->a2_Threshold));
-                    rc.a2_hysteresisDb = nr::rrc::common::hysteresisFromASNValue(a2->hysteresis);
-                    rc.ttt = static_cast<nr::rrc::common::E_TTT_ms>(a2->timeToTrigger);
+                    rc.eventKind = HandoverEventType::A2;
+                    rc.a2_thresholdDbm = mtqFromASNValue(measTriggerQuantityValue(a2->a2_Threshold));
+                    rc.a2_hysteresisDb = hysteresisFromASNValue(a2->hysteresis);
+                    rc.ttt = static_cast<E_TTT_ms>(a2->timeToTrigger);
                     break;
                 }
                 case ASN_RRC_EventTriggerConfig__eventId_PR_eventA3:
                 {
                     auto *a3 = eTrig->eventId.choice.eventA3;
                     if (!a3) break;
-                    rc.eventKind = nr::rrc::common::HandoverEventType::A3;
+                    rc.eventKind = HandoverEventType::A3;
                     rc.a3_offsetDb =
-                        nr::rrc::common::mtqOffsetFromASNValue(measTriggerQuantityOffsetValue(a3->a3_Offset));
-                    rc.a3_hysteresisDb = nr::rrc::common::hysteresisFromASNValue(a3->hysteresis);
-                    rc.ttt = static_cast<nr::rrc::common::E_TTT_ms>(a3->timeToTrigger);
+                        mtqOffsetFromASNValue(measTriggerQuantityOffsetValue(a3->a3_Offset));
+                    rc.a3_hysteresisDb = hysteresisFromASNValue(a3->hysteresis);
+                    rc.ttt = static_cast<E_TTT_ms>(a3->timeToTrigger);
                     break;
                 }
                 case ASN_RRC_EventTriggerConfig__eventId_PR_eventA5:
                 {
                     auto *a5 = eTrig->eventId.choice.eventA5;
                     if (!a5) break;
-                    rc.eventKind = nr::rrc::common::HandoverEventType::A5;
+                    rc.eventKind = HandoverEventType::A5;
                     rc.a5_threshold1Dbm =
-                        nr::rrc::common::mtqFromASNValue(measTriggerQuantityValue(a5->a5_Threshold1));
+                        mtqFromASNValue(measTriggerQuantityValue(a5->a5_Threshold1));
                     rc.a5_threshold2Dbm =
-                        nr::rrc::common::mtqFromASNValue(measTriggerQuantityValue(a5->a5_Threshold2));
-                    rc.a5_hysteresisDb = nr::rrc::common::hysteresisFromASNValue(a5->hysteresis);
-                    rc.ttt = static_cast<nr::rrc::common::E_TTT_ms>(a5->timeToTrigger);
+                        mtqFromASNValue(measTriggerQuantityValue(a5->a5_Threshold2));
+                    rc.a5_hysteresisDb = hysteresisFromASNValue(a5->hysteresis);
+                    rc.ttt = static_cast<E_TTT_ms>(a5->timeToTrigger);
                     break;
                 }
                 // D1 event
@@ -211,11 +225,17 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
                     if (!d1)
                         break;
 
-                    rc.eventKind = nr::rrc::common::HandoverEventType::D1;
-                    rc.d1_hysteresisLocation = static_cast<double>(d1->hysteresisLocation_r17);
-                    rc.ttt = static_cast<nr::rrc::common::E_TTT_ms>(d1->timeToTrigger);
-                    rc.d1_distanceThreshFromReference1 = static_cast<double>(d1->distanceThreshFromReference1_r17);
-                    rc.d1_distanceThreshFromReference2 = static_cast<double>(d1->distanceThreshFromReference2_r17);
+                    rc.eventKind = HandoverEventType::D1;
+                    rc.d1_hysteresisLocation = hysteresisLocationFromASNValue(d1->hysteresisLocation_r17);
+                    rc.d1_distanceThreshFromReference1 = distanceThresholdFromASNValue(d1->distanceThreshFromReference1_r17);
+                    rc.d1_distanceThreshFromReference2 = distanceThresholdFromASNValue(d1->distanceThreshFromReference2_r17);
+
+                    referenceLocationFromAsnValue(d1->referenceLocation1_r17,
+                        rc.d1_referenceLocation1);
+                    referenceLocationFromAsnValue(d1->referenceLocation2_r17,
+                        rc.d1_referenceLocation2);
+                    rc.ttt = static_cast<E_TTT_ms>(d1->timeToTrigger);
+
                     break;
                 }
                 default:
@@ -238,9 +258,10 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
                     if (!t1)
                         break;
 
-                    rc.eventKind = nr::rrc::common::HandoverEventType::CondT1;
-                    rc.condT1_durationSec = t1->duration_r17;
-                    rc.condT1_thresholdSecTS = static_cast<int64_t>(t1->t1_Threshold_r17);
+                    rc.eventKind = HandoverEventType::CondT1;
+                    rc.condT1_durationSec = durationFromASNValue(t1->duration_r17);
+                    rc.condT1_thresholdSecTS = t1ThresholdFromASNValue(t1->t1_Threshold_r17);
+                    rc.ttt = static_cast<E_TTT_ms>(E_TTT_ms::ms0);   // CondT1 doesn't have a TTT, it is satisfied immediately
                     break;
                 }
                 case ASN_RRC_CondTriggerConfig_r16__condEventId_PR_condEventD1_r17:
@@ -249,10 +270,15 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
                     if (!d1)
                         break;
 
-                    rc.eventKind = nr::rrc::common::HandoverEventType::CondD1;
-                    rc.condD1_hysteresisLocation = static_cast<double>(d1->hysteresisLocation_r17);
-                    rc.condD1_distanceThreshFromReference1 = static_cast<double>(d1->distanceThreshFromReference1_r17);
-                    rc.condD1_distanceThreshFromReference2 = static_cast<double>(d1->distanceThreshFromReference2_r17);
+                    rc.eventKind = HandoverEventType::CondD1;
+                    rc.condD1_hysteresisLocation = hysteresisLocationFromASNValue(d1->hysteresisLocation_r17);
+                    rc.condD1_distanceThreshFromReference1 = distanceThresholdFromASNValue(d1->distanceThreshFromReference1_r17);
+                    rc.condD1_distanceThreshFromReference2 = distanceThresholdFromASNValue(d1->distanceThreshFromReference2_r17);
+
+                    referenceLocationFromAsnValue(d1->referenceLocation1_r17,
+                        rc.condD1_referenceLocation1);
+                    referenceLocationFromAsnValue(d1->referenceLocation2_r17,
+                        rc.condD1_referenceLocation2);
                     break;
                 }
                 default:
@@ -407,7 +433,7 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
                                        ? static_cast<int>(*rws->spCellConfigCommon->physCellId)
                                        : -1;
                     hoNewCRNTI = static_cast<int>(rws->newUE_Identity);
-                    hoT304Ms = nr::rrc::common::t304EnumToMs(rws->t304);
+                    hoT304Ms = t304EnumToMs(rws->t304);
                     hoHasRachConfig = (rws->rach_ConfigDedicated != nullptr);
                     isHandover = true;
 

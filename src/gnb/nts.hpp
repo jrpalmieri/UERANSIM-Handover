@@ -234,6 +234,7 @@ struct NmGnbRrcToNgap : NtsMessage
     int hoTargetNci{};
     NgapCause hoCause{};
     bool hoForChoPreparation{};
+    int retries=0;
 
     // INITIAL_NAS_DELIVERY
     // UPLINK_NAS_DELIVERY

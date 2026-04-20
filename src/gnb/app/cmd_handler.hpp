@@ -25,6 +25,7 @@ class GnbCmdHandler
     std::unique_ptr<Logger> m_cliLogger{};
     std::string m_currentCommand{};
     std::string m_currentSource{};
+    bool m_suppressCurrentCommandLogs{false};
 
   private:
     void ensureCliLogger();

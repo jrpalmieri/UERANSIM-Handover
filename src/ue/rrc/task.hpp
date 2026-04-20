@@ -15,7 +15,6 @@
 
 #include <ue/nts.hpp>
 #include <ue/types.hpp>
-#include <ue/rrc/measurement.hpp>
 #include <lib/rrc/common/asn_fwd.hpp>
 #include <utils/logger.hpp>
 #include <utils/nts.hpp>
@@ -166,6 +165,9 @@ class UeRrcTask : public NtsTask
     void handleChoConfiguration(const OctetString &pdu);
     void parseConditionalReconfiguration(const ASN_RRC_ConditionalReconfiguration *condReconfig);
     bool evaluateChoCandidates(int servingCellId, const std::map<int, int> &allMeas);
+    std::vector<nr::rrc::common::PciScore> selectBestSatellite(
+      int servingCellId,
+      const std::unordered_set<int> &satPcis);
     void executeChoCandidate(ChoCandidate &candidate);
     void cancelAllChoCandidates();
     void resetChoRuntimeState();

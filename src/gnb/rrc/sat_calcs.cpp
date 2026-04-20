@@ -6,15 +6,12 @@
 
 #include <algorithm>
 #include <cmath>
-#include <stdexcept>
 
 #include <libsgp4/DateTime.h>
-#include <libsgp4/Eci.h>
-#include <libsgp4/SGP4.h>
-#include <libsgp4/Tle.h>
 
 #include <gnb/sat_tle_store.hpp>
 #include <gnb/sat_time.hpp>
+#include <lib/rrc/common/sat_calc.hpp>
 #include <utils/common.hpp>
 #include <utils/common_types.hpp>
 #include <utils/position_calcs.hpp>
@@ -27,46 +24,6 @@ static constexpr size_t SAT_NEIGHBORHOOD_MAX = 50;
 
 // Maximum number of satellites to keep in the SIB19 nadir-proximity cache.
 static constexpr size_t SAT_SIB19_MAX = 7;
-
-// ---------------------------------------------------------------------------
-// Propagated state: ECEF position and sub-satellite nadir point (altitude=0).
-// Both in meters.
-// ---------------------------------------------------------------------------
-struct SatEcefState
-{
-    EcefPosition pos{};    ///< Satellite ECEF position (altitude included)
-    EcefPosition nadir{};  ///< Ground-track nadir (altitude = 0)
-};
-
-// ---------------------------------------------------------------------------
-// Propagate a single TLE entry at the given DateTime.
-// Fills both the satellite ECEF position and its nadir point.
-// Returns false (silently) on any libsgp4 exception.
-// ---------------------------------------------------------------------------
-static bool PropagateFull(const SatTleEntry &entry,
-                          const libsgp4::DateTime &dt,
-                          SatEcefState &out)
-{
-    try
-    {
-        libsgp4::Tle tle(entry.line1, entry.line2);
-        libsgp4::SGP4 sgp4(tle);
-        libsgp4::Eci eci = sgp4.FindPosition(dt);
-        libsgp4::CoordGeodetic geo = eci.ToGeodetic();
-
-        double latDeg = geo.latitude  * (180.0 / M_PI);
-        double lonDeg = geo.longitude * (180.0 / M_PI);
-        double altM   = geo.altitude  * 1000.0;
-
-        out.pos = GeoToEcef(GeoPosition{latDeg, lonDeg, altM});
-        out.nadir = ComputeNadir(out.pos);
-        return true;
-    }
-    catch (const std::exception &)
-    {
-        return false;
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Public: upsert TLE entries by PCI.
@@ -123,8 +80,8 @@ void GnbRrcTask::roughNeighborhoodSats()
     libsgp4::DateTime now = sat_time::Now();
 
     // Propagate own TLE → gNB ECEF position + nadir
-    SatEcefState gnbState{};
-    if (!PropagateFull(*ownTle, now, gnbState))
+    nr::rrc::common::SatEcefState gnbState{};
+    if (!nr::rrc::common::PropagateTleToEcef(ownTle->line1, ownTle->line2, now, gnbState))
     {
         m_logger->warn("roughNeighborhoodSats: failed to propagate own TLE (pci=%d), skipping", ownPci);
         return;
@@ -145,8 +102,8 @@ void GnbRrcTask::roughNeighborhoodSats()
         if (entry.pci == ownPci)
             continue;
 
-        SatEcefState state{};
-        if (!PropagateFull(entry, now, state))
+        nr::rrc::common::SatEcefState state{};
+        if (!nr::rrc::common::PropagateTleToEcef(entry.line1, entry.line2, now, state))
         {
             m_logger->debug("roughNeighborhoodSats: skipping pci=%d (propagation failed)", entry.pci);
             continue;

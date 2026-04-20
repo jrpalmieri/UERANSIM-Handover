@@ -8,6 +8,7 @@
 
 #include "udp_task.hpp"
 
+#include <arpa/inet.h>
 #include <cstdint>
 #include <cstring>
 #include <set>
@@ -20,6 +21,30 @@ static constexpr const int BUFFER_SIZE = 16384;
 
 namespace nr::ue
 {
+
+static std::string IpOnlyFromInetAddress(const InetAddress &address)
+{
+    char buffer[INET6_ADDRSTRLEN] = {0};
+    const sockaddr *sockAddr = address.getSockAddr();
+
+    if (sockAddr->sa_family == AF_INET)
+    {
+        const auto *in = reinterpret_cast<const sockaddr_in *>(sockAddr);
+        if (inet_ntop(AF_INET, &in->sin_addr, buffer, INET_ADDRSTRLEN) == nullptr)
+            return "";
+        return buffer;
+    }
+
+    if (sockAddr->sa_family == AF_INET6)
+    {
+        const auto *in6 = reinterpret_cast<const sockaddr_in6 *>(sockAddr);
+        if (inet_ntop(AF_INET6, &in6->sin6_addr, buffer, INET6_ADDRSTRLEN) == nullptr)
+            return "";
+        return buffer;
+    }
+
+    return "";
+}
 
 RlsUdpTask::RlsUdpTask(TaskBase *base, RlsSharedContext *shCtx, const std::vector<std::string> &searchSpace)
     : m_base{base}, m_server{}, m_ctlTask{}, m_shCtx{shCtx}, m_searchSpace{}, m_cells{}, m_cellIdToSti{}, m_lastLoop{},
@@ -147,7 +172,7 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
         // or if the cell is now below the signal threshold for comms.
         // This will trigger addition/removal of cell in the cellDesc table used by RRC
         // for MIB/SIB data tracking
-        if (newCellFound || radioLinkFailure)
+        if (newCellFound)
         {
             auto signalChange = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::SIGNAL_CHANGED);
             signalChange->cellId = m_cells[msg->sti].cellId;
@@ -157,6 +182,16 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
                 m_cells[msg->sti].cellId);
 
         }
+        if (radioLinkFailure)
+        {
+            auto signalChange = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::SIGNAL_CHANGED);
+            signalChange->cellId = m_cells[msg->sti].cellId;
+            signalChange->dbm = newDbm;
+            m_ctlTask->push(std::move(signalChange));
+            m_logger->debug("RLS heartbeat ACK - link failure %d, dbm=%d less than threshold %d",
+                m_cells[msg->sti].cellId, newDbm, cons::RLF_RSRP);
+        }
+
         return;
     }
 
@@ -261,6 +296,72 @@ void RlsUdpTask::updateMeasurements(const int dbm, const int cellId)
 void RlsUdpTask::initialize(NtsTask *ctlTask)
 {
     m_ctlTask = ctlTask;
+}
+
+int RlsUdpTask::addSearchSpaceIps(const std::vector<std::string> &ipAddresses)
+{
+    int added = 0;
+    for (const auto &ip : ipAddresses)
+    {
+        bool exists = false;
+        for (const auto &addr : m_searchSpace)
+        {
+            if (IpOnlyFromInetAddress(addr) == ip)
+            {
+                exists = true;
+                break;
+            }
+        }
+
+        if (!exists)
+        {
+            m_searchSpace.emplace_back(ip, cons::RadioLinkPort);
+            added++;
+        }
+    }
+    return added;
+}
+
+int RlsUdpTask::removeSearchSpaceIps(const std::vector<std::string> &ipAddresses)
+{
+    int removed = 0;
+    std::vector<InetAddress> kept;
+    kept.reserve(m_searchSpace.size());
+
+    for (const auto &addr : m_searchSpace)
+    {
+        auto ip = IpOnlyFromInetAddress(addr);
+        bool shouldRemove = false;
+        for (const auto &target : ipAddresses)
+        {
+            if (ip == target)
+            {
+                shouldRemove = true;
+                break;
+            }
+        }
+
+        if (shouldRemove)
+            removed++;
+        else
+            kept.push_back(addr);
+    }
+
+    m_searchSpace = std::move(kept);
+    return removed;
+}
+
+std::vector<std::string> RlsUdpTask::listSearchSpaceIps() const
+{
+    std::vector<std::string> ips;
+    ips.reserve(m_searchSpace.size());
+    for (const auto &addr : m_searchSpace)
+    {
+        auto ip = IpOnlyFromInetAddress(addr);
+        if (!ip.empty())
+            ips.push_back(std::move(ip));
+    }
+    return ips;
 }
 
 } // namespace nr::ue

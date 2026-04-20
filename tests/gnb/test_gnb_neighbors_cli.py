@@ -73,9 +73,9 @@ def _run_neighbors(node_name: str, payload: dict) -> subprocess.CompletedProcess
 
 
 def _run_info(node_name: str) -> dict:
-    proc = _run_cli(node_name, "info")
+    proc = _run_cli(node_name, "config-info")
     assert proc.returncode == 0, (
-        "nr-cli info failed:\n"
+        "nr-cli config-info failed:\n"
         f"stdout: {proc.stdout}\n"
         f"stderr: {proc.stderr}"
     )

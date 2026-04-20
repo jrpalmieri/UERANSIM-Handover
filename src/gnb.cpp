@@ -78,6 +78,44 @@ static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
     return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
 }
 
+static std::string ResolveGnbNodeNameTemplateToken(const std::string &token, const nr::gnb::GnbConfig &config)
+{
+    if (token == "pci")
+        return std::to_string(cons::getPciFromNci(config.nci));
+
+    throw std::runtime_error("Unsupported token in nodeNameTemplate: {" + token + "}");
+}
+
+static std::string RenderGnbNodeNameTemplatePreview(const std::string &pattern, const nr::gnb::GnbConfig &config)
+{
+    std::string output;
+    output.reserve(pattern.size() + 16);
+
+    size_t i = 0;
+    while (i < pattern.size())
+    {
+        if (pattern[i] != '{')
+        {
+            output.push_back(pattern[i]);
+            i++;
+            continue;
+        }
+
+        size_t close = pattern.find('}', i + 1);
+        if (close == std::string::npos)
+            throw std::runtime_error("nodeNameTemplate has unmatched '{'");
+
+        auto token = pattern.substr(i + 1, close - i - 1);
+        if (token.empty())
+            throw std::runtime_error("nodeNameTemplate has empty token: {}");
+
+        output += ResolveGnbNodeNameTemplateToken(token, config);
+        i = close + 1;
+    }
+
+    return output;
+}
+
 static nr::gnb::EGnbRsrpMode ReadRsrpMode(const YAML::Node &node, const std::string &fieldPath)
 {
     auto mode = yaml::GetString(node, "updateMode");
@@ -147,7 +185,7 @@ static std::string ReadHandoverEventType(const YAML::Node &node)
 {
     auto parsed = nr::rrc::common::ParseHandoverEventType(node.as<std::string>());
     if (parsed.has_value())
-        return nr::rrc::common::ToString(*parsed);
+        return nr::rrc::common::HandoverEventTypeToString(*parsed);
 
     throw std::runtime_error(
         "Field handover.events[].eventType has invalid value, expected A2, A3, A5, D1, condA3, condD1 or condT1");
@@ -256,6 +294,8 @@ static nr::rrc::common::ReportConfigEvent ReadHandoverEvent(
         item.a3_offsetDb = yaml::GetInt32(entry, "a3OffsetDb", std::nullopt, std::nullopt);
     if (yaml::HasField(entry, "a3HysteresisDb"))
         item.a3_hysteresisDb = yaml::GetInt32(entry, "a3HysteresisDb", 0, 30);
+    else if (yaml::HasField(entry, "a3hysteresisDb"))
+        item.a3_hysteresisDb = yaml::GetInt32(entry, "a3hysteresisDb", 0, 30);
 
     // A5
     if (yaml::HasField(entry, "a5Threshold1Dbm"))
@@ -292,6 +332,8 @@ static nr::rrc::common::ReportConfigEvent ReadHandoverEvent(
     // condT1
     if (yaml::HasField(entry, "thresholdSecTS"))
         item.condT1_thresholdSecTS = yaml::GetInt32(entry, "thresholdSecTS", 0, 5400);
+    else if (yaml::HasField(entry, "threhsoldSecTS"))
+        item.condT1_thresholdSecTS = yaml::GetInt32(entry, "threhsoldSecTS", 0, 5400);
     if (yaml::HasField(entry, "durationSec"))
         item.condT1_durationSec = yaml::GetInt32(entry, "durationSec", 0, 6000);        
 
@@ -301,6 +343,10 @@ static nr::rrc::common::ReportConfigEvent ReadHandoverEvent(
         item.condD1_distanceThreshFromReference1 = yaml::GetInt32(entry, "condD1DistanceThreshold1", 0, 10000000);
     if (yaml::HasField(entry, "condD1DistanceThreshold2"))
         item.condD1_distanceThreshFromReference2 = yaml::GetInt32(entry, "condD1DistanceThreshold2", 0, 10000000);
+    if (yaml::HasField(entry, "condD1HysteresisM"))
+        item.condD1_hysteresisLocation = yaml::GetInt32(entry, "condD1HysteresisM", 0, 10000000);
+    else if (yaml::HasField(entry, "condD1HysteresisLocation"))
+        item.condD1_hysteresisLocation = yaml::GetInt32(entry, "condD1HysteresisLocation", 0, 10000000);
     if (yaml::HasField(entry, "condD1ReferenceLocation1"))
     {
         auto ref = entry["condD1ReferenceLocation1"];
@@ -333,7 +379,7 @@ ReadHandoverEvents(const YAML::Node &handoverNode,
     auto eventsNode = handoverNode["events"];
     if (!eventsNode)
         return events;
-
+        
     if (!eventsNode.IsSequence())
         throw std::runtime_error("Field " + basePath + ".events must be a YAML sequence");
 
@@ -412,7 +458,7 @@ ReadChoCandidateProfiles(const YAML::Node &handoverNode,
     return out;
 }
 
-static void ReadXnConfig(const YAML::Node &xn, nr::gnb::GnbHandoverConfig::GnbXnConfig &out)
+static void ReadXnConfig(const YAML::Node &xn, nr::gnb::GnbXnConfig &out)
 {
     if (yaml::HasField(xn, "enabled"))
         out.enabled = yaml::GetBool(xn, "enabled");
@@ -711,6 +757,13 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
     result->pagingDrx = EPagingDrx::V128;
     result->name = "UERANSIM-gnb-" + std::to_string(result->plmn.mcc) + "-" + std::to_string(result->plmn.mnc) + "-" +
                    std::to_string(result->getGnbId()); // NOTE: Avoid using "/" dir separator character.
+
+    if (yaml::HasField(config, "nodeNameTemplate"))
+    {
+        result->nodeNameTemplate = yaml::GetString(config, "nodeNameTemplate", cons::MinNodeName, cons::MaxNodeName);
+        result->nodeNameTemplatePreview = RenderGnbNodeNameTemplatePreview(*result->nodeNameTemplate, *result);
+        utils::AssertNodeName(*result->nodeNameTemplatePreview);
+    }
 
     for (auto &amfConfig : yaml::GetSequence(config, "amfConfigs"))
     {

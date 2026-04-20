@@ -5,6 +5,11 @@ nci: '0x000000010'  # NR Cell Identity (36-bit)
 idLength: 32        # NR gNB ID length in bits [22...32]
 tac: 1              # Tracking Area Code
 
+# Optional staged node name template (preview only, not active yet):
+# Supported gNB token: {pci}
+# Example result for this file: gnb-16
+# nodeNameTemplate: 'gnb-{pci}'
+
 linkIp: 127.0.0.1   # gNB's local IP address for Radio Link Simulation (Usually same with local IP)
 ngapIp: 127.0.0.1   # gNB's local IP address for N2 Interface (Usually same with local IP)
 gtpIp: 127.0.0.1    # gNB's local IP address for N3 Interface (Usually same with local IP)
@@ -99,10 +104,13 @@ xn:
 
 
 # Handover measurement/CHO configuration.
-# events: classic (non-CHO) events always sent to UEs.
-# if choEnbaled is true, then Conditional Handover (CHO) events in choEvents will also be sent to UEs.
-# choEvents: CHO profiles with a condition group (AND within group).
-# CHO priority is derived from target candidate ranking (best=1).
+# events: classic (non-CHO) events always sent to UEs.  Generate meas reports to GNB
+# if choEnbaled is true, then gnb will also send Conditional Handover (CHO) events. 
+# The simulator allows GNB to choose from different "profiles" of CHO triggering logic. 
+# choDefaultProdfileId specifies which profile to use at startup.
+# The conditional events are listed under candidates.  CHO only allows up to two trigger events
+#   per CHO profile.
+
 # TTT values are an enum that take one of the following values: "ms0", "ms40", "ms64", "ms80", "ms100", "ms128", "ms160", "ms256", "ms320", "ms480", "ms512", "ms640", "ms1024", "ms1280", "ms2560", "ms5120"
 handover:
   events:

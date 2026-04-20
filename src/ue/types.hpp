@@ -13,8 +13,6 @@
 #include <array>
 #include <atomic>
 
-#include <ue/rrc/measurement.hpp>
-#include <ue/rrc/position.hpp>
 #include <ue/rrc/sib19.hpp>
 #include <deque>
 #include <memory>
@@ -27,6 +25,7 @@
 #include <lib/app/monitor.hpp>
 #include <lib/app/ue_ctl.hpp>
 #include <lib/nas/nas.hpp>
+#include <lib/rrc/common/event_types.hpp>
 #include <utils/common_types.hpp>
 #include <utils/json.hpp>
 #include <utils/locked.hpp>
@@ -161,6 +160,12 @@ struct UeConfig
 {
     struct NtnConfig
     {
+        struct TleEntry
+        {
+            std::string line1{};
+            std::string line2{};
+        };
+
         struct TimeWarpConfig
         {
             enum class EStartCondition
@@ -174,7 +179,10 @@ struct UeConfig
             std::optional<int64_t> startEpochMillis{};
         };
 
+        bool ntnEnabled{false};
+        std::optional<TleEntry> tle{};
         TimeWarpConfig timeWarp{};
+        int elevationMinDeg{20};
     };
 
     /* Read from config file */
@@ -198,6 +206,7 @@ struct UeConfig
     NetworkSlice configuredNssai{};
     std::optional<std::string> tunName{};
     std::optional<std::string> tunNetmask{};
+    std::optional<std::string> nodeNameTemplate{};
 
     struct
     {
@@ -235,6 +244,7 @@ struct UeConfig
     /* Assigned by program */
     bool configureRouting{};
     bool prefixLogger{};
+    std::optional<std::string> nodeNameTemplatePreview{};
 
     [[nodiscard]] std::string getNodeName() const
     {

@@ -18,37 +18,18 @@ static int memb_ASN_RRC_ctc_distanceThreshFromReference_r17_constraint_1(
     return 0;
 }
 
-static int memb_ASN_RRC_ctc_latitudeSign_constraint_1(
+static int memb_ASN_RRC_ctc_referenceLocation_r17_constraint_1(
     const asn_TYPE_descriptor_t *td, const void *sptr,
     asn_app_constraint_failed_f *ctfailcb, void *app_key)
 {
-    long value;
+    const OCTET_STRING_t *st = (const OCTET_STRING_t *)sptr;
     if (!sptr) { ASN__CTFAIL(app_key, td, sptr, "%s: value not given (%s:%d)", td->name, __FILE__, __LINE__); return -1; }
-    value = *(const long *)sptr;
-    if (value < 0 || value > 1) { ASN__CTFAIL(app_key, td, sptr, "%s: constraint failed (%s:%d)", td->name, __FILE__, __LINE__); return -1; }
-    return 0;
-}
 
-static int memb_ASN_RRC_ctc_degreesLatitude_constraint_1(
-    const asn_TYPE_descriptor_t *td, const void *sptr,
-    asn_app_constraint_failed_f *ctfailcb, void *app_key)
-{
-    long value;
-    if (!sptr) { ASN__CTFAIL(app_key, td, sptr, "%s: value not given (%s:%d)", td->name, __FILE__, __LINE__); return -1; }
-    value = *(const long *)sptr;
-    if (value < 0 || value > 8388607) { ASN__CTFAIL(app_key, td, sptr, "%s: constraint failed (%s:%d)", td->name, __FILE__, __LINE__); return -1; }
-    return 0;
-}
+    if (1) {
+        (void)st;
+    }
 
-static int memb_ASN_RRC_ctc_degreesLongitude_constraint_1(
-    const asn_TYPE_descriptor_t *td, const void *sptr,
-    asn_app_constraint_failed_f *ctfailcb, void *app_key)
-{
-    long value;
-    if (!sptr) { ASN__CTFAIL(app_key, td, sptr, "%s: value not given (%s:%d)", td->name, __FILE__, __LINE__); return -1; }
-    value = *(const long *)sptr;
-    if (value < -8388608 || value > 8388607) { ASN__CTFAIL(app_key, td, sptr, "%s: constraint failed (%s:%d)", td->name, __FILE__, __LINE__); return -1; }
-    return 0;
+    return td->encoding_constraints.general_constraints(td, sptr, ctfailcb, app_key);
 }
 
 static int memb_ASN_RRC_ctc_hysteresisLocation_r17_constraint_1(
@@ -93,19 +74,9 @@ static asn_per_constraints_t asn_PER_memb_ASN_RRC_ctc_distanceThreshFromReferenc
     { APC_UNCONSTRAINED, -1, -1, 0, 0 },
     0, 0
 };
-static asn_per_constraints_t asn_PER_memb_ASN_RRC_ctc_latitudeSign_constr CC_NOTUSED = {
-    { APC_CONSTRAINED, 1, 1, 0, 1 },
+static asn_per_constraints_t asn_PER_memb_ASN_RRC_ctc_referenceLocation_r17_constr CC_NOTUSED = {
     { APC_UNCONSTRAINED, -1, -1, 0, 0 },
-    0, 0
-};
-static asn_per_constraints_t asn_PER_memb_ASN_RRC_ctc_degreesLatitude_constr CC_NOTUSED = {
-    { APC_CONSTRAINED, 23, 23, 0, 8388607 },
-    { APC_UNCONSTRAINED, -1, -1, 0, 0 },
-    0, 0
-};
-static asn_per_constraints_t asn_PER_memb_ASN_RRC_ctc_degreesLongitude_constr CC_NOTUSED = {
-    { APC_CONSTRAINED, 24, 24, -8388608, 8388607 },
-    { APC_UNCONSTRAINED, -1, -1, 0, 0 },
+    { APC_SEMI_CONSTRAINED, -1, -1, 0, 0 },
     0, 0
 };
 static asn_per_constraints_t asn_PER_memb_ASN_RRC_ctc_hysteresisLocation_r17_constr CC_NOTUSED = {
@@ -120,11 +91,6 @@ static asn_per_constraints_t asn_PER_memb_ASN_RRC_ctc_t1_Threshold_r17_constr CC
 };
 static asn_per_constraints_t asn_PER_memb_ASN_RRC_ctc_duration_r17_constr CC_NOTUSED = {
     { APC_CONSTRAINED, 13, 13, 1, 6000 },
-    { APC_UNCONSTRAINED, -1, -1, 0, 0 },
-    0, 0
-};
-static asn_per_constraints_t asn_PER_type_ASN_RRC_ctc_refLoc_constr CC_NOTUSED = {
-    { APC_CONSTRAINED, 1, 1, 0, 1 },
     { APC_UNCONSTRAINED, -1, -1, 0, 0 },
     0, 0
 };
@@ -256,85 +222,6 @@ static asn_TYPE_descriptor_t asn_DEF_ASN_RRC_condEventA4_r17_4 = {
 };
 
 /* ================================================================== */
-/* fixedReferenceLocation-r17 (inside condEventD1-r17)                */
-/* ================================================================== */
-
-static asn_TYPE_member_t asn_MBR_ASN_RRC_ctc_fixedReferenceLocation_r17_5[] = {
-    { ATF_NOFLAGS, 0, offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17__fixedReferenceLocation_r17, latitudeSign),
-        (ASN_TAG_CLASS_CONTEXT | (0 << 2)), -1,
-        &asn_DEF_NativeEnumerated, 0,
-        { 0, &asn_PER_memb_ASN_RRC_ctc_latitudeSign_constr, memb_ASN_RRC_ctc_latitudeSign_constraint_1 },
-        0, 0, "latitudeSign" },
-    { ATF_NOFLAGS, 0, offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17__fixedReferenceLocation_r17, degreesLatitude),
-        (ASN_TAG_CLASS_CONTEXT | (1 << 2)), -1,
-        &asn_DEF_NativeInteger, 0,
-        { 0, &asn_PER_memb_ASN_RRC_ctc_degreesLatitude_constr, memb_ASN_RRC_ctc_degreesLatitude_constraint_1 },
-        0, 0, "degreesLatitude" },
-    { ATF_NOFLAGS, 0, offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17__fixedReferenceLocation_r17, degreesLongitude),
-        (ASN_TAG_CLASS_CONTEXT | (2 << 2)), -1,
-        &asn_DEF_NativeInteger, 0,
-        { 0, &asn_PER_memb_ASN_RRC_ctc_degreesLongitude_constr, memb_ASN_RRC_ctc_degreesLongitude_constraint_1 },
-        0, 0, "degreesLongitude" },
-};
-static const ber_tlv_tag_t asn_DEF_ASN_RRC_ctc_fixedReferenceLocation_r17_tags_5[] = {
-    (ASN_TAG_CLASS_UNIVERSAL | (16 << 2))
-};
-static const asn_TYPE_tag2member_t asn_MAP_ASN_RRC_ctc_fixedReferenceLocation_r17_tag2el_5[] = {
-    { (ASN_TAG_CLASS_CONTEXT | (0 << 2)), 0, 0, 0 },
-    { (ASN_TAG_CLASS_CONTEXT | (1 << 2)), 1, 0, 0 },
-    { (ASN_TAG_CLASS_CONTEXT | (2 << 2)), 2, 0, 0 }
-};
-static asn_SEQUENCE_specifics_t asn_SPC_ASN_RRC_ctc_fixedReferenceLocation_r17_specs_5 = {
-    sizeof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17__fixedReferenceLocation_r17),
-    offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17__fixedReferenceLocation_r17, _asn_ctx),
-    asn_MAP_ASN_RRC_ctc_fixedReferenceLocation_r17_tag2el_5, 3, 0, 0, 0, -1,
-};
-static asn_TYPE_descriptor_t asn_DEF_ASN_RRC_ctc_fixedReferenceLocation_r17_5 = {
-    "fixedReferenceLocation-r17", "fixedReferenceLocation-r17", &asn_OP_SEQUENCE,
-    asn_DEF_ASN_RRC_ctc_fixedReferenceLocation_r17_tags_5,
-    sizeof(asn_DEF_ASN_RRC_ctc_fixedReferenceLocation_r17_tags_5) / sizeof(asn_DEF_ASN_RRC_ctc_fixedReferenceLocation_r17_tags_5[0]),
-    asn_DEF_ASN_RRC_ctc_fixedReferenceLocation_r17_tags_5,
-    sizeof(asn_DEF_ASN_RRC_ctc_fixedReferenceLocation_r17_tags_5) / sizeof(asn_DEF_ASN_RRC_ctc_fixedReferenceLocation_r17_tags_5[0]),
-    { 0, 0, SEQUENCE_constraint },
-    asn_MBR_ASN_RRC_ctc_fixedReferenceLocation_r17_5, 3,
-    &asn_SPC_ASN_RRC_ctc_fixedReferenceLocation_r17_specs_5
-};
-
-/* ================================================================== */
-/* referenceLocation-r17 CHOICE (inside condEventD1-r17)              */
-/* ================================================================== */
-
-static asn_TYPE_member_t asn_MBR_ASN_RRC_ctc_referenceLocation_r17_6[] = {
-    { ATF_POINTER, 0, offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17, choice.fixedReferenceLocation_r17),
-        (ASN_TAG_CLASS_CONTEXT | (0 << 2)), +1,
-        &asn_DEF_ASN_RRC_ctc_fixedReferenceLocation_r17_5, 0,
-        { 0, 0, 0 }, 0, 0, "fixedReferenceLocation-r17" },
-    { ATF_POINTER, 0, offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17, choice.nadirReferenceLocation_r17),
-        (ASN_TAG_CLASS_CONTEXT | (1 << 2)), -1,
-        &asn_DEF_NULL, 0,
-        { 0, 0, 0 }, 0, 0, "nadirReferenceLocation-r17" },
-};
-static const asn_TYPE_tag2member_t asn_MAP_ASN_RRC_ctc_referenceLocation_r17_tag2el_6[] = {
-    { (ASN_TAG_CLASS_CONTEXT | (0 << 2)), 0, 0, 0 },
-    { (ASN_TAG_CLASS_CONTEXT | (1 << 2)), 1, 0, 0 }
-};
-static asn_CHOICE_specifics_t asn_SPC_ASN_RRC_ctc_referenceLocation_r17_specs_6 = {
-    sizeof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17),
-    offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17, _asn_ctx),
-    offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17, present),
-    sizeof(((struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17__referenceLocation_r17 *)0)->present),
-    asn_MAP_ASN_RRC_ctc_referenceLocation_r17_tag2el_6, 2,
-    0, 0, 2
-};
-static asn_TYPE_descriptor_t asn_DEF_ASN_RRC_ctc_referenceLocation_r17_6 = {
-    "referenceLocation-r17", "referenceLocation-r17", &asn_OP_CHOICE,
-    0, 0, 0, 0,
-    { 0, &asn_PER_type_ASN_RRC_ctc_refLoc_constr, CHOICE_constraint },
-    asn_MBR_ASN_RRC_ctc_referenceLocation_r17_6, 2,
-    &asn_SPC_ASN_RRC_ctc_referenceLocation_r17_specs_6
-};
-
-/* ================================================================== */
 /* condEventD1-r17                                                     */
 /* ================================================================== */
 
@@ -350,13 +237,15 @@ static asn_TYPE_member_t asn_MBR_ASN_RRC_condEventD1_r17_7[] = {
         { 0, &asn_PER_memb_ASN_RRC_ctc_distanceThreshFromReference_r17_constr, memb_ASN_RRC_ctc_distanceThreshFromReference_r17_constraint_1 },
         0, 0, "distanceThreshFromReference2-r17" },
     { ATF_NOFLAGS, 0, offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17, referenceLocation1_r17),
-        (ASN_TAG_CLASS_CONTEXT | (2 << 2)), +1,
-        &asn_DEF_ASN_RRC_ctc_referenceLocation_r17_6, 0,
-        { 0, 0, 0 }, 0, 0, "referenceLocation1-r17" },
+        (ASN_TAG_CLASS_CONTEXT | (2 << 2)), -1,
+        &asn_DEF_OCTET_STRING, 0,
+        { 0, &asn_PER_memb_ASN_RRC_ctc_referenceLocation_r17_constr, memb_ASN_RRC_ctc_referenceLocation_r17_constraint_1 },
+        0, 0, "referenceLocation1-r17" },
     { ATF_NOFLAGS, 0, offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17, referenceLocation2_r17),
-        (ASN_TAG_CLASS_CONTEXT | (3 << 2)), +1,
-        &asn_DEF_ASN_RRC_ctc_referenceLocation_r17_6, 0,
-        { 0, 0, 0 }, 0, 0, "referenceLocation2-r17" },
+        (ASN_TAG_CLASS_CONTEXT | (3 << 2)), -1,
+        &asn_DEF_OCTET_STRING, 0,
+        { 0, &asn_PER_memb_ASN_RRC_ctc_referenceLocation_r17_constr, memb_ASN_RRC_ctc_referenceLocation_r17_constraint_1 },
+        0, 0, "referenceLocation2-r17" },
     { ATF_NOFLAGS, 0, offsetof(struct ASN_RRC_CondTriggerConfig_r16__condEventId__condEventD1_r17, hysteresisLocation_r17),
         (ASN_TAG_CLASS_CONTEXT | (4 << 2)), -1,
         &asn_DEF_NativeInteger, 0,

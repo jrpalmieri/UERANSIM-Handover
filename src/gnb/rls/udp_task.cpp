@@ -306,7 +306,7 @@ int RlsUdpTask::computeDbm(const GeoPosition &uePos)
 
     // if configured for "fixed" mode, just return the fixed RSRP value
     if (cfg->rfLink.updateMode == EGnbRsrpMode::Fixed)
-        return m_fixedRsrp;
+        return m_base->fixedRsrp;
 
     // if we are in NTN mode, use the satellite position to calculate the path loss.
     if (cfg->ntn.ntnEnabled)
@@ -362,19 +362,19 @@ void RlsUdpTask::handleRsrpUpdate(
             rfData.rsrp, clampedRsrp);
     }
 
-    m_fixedRsrp = clampedRsrp;
+    m_base->fixedRsrp = clampedRsrp;
 
     if (m_base->config->rfLink.updateMode == EGnbRsrpMode::Fixed)
     {
         m_logger->debug(
             "Updated fixed RSRP to %d dBm from GNB_RF_DATA",
-            m_fixedRsrp);
+            m_base->fixedRsrp);
     }
     else
     {
         m_logger->debug(
             "Stored GNB_RF_DATA rsrp=%d dBm but rfLink.updateMode=Calculated keeps path loss active",
-            m_fixedRsrp);
+            m_base->fixedRsrp);
     }
 }
 

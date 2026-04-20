@@ -21,9 +21,9 @@
 #include "ASN_RRC_MeasTriggerQuantity.h"
 #include "ASN_RRC_Hysteresis.h"
 #include "ASN_RRC_TimeToTrigger.h"
+#include <OCTET_STRING.h>
 #include <constr_SEQUENCE.h>
 #include "ASN_RRC_MeasTriggerQuantityOffset.h"
-#include <NULL.h>
 #include <constr_CHOICE.h>
 
 #ifdef __cplusplus
@@ -43,17 +43,6 @@ typedef enum ASN_RRC_EventTriggerConfig__eventId_PR {
 	/* Extensions may appear below */
 	
 } ASN_RRC_EventTriggerConfig__eventId_PR;
-typedef enum ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR {
-	ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_NOTHING,	/* No components present */
-	ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_fixedReferenceLocation_r17,
-	ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_nadirReferenceLocation_r17
-	/* Extensions may appear below */
-	
-} ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR;
-typedef enum ASN_RRC_EventTriggerConfig__latitudeSign {
-	ASN_RRC_EventTriggerConfig__latitudeSign_north	= 0,
-	ASN_RRC_EventTriggerConfig__latitudeSign_south	= 1
-} e_ASN_RRC_EventTriggerConfig__latitudeSign;
 typedef enum ASN_RRC_EventTriggerConfig__reportAmount {
 	ASN_RRC_EventTriggerConfig__reportAmount_r1	= 0,
 	ASN_RRC_EventTriggerConfig__reportAmount_r2	= 1,
@@ -138,29 +127,8 @@ typedef struct ASN_RRC_EventTriggerConfig {
 			struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17 {
 				long	 distanceThreshFromReference1_r17;   /* INTEGER (1..65525) */
 				long	 distanceThreshFromReference2_r17;   /* INTEGER (1..65525) */
-				struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17 {
-					ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR present;
-					union ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_u {
-						struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17__fixedReferenceLocation_r17 {
-							long	 latitudeSign;    /* e_ASN_RRC_EventTriggerConfig__latitudeSign */
-							long	 degreesLatitude;  /* INTEGER (0..8388607) */
-							long	 degreesLongitude; /* INTEGER (-8388608..8388607) */
-
-							/* Context for parsing across buffer boundaries */
-							asn_struct_ctx_t _asn_ctx;
-						} *fixedReferenceLocation_r17;
-						NULL_t	 *nadirReferenceLocation_r17;
-						/*
-						 * This type is extensible,
-						 * possible extensions are below.
-						 */
-					} choice;
-
-					/* Context for parsing across buffer boundaries */
-					asn_struct_ctx_t _asn_ctx;
-				} referenceLocation1_r17;
-				struct ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17
-					referenceLocation2_r17;
+				OCTET_STRING_t	 referenceLocation1_r17;
+				OCTET_STRING_t	 referenceLocation2_r17;
 				BOOLEAN_t	 reportOnLeave_r17;
 				long	 hysteresisLocation_r17;             /* INTEGER (0..32768) */
 				ASN_RRC_TimeToTrigger_t	 timeToTrigger;

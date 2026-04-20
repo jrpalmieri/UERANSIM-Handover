@@ -286,7 +286,7 @@ EventTriggerConfig::=                       SEQUENCE {
 ReferenceLocation-r17 ::= OCTET STRING (Containing Ellipsoid-Point)
 
 Ellipsoid-Point ::= SEQUENCE {
-    latitudeSign        ENUMERATED {north, south}, -- 1 bit
+    latitudeSign        ENUMERATED {north, south},
     degreesLatitude     INTEGER (0..8388607),-- 23 bit field
     degreesLongitude    INTEGER (-8388608..8388607)-- 24 bit field
 }

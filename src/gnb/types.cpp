@@ -76,7 +76,7 @@ Json ToJson(const GnbConfig &v)
     {
         Json eventJson = Json::Obj({
             {"event-type", event.eventType},
-            {"event-kind", nr::rrc::common::ToString(event.eventKind)},
+            {"event-kind", nr::rrc::common::HandoverEventTypeToString(event.eventKind)},
             {"ttt", std::string{E_TTT_ms_to_string(event.ttt)}},
             {"a2-threshold-dbm", event.a2_thresholdDbm},
             {"a3-offset-db", event.a3_offsetDb},
@@ -118,16 +118,22 @@ Json ToJson(const GnbConfig &v)
         {
             Json eventJson = Json::Obj({
                 {"event-type", event.eventType},
-                {"event-kind", nr::rrc::common::ToString(event.eventKind)},
+                {"event-kind", nr::rrc::common::HandoverEventTypeToString(event.eventKind)},
+                {"ttt", std::string{E_TTT_ms_to_string(event.ttt)}},
                 {"a2-threshold-dbm", event.a2_thresholdDbm},
                 {"a3-offset-db", event.a3_offsetDb},
                 {"a5-threshold1-dbm", event.a5_threshold1Dbm},
                 {"a5-threshold2-dbm", event.a5_threshold2Dbm},
                 {"d1-distance-threshold1", event.d1_distanceThreshFromReference1},
                 {"d1-distance-threshold2", event.d1_distanceThreshFromReference2},
+                {"cond-t1-threshold-sec-ts", event.condT1_thresholdSecTS},
+                {"cond-t1-duration-sec", event.condT1_durationSec},
+                {"cond-d1-distance-threshold1", event.condD1_distanceThreshFromReference1},
+                {"cond-d1-distance-threshold2", event.condD1_distanceThreshFromReference2},
                 {"a3-hysteresis-db", event.a3_hysteresisDb},
                 {"a5-hysteresis-db", event.a5_hysteresisDb},
                 {"d1-hysteresis-m", event.d1_hysteresisLocation},
+                {"cond-d1-hysteresis-m", event.condD1_hysteresisLocation},
             });
 
             eventJson.put("d1-reference-location1",
@@ -136,6 +142,12 @@ Json ToJson(const GnbConfig &v)
             eventJson.put("d1-reference-location2",
                           Json::Obj({{"latitude", std::to_string(event.d1_referenceLocation2.latitudeDeg)},
                                      {"longitude", std::to_string(event.d1_referenceLocation2.longitudeDeg)}}));
+            eventJson.put("cond-d1-reference-location1",
+                          Json::Obj({{"latitude", std::to_string(event.condD1_referenceLocation1.latitudeDeg)},
+                                     {"longitude", std::to_string(event.condD1_referenceLocation1.longitudeDeg)}}));
+            eventJson.put("cond-d1-reference-location2",
+                          Json::Obj({{"latitude", std::to_string(event.condD1_referenceLocation2.latitudeDeg)},
+                                     {"longitude", std::to_string(event.condD1_referenceLocation2.longitudeDeg)}}));
 
             conditionEntries.push(std::move(eventJson));
         }
@@ -202,7 +214,7 @@ Json ToJson(const GnbConfig &v)
     if (v.ntn.timeWarp.startEpochMillis)
         timeWarpJson.put("start-epoch-ms", *v.ntn.timeWarp.startEpochMillis);
 
-    return Json::Obj({
+    Json json = Json::Obj({
         {"name", v.name},
         {"nci", v.nci},
         {"plmn", ToJson(v.plmn)},
@@ -242,6 +254,13 @@ Json ToJson(const GnbConfig &v)
         })},
         {"neighbor-list", std::move(neighborEntries)},
     });
+
+    if (v.nodeNameTemplate.has_value())
+        json.put("node-name-template", *v.nodeNameTemplate);
+    if (v.nodeNameTemplatePreview.has_value())
+        json.put("node-name-template-preview", *v.nodeNameTemplatePreview);
+
+    return json;
 }
 
 Json ToJson(const NgapAmfContext &v)

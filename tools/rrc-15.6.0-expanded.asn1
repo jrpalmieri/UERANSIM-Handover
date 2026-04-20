@@ -4015,13 +4015,12 @@ ReportSFTD-NR ::=                 SEQUENCE {
     ...
 }
 
-ReferenceLocation-r17 ::=                  CHOICE {
-    fixedReferenceLocation-r17                 SEQUENCE {
-        longitude-r17                              INTEGER (-180000000..180000000),
-        latitude-r17                               INTEGER (-90000000..90000000),
-        height-r17                                 INTEGER (-1000..10000)
-    },
-    nadirReferenceLocation-r17                 NULL
+ReferenceLocation-r17 ::= OCTET STRING (CONTAINING Ellipsoid-Point)
+
+Ellipsoid-Point ::= SEQUENCE {
+    latitudeSign        ENUMERATED {north, south},
+    degreesLatitude     INTEGER (0..8388607),
+    degreesLongitude    INTEGER (-8388608..8388607)
 }
 
 EventD1-r17 ::=                             SEQUENCE {

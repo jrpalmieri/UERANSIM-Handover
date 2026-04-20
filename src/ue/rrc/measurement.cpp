@@ -3,7 +3,6 @@
 //
 
 #include "task.hpp"
-#include "measurement.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -11,6 +10,7 @@
 
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/encode.hpp>
+#include <lib/rrc/common/asn_converters.hpp>
 #include <ue/nas/task.hpp>
 #include <ue/rls/task.hpp>
 #include <utils/common.hpp>
@@ -121,15 +121,21 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
 
     // get the serving cell id and RSRP for easier reference in loops below
     int servingRsrp = getServingCellRsrp(servingCellId, allMeas);
-    m_logger->debug("evaluateMeasurements: servingCell=%d servingRsrp=%d dBm, allMeas.size=%zu", servingCellId, servingRsrp, allMeas.size());
 
-    // current time for time-to-trigger evaluation
-    int64_t now = utils::CurrentTimeMillis();
+    // current time - depends on whether this in NTN mode or not
+    int64_t now;
+    if (m_base->config->ntn.ntnEnabled)
+    {
+        now = m_base->satTime != nullptr
+              ? m_base->satTime->CurrentSatTimeMillis()
+              : utils::CurrentTimeMillis();
+    }
+    else {
+        now = utils::CurrentTimeMillis();
+    }
 
-    // satellite time for T1 events
-    int64_t now_sat = m_base->satTime != nullptr
-                      ? m_base->satTime->CurrentSatTimeMillis()
-                      : utils::CurrentTimeMillis();
+    m_logger->debug("evaluateMeasurements: servingCell=%d servingRsrp=%d dBm, allMeas.size=%zu sat-time=%lld",
+         servingCellId, servingRsrp, allMeas.size(), now);
 
     // loop through all configured measIds and evaluate their conditions against 
     //  the current measurements
@@ -155,6 +161,10 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
         {
             // A2 - just compare serving cell rsrp to threshold
             eventSatisfied = rc.evaluateA2(servingRsrp);
+            m_logger->debug("[MeasId=%d] evaluating %s: servingRsrp=%lld, threshold=%d, satisfied=%s",
+                measId, rc.eventStr(), servingRsrp, rc.a2_thresholdDbm + rc.a2_hysteresisDb,
+                eventSatisfied ? "true" : "false");
+
             break;
         }
         case nr::rrc::common::HandoverEventType::A3:
@@ -169,9 +179,11 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
                                 cm.first, cm.second, servingRsrp, rc.a3_offsetDb, rc.a3_hysteresisDb);
                 if (rc.evaluateA3Cell(servingRsrp, cm.second))
                 {
-                    m_logger->debug("A3 condition satisfied for cid=%d rsrp=%d", cm.first, cm.second);
                     state.triggeredNeighbors.push_back({cm.first, cm.second});
                     eventSatisfied = true;
+                    m_logger->debug("[MeasId=%d] evaluating %s: servingRsrp=%lld, cell%dRsrp=%d, satisfied=%s",
+                        measId, rc.eventStr(), servingRsrp, cm.first, cm.second + rc.a3_offsetDb + rc.a3_hysteresisDb,
+                        eventSatisfied ? "true" : "false");
                 }
             }
             break;
@@ -196,8 +208,15 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
         }
         case nr::rrc::common::HandoverEventType::D1:
         {
-            // TODO: not implemented
-            eventSatisfied = false;
+            eventSatisfied = rc.evaluateD1(m_base->UeLocation);
+
+            m_logger->debug("[MeasId=%d] evaluating %s: UE location (lat=%.4f, long=%.4f), ref1 (lat=%.4f, long=%.4f), ref2 (lat=%.4f, long=%.4f), distanceThresh1=%d, distanceThresh2=%d, hysteresisLocation=%d, satisfied=%s",
+                measId, rc.eventStr(), m_base->UeLocation.latitude, m_base->UeLocation.longitude,
+                rc.d1_referenceLocation1.latitudeDeg, rc.d1_referenceLocation1.longitudeDeg,
+                rc.d1_referenceLocation2.latitudeDeg, rc.d1_referenceLocation2.longitudeDeg,
+                rc.d1_distanceThreshFromReference1, rc.d1_distanceThreshFromReference2,
+                rc.d1_hysteresisLocation,
+                eventSatisfied ? "true" : "false");
             break;
         }
         case nr::rrc::common::HandoverEventType::CondD1:
@@ -207,7 +226,9 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
         }
         case nr::rrc::common::HandoverEventType::CondT1:
         {
-            eventSatisfied = rc.evaluateCondT1(now_sat / 1000); // convert ms to sec for this check
+            eventSatisfied = rc.evaluateCondT1(now / 1000); // convert ms to sec for this check
+            m_logger->debug("[MeasId=%d] Evaluating CondT1: now_time=%llds, threshold=%llds, satisfied=%s",
+                            measId, now / 1000, rc.condT1_thresholdSecTS, eventSatisfied ? "true" : "false");
             break;
         }
         case nr::rrc::common::HandoverEventType::CondA3:
@@ -233,26 +254,16 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
             //  and if so, send report
             if (elapsed >= rc.timeToTriggerMs())
             {
-                m_logger->info("Measurement event %s triggered for measId %d (serving RSRP=%d dBm)",
-                               rc.eventType.c_str(), measId, servingRsrp);
+                m_logger->info("[measId=%d] Measurement event %s triggered",
+                               measId, rc.eventStr());
 
                 state.isSatisfied = true;
-                
-                // // Sort triggered neighbors by RSRP descending
-                // std::sort(triggered.begin(), triggered.end(),
-                //          [](const auto &a, const auto &b) { return a.rsrp > b.rsrp; });
 
-                // // Limit to maxReportCells
-                // if (static_cast<int>(triggered.size()) > rc.maxReportCells)
-                //     triggered.resize(rc.maxReportCells);
-
-                // sendMeasurementReport(measId, servingCellId, servingRsrp, triggered);
-                // state.isReported = true;
             }
             else
             {
-                m_logger->debug("Measurement event %s measId %d not triggered, awaiting TTT (elapsed=%d, TTT=%d)",
-                    rc.eventType.c_str(), measId, elapsed, rc.timeToTriggerMs());
+                m_logger->debug("[MeasId=%d] event %s not triggered, awaiting TTT (elapsed=%d, TTT=%d)",
+                    measId, rc.eventStr(), elapsed, rc.timeToTriggerMs());
 
             }            
         }
@@ -263,8 +274,9 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
             state.isSatisfied = false;
             state.isReported = false;
         }
-         }
-     }
+    }
+        
+}
 
 void UeRrcTask::measurementReporting(int servingCellId, int servingRsrp)
 {
@@ -499,7 +511,7 @@ void UeRrcTask::applyMeasConfig(const UeMeasConfig &cfg)
             addedReportConfigs.push_back(id);
         m_measConfig.reportConfigs[id] = rc;
         m_logger->info("Applied MeasConfig reportConfigId=%d event=%s", id,
-                       nr::rrc::common::ToString(rc.eventKind).c_str());
+                       nr::rrc::common::HandoverEventTypeToString(rc.eventKind).c_str());
     }
 
     for (auto &[id, mid] : cfg.measIds)

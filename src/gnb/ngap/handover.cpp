@@ -1227,6 +1227,9 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
     }
     else 
     {
+        m_logger->debug("UE[%d] extracted targetPCI [%d] from HO command container; checking for CHO preparation",
+                        ue->ctxId,
+                        targetPci);
 
         // check to see if this is a response to a CHO preparation we initiated for this UE and target PCI; 
         // if so, mark it so RRC can handle accordingly, and remove from the UE's pending cho list.
@@ -1244,7 +1247,14 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
                     targetMap.erase(itTarget);
                 if (targetMap.empty())
                     m_hoReqChoPendingByTargetPci.erase(itByUe);
+
+                m_logger->info("UE[%d] HO command matches pending CHO preparation for targetPCI=%d; marking for CHO handling in RRC",
+                               ue->ctxId,
+                               targetPci);
             }
+        }
+        else {
+            m_logger->debug("UE[%d] has no pending CHO preparations; treating HO command as classic handover", ue->ctxId);
         }
     }
 

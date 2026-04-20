@@ -37,10 +37,10 @@ GnbRrcTask::GnbRrcTask(TaskBase *base) : m_base{base}, m_ueCtx{}, m_tidCountersB
 void GnbRrcTask::onStart()
 {
     setTimer(TIMER_ID_SI_BROADCAST, TIMER_PERIOD_SI_BROADCAST);
-    setTimer(TIMER_ID_SAT_CACHE_CALC, TIMER_PERIOD_SAT_CACHE_CALC);
 
-    if (m_base->gnbPosition.isValid)
-        setTrueGeoPosition(m_base->gnbPosition);
+    auto gnbPosition = m_base->getGnbPosition();
+    if (gnbPosition.isValid)
+        setTrueGeoPosition(gnbPosition);
 
     if (m_config->ntn.ownTle.has_value())
     {
@@ -48,8 +48,11 @@ void GnbRrcTask::onStart()
         m_logger->info("Loaded own TLE from config (pci=%d)", m_config->ntn.ownTle->pci);
     }
 
-    if (m_config->ntn.sib19.sib19On)
+    if (m_config->ntn.ntnEnabled && m_config->ntn.sib19.sib19On)
+    {
         setTimer(TIMER_ID_SIB19_BROADCAST, m_config->ntn.sib19.sib19TimingMs);
+        setTimer(TIMER_ID_SAT_CACHE_CALC, TIMER_PERIOD_SAT_CACHE_CALC);
+    }
 }
 
 void GnbRrcTask::onQuit()
@@ -76,7 +79,9 @@ void GnbRrcTask::onLoop()
         case NmGnbNgapToRrc::RADIO_POWER_ON: {
             m_isBarred = false;
             triggerSysInfoBroadcast();
-            triggerSib19Broadcast();
+            if (m_config->ntn.ntnEnabled && m_config->ntn.sib19.sib19On)
+                triggerSib19Broadcast();
+    
             break;
         }
         case NmGnbNgapToRrc::NAS_DELIVERY: {
@@ -162,7 +167,7 @@ void GnbRrcTask::setTruePositionVelocity(const PositionVelocity &value)
 
     auto geo = EcefToGeo(EcefPosition{value.x, value.y, value.z});
     geo.isValid = true;
-    m_base->gnbPosition = geo;
+    m_base->setGnbPosition(geo);
 }
 
 void GnbRrcTask::setTrueGeoPosition(const GeoPosition &value)
@@ -176,7 +181,7 @@ void GnbRrcTask::setTrueGeoPosition(const GeoPosition &value)
 
     GeoPosition normalized = value;
     normalized.isValid = true;
-    m_base->gnbPosition = normalized;
+    m_base->setGnbPosition(normalized);
 
     EcefPosition ecef = GeoToEcef(normalized);
 
@@ -192,9 +197,14 @@ void GnbRrcTask::setTrueGeoPosition(const GeoPosition &value)
     m_truePositionVelocity = pv;
 }
 
+PositionVelocity GnbRrcTask::getTruePositionVelocity() const
+{
+    return m_truePositionVelocity;
+}
+
 GeoPosition GnbRrcTask::getTrueGeoPosition() const
 {
-    return m_base->gnbPosition;
+    return m_base->getGnbPosition();
 }
 
 void GnbRrcTask::upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value)

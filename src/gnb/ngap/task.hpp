@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <deque>
 #include <optional>
 #include <unordered_map>
 
@@ -69,6 +70,15 @@ class NgapTask : public NtsTask
     int64_t m_ueNgapIdCounter;
     uint32_t m_downlinkTeidCounter;
     bool m_isInitialized;
+
+    static constexpr int TIMER_DEFERRED_QUEUE = 1001;
+    static constexpr int DEFERRED_QUEUE_INTERVAL_MS = 200;
+    static constexpr int DEFERRED_MAX_RETRIES = 5;
+
+    std::deque<std::unique_ptr<NmGnbRrcToNgap>> m_deferredQueue;
+
+    void enqueueDeferred(std::unique_ptr<NmGnbRrcToNgap> msg);
+    void processDeferredQueue();
 
     friend class GnbCmdHandler;
 

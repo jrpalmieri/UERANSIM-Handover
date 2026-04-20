@@ -276,7 +276,7 @@ void GnbRrcTask::triggerSib19Broadcast()
                 {
                     GeoPosition ownGeo = EcefToGeo(p0);
                     ownGeo.isValid = true;
-                    m_base->gnbPosition = ownGeo;
+                    m_base->setGnbPosition(ownGeo);
                 }
             }
             // orbital

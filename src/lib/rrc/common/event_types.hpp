@@ -32,7 +32,7 @@ enum class HandoverEventType
     CondT1,
 };
 
-inline std::string ToString(HandoverEventType value)
+inline std::string HandoverEventTypeToString(HandoverEventType value)
 {
     switch (value)
     {
@@ -193,6 +193,24 @@ struct EventReferenceLocation {
     double longitudeDeg{0.0};
 };
 
+class DynamicEventTriggerParams
+{
+  public:
+    int d1_distanceThresholdFromReference1{1000};
+    int d1_distanceThresholdFromReference2{1000};
+    EventReferenceLocation d1_referenceLocation1{};
+    EventReferenceLocation d1_referenceLocation2{};
+    int d1_hysteresisLocation{1};
+
+    int condT1_thresholdSec{0};
+    int condT1_durationSec{100};
+
+    int condD1_distanceThresholdFromReference1{1000};
+    int condD1_distanceThresholdFromReference2{1000};
+    EventReferenceLocation condD1_referenceLocation1{};
+    EventReferenceLocation condD1_referenceLocation2{};
+    int condD1_hysteresisLocation{1};
+};
 
 class ReportConfigEvent
 {
@@ -343,7 +361,7 @@ class ReportConfigEvent
         bool evaluateCondT1(long currentTS) const
         {
             // T1: current time > thresholdSecTS AND current time < thresholdSecTS + durationSec
-            return currentTS > condT1_thresholdSecTS && currentTS < condT1_thresholdSecTS + condT1_durationSec;
+            return (currentTS > condT1_thresholdSecTS) && (currentTS < (condT1_thresholdSecTS + condT1_durationSec));
         }
 
         int timeToTriggerMs() const
@@ -361,7 +379,7 @@ class ReportConfigEvent
             };
 
             return Json::Obj({
-                {"eventKind", ToString(eventKind)},
+                {"eventKind", HandoverEventTypeToString(eventKind)},
                 {"eventType", eventType},
                 {"ttt", std::string(E_TTT_ms_to_string(ttt))},
                 {"timeToTriggerMs", timeToTriggerMs()},

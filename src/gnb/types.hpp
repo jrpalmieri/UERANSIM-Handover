@@ -10,6 +10,7 @@
 
 #include <set>
 #include <string>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -599,75 +600,6 @@ struct GnbRsrpConfig
 };
 
 
-// // valid TimeToTrigger values in milliseconds
-// enum class E_TTT_ms {
-
-//     ms0 = 0,
-//     ms40 = 1,
-//     ms64 = 2,
-//     ms80 = 3,
-//     ms100 = 4,
-//     ms128 = 5,
-//     ms160 = 6,
-//     ms256 = 7,
-//     ms320 = 8,
-//     ms480 = 9,
-//     ms512 = 10,
-//     ms640 = 11,
-//     ms1024 = 12,
-//     ms1280 = 13,
-//     ms2560 = 14,
-//     ms5120 = 15
-// };
-
-// inline const char* E_TTT_ms_to_string(E_TTT_ms ttt) {
-//     static const char* const names[] = {"ms0", "ms40", "ms64", "ms80", "ms100", "ms128", "ms160", "ms256", "ms320", "ms480", "ms512", "ms640", "ms1024", "ms1280", "ms2560", "ms5120"};
-//     return names[static_cast<std::size_t>(ttt)];
-// }
-
-// inline E_TTT_ms E_TTT_ms_from_string(const std::string& value) {
-//     std::string upperValue = value;
-//     std::transform(upperValue.begin(), upperValue.end(), upperValue.begin(), [](unsigned char ch) {
-//         return static_cast<char>(std::toupper(ch));
-//     });
-
-//     if (upperValue == "MS0") {
-//         return E_TTT_ms::ms0;
-//     } else if (upperValue == "MS40") {
-//         return E_TTT_ms::ms40;
-//     } else if (upperValue == "MS64") {
-//         return E_TTT_ms::ms64;
-//     } else if (upperValue == "MS80") {
-//         return E_TTT_ms::ms80;
-//     } else if (upperValue == "MS100") {
-//         return E_TTT_ms::ms100;
-//     } else if (upperValue == "MS128") {
-//         return E_TTT_ms::ms128;
-//     } else if (upperValue == "MS160") {
-//         return E_TTT_ms::ms160;
-//     } else if (upperValue == "MS256") {
-//         return E_TTT_ms::ms256;
-//     } else if (upperValue == "MS320") {
-//         return E_TTT_ms::ms320;
-//     } else if (upperValue == "MS480") {
-//         return E_TTT_ms::ms480;
-//     } else if (upperValue == "MS512") {
-//         return E_TTT_ms::ms512;
-//     } else if (upperValue == "MS640") {
-//         return E_TTT_ms::ms640;
-//     } else if (upperValue == "MS1024") {
-//         return E_TTT_ms::ms1024;
-//     } else if (upperValue == "MS1280") {
-//         return E_TTT_ms::ms1280;
-//     } else if (upperValue == "MS2560") {
-//         return E_TTT_ms::ms2560;
-//     } else if (upperValue == "MS5120") {
-//         return E_TTT_ms::ms5120;
-//     }
-//     return E_TTT_ms::ms0;
-// }
-
-
 struct GnbChoCandidateProfileConfig
 {
     int candidateProfileId{0};
@@ -676,85 +608,23 @@ struct GnbChoCandidateProfileConfig
     std::vector<nr::rrc::common::ReportConfigEvent> conditions{};
 };
 
+
+struct GnbXnConfig
+{
+    bool enabled{false};
+    std::string bindAddress{"127.0.0.1"};
+    uint16_t bindPort{9487};
+    int requestTimeoutMs{1000};
+    int contextTtlMs{5000};
+    bool fallbackToN2{true};
+};
+
+
 struct GnbHandoverConfig
 {
-    // struct GnbHandoverReferencePosition
-    // {
-    //     double latitude{};
-    //     double longitude{};
-    // };
-
-    // struct GnbHandoverEventConfig
-    // {
-    //     nr::rrc::common::HandoverEventType eventKind{nr::rrc::common::HandoverEventType::A3};
-
-    //     // Event type string (e.g. "A3", "A2", "D1", "condT1", etc.)
-    //     // Kept for compatibility while migrating callers to eventKind.
-    //     std::string eventType{"A3"};
-
-    //     // eventA2 fields
-
-    //     int a2_thresholdDbm{-110};
-    //     int a2_hysteresisDb{1};
-    //     bool a2_reportOnLeave{true};
-    //     E_TTT_ms a2_TTT{E_TTT_ms::ms100};
-
-    //     // event a3 fields
-
-    //     int a3_offsetDb{3};
-    //     int a3_hysteresisDb{1};
-    //     bool a3_reportOnLeave{true};
-    //     E_TTT_ms a3_TTT{E_TTT_ms::ms100};
-    //     bool a3_useAllowedCellList{false};
-        
-    //     // eventA5 fields
-        
-    //     int a5_threshold1Dbm{-110};
-    //     int a5_threshold2Dbm{-95};
-    //     int a5_hysteresisDb{1};
-    //     bool a5_reportOnLeave{true};
-    //     E_TTT_ms a5_TTT{E_TTT_ms::ms100};
-    //     bool a5_useAllowedCellList{false};
-
-    //     // eventD1-r17 fields
-
-    //     int d1_distanceThreshFromReference1{1000};
-    //     int d1_distanceThreshFromReference2{1000};
-    //     GnbHandoverReferencePosition d1_referenceLocation1{};
-    //     GnbHandoverReferencePosition d1_referenceLocation2{};
-    //     int d1_hysteresisLocation{1};
-    //     bool d1_reportOnLeave{true};
-    //     E_TTT_ms d1_TTT{E_TTT_ms::ms100};
-
-    //     // condEventT1-r17 fields
-
-    //     int condT1_thresholdSecTS{0};
-    //     int condT1_durationSec{100};
-
-    //     // condEventD1-r17 fields
-
-    //     int condD1_distanceThreshFromReference1{1000};
-    //     int condD1_distanceThreshFromReference2{1000};
-    //     GnbHandoverReferencePosition condD1_referenceLocation1{};
-    //     GnbHandoverReferencePosition condD1_referenceLocation2{};
-    //     int condD1_hysteresisLocation{1};
-    //     bool condD1_reportOnLeave{true};
-    //     E_TTT_ms condD1_TTT{E_TTT_ms::ms100};
-    // };
-
-    struct GnbXnConfig
-    {
-        bool enabled{false};
-        std::string bindAddress{"127.0.0.1"};
-        uint16_t bindPort{9487};
-        int requestTimeoutMs{1000};
-        int contextTtlMs{5000};
-        bool fallbackToN2{true};
-    };
-
     bool choEnabled{false};
     int choDefaultProfileId{0};
-    std::vector<nr::rrc::common::ReportConfigEvent> events{{}};
+    std::vector<nr::rrc::common::ReportConfigEvent> events{};
     std::vector<GnbChoCandidateProfileConfig> candidateProfiles{};
     GnbXnConfig xn{};
 };
@@ -817,11 +687,13 @@ struct GnbConfig
     GnbRlsConfig rls{};
     GnbHandoverConfig handover{};
     std::vector<GnbNeighborConfig> neighborList{};
+    std::optional<std::string> nodeNameTemplate{};
 
     NtnConfig ntn{};
 
     /* Assigned by program */
     std::string name{};
+    std::optional<std::string> nodeNameTemplatePreview{};
     EPagingDrx pagingDrx{};
     Vector3 phyLocation{};
     GeoPosition geoLocation{};  // lat/lon/alt for the gNB
@@ -863,7 +735,24 @@ struct TaskBase
 
     GnbNeighbors *neighbors{};
 
+    // Access gnbPosition only through getGnbPosition/setGnbPosition.
+    // These methods serialize concurrent readers and writers.
+    mutable std::mutex gnbPositionMutex{};
     GeoPosition gnbPosition{};
+
+    void setGnbPosition(const GeoPosition &position)
+    {
+        std::lock_guard<std::mutex> lock(gnbPositionMutex);
+        gnbPosition = position;
+    }
+
+    [[nodiscard]] GeoPosition getGnbPosition() const
+    {
+        std::lock_guard<std::mutex> lock(gnbPositionMutex);
+        return gnbPosition;
+    }
+
+    int fixedRsrp;
 };
 
 Json ToJson(const GnbStatusInfo &v);

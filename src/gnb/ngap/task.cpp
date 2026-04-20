@@ -12,6 +12,7 @@
 
 #include <gnb/app/task.hpp>
 #include <gnb/sctp/task.hpp>
+#include <utils/nts.hpp>
 
 namespace nr::gnb
 {
@@ -40,6 +41,8 @@ void NgapTask::onStart()
         msg->associatedTask = this;
         m_base->sctpTask->push(std::move(msg));
     }
+
+    setTimer(TIMER_DEFERRED_QUEUE, DEFERRED_QUEUE_INTERVAL_MS);
 }
 
 void NgapTask::onLoop()
@@ -73,10 +76,24 @@ void NgapTask::onLoop()
             handleHandoverNotifyFromRrc(w.ueId);
             break;
         }
-        // RRC (source gnb) notifies NGAP of handover start. NGAP will notify AMF with HANDOVER_REQUIRED.  
+        // RRC (source gnb) notifies NGAP of handover start. NGAP will notify AMF with HANDOVER_REQUIRED.
         //      AMF will then notify target gNB.
         case NmGnbRrcToNgap::HANDOVER_REQUIRED: {
             m_logger->info("UE[%d] HandoverRequired received from RRC, targetPCI=%d", w.ueId, w.hoTargetPci);
+            
+            auto *_ue = findUeContext(w.ueId);
+            if (!_ue || _ue->amfUeNgapId < 1 || _ue->pduSessions.empty())
+            {
+                m_logger->warn("UE[%d] Core Network resources not yet assigned, deferring HandoverRequired", w.ueId);
+                auto deferred = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_REQUIRED);
+                deferred->ueId = w.ueId;
+                deferred->hoTargetPci = w.hoTargetPci;
+                deferred->hoCause = w.hoCause;
+                deferred->hoForChoPreparation = w.hoForChoPreparation;
+                deferred->retries = w.retries;
+                enqueueDeferred(std::move(deferred));
+                break;
+            }
             sendHandoverRequired(w.ueId, w.hoTargetPci, w.hoCause, w.hoForChoPreparation);
             break;
         }
@@ -114,10 +131,48 @@ void NgapTask::onLoop()
         }
         break;
     }
+    case NtsMessageType::TIMER_EXPIRED: {
+        auto &w = dynamic_cast<NmTimerExpired &>(*msg);
+        if (w.timerId == TIMER_DEFERRED_QUEUE)
+        {
+            processDeferredQueue();
+            setTimer(TIMER_DEFERRED_QUEUE, DEFERRED_QUEUE_INTERVAL_MS);
+        }
+        break;
+    }
     default: {
         m_logger->unhandledNts(*msg);
         break;
     }
+    }
+}
+
+void NgapTask::enqueueDeferred(std::unique_ptr<NmGnbRrcToNgap> msg)
+{
+    m_deferredQueue.push_back(std::move(msg));
+}
+
+void NgapTask::processDeferredQueue()
+{
+    int count = static_cast<int>(m_deferredQueue.size());
+    for (int i = 0; i < count; ++i)
+    {
+        auto msg = std::move(m_deferredQueue.front());
+        m_deferredQueue.pop_front();
+
+        if (m_ueCtx.count(msg->ueId) && (m_ueCtx[msg->ueId]->amfUeNgapId > 0 && !m_ueCtx[msg->ueId]->pduSessions.empty()))
+        {
+            sendHandoverRequired(msg->ueId, msg->hoTargetPci, msg->hoCause, msg->hoForChoPreparation);
+        }
+        else if (msg->retries >= DEFERRED_MAX_RETRIES)
+        {
+            m_logger->err("UE[%d] Dropping deferred HandoverRequired after %d retries", msg->ueId, msg->retries);
+        }
+        else
+        {
+            msg->retries++;
+            m_deferredQueue.push_back(std::move(msg));
+        }
     }
 }
 

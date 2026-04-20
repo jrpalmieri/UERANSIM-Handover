@@ -149,6 +149,19 @@ static Json ToJsonLocPvFromGeo(const GeoPosition &position)
     });
 }
 
+static Json ToJsonLocPv(const PositionVelocity &position)
+{
+    return Json::Obj({
+        {"x", std::to_string(position.x)},
+        {"y", std::to_string(position.y)},
+        {"z", std::to_string(position.z)},
+        {"vx", std::to_string(position.vx)},
+        {"vy", std::to_string(position.vy)},
+        {"vz", std::to_string(position.vz)},
+        {"epochMs", position.epochMs},
+    });
+}
+
 static std::string ToLower(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
@@ -223,8 +236,8 @@ static std::string ToAuditCommand(const app::GnbCliCommand &cmd)
         return "status";
     case app::GnbCliCommand::UI_STATUS:
         return "ui-status";
-    case app::GnbCliCommand::INFO:
-        return "info";
+    case app::GnbCliCommand::CONFIG_INFO:
+        return "config-info";
     case app::GnbCliCommand::AMF_LIST:
         return "amf-list";
     case app::GnbCliCommand::AMF_INFO:
@@ -516,6 +529,11 @@ void GnbCmdHandler::ensureCliLogger()
 
 void GnbCmdHandler::logCommandReceived(const NmGnbCliCommand &msg)
 {
+    m_suppressCurrentCommandLogs = msg.cmd && msg.cmd->present == app::GnbCliCommand::UI_STATUS;
+
+    if (m_suppressCurrentCommandLogs)
+        return;
+
     ensureCliLogger();
     m_currentCommand = ToAuditCommand(*msg.cmd);
     m_currentSource = FormatSource(msg.address);
@@ -525,6 +543,9 @@ void GnbCmdHandler::logCommandReceived(const NmGnbCliCommand &msg)
 
 void GnbCmdHandler::logResponse(bool isError, const std::string &output)
 {
+    if (m_suppressCurrentCommandLogs)
+        return;
+
     ensureCliLogger();
     auto responseText = output.empty() ? std::string{"<empty>"} : EscapeForLog(output);
     auto responseType = isError ? "error" : "result";
@@ -605,9 +626,11 @@ void GnbCmdHandler::handleCmd(NmGnbCliCommand &msg)
     unpauseTasks();
     m_currentCommand.clear();
     m_currentSource.clear();
+    m_suppressCurrentCommandLogs = false;
 }
 
 void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
+
 {
     switch (msg.cmd->present)
     {
@@ -626,11 +649,11 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         sendResult(msg.address, json.dumpYaml());
         break;
     }
-    case app::GnbCliCommand::INFO: {
+    case app::GnbCliCommand::CONFIG_INFO: {
         sendResult(msg.address, ToJson(*m_base->config).dumpYaml());
         break;
     }
-    case app::GnbCliCommand::AMF_LIST: {
+  case app::GnbCliCommand::AMF_LIST: {
         Json json = Json::Arr({});
         for (auto &amf : m_base->ngapTask->m_amfCtx)
             json.push(Json::Obj({{"id", amf.first}}));
@@ -675,6 +698,22 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         }
         break;
     }
+    case app::GnbCliCommand::SET_RSRP: {
+        // Set the global fixed RSRP value (dBm)
+        int value = msg.cmd->rsrpValue;
+        // Clamp to allowed range if needed (reuse constants if available)
+        constexpr int MIN_RSRP = -140;
+        constexpr int MAX_RSRP = -40;
+        if (value < MIN_RSRP || value > MAX_RSRP) {
+            sendError(msg.address, "RSRP value out of range (must be between -140 and -40 dBm)");
+            break;
+        }
+        m_base->fixedRsrp = value;
+        m_base->config->rfLink.updateMode = EGnbRsrpMode::Fixed;
+        sendResult(msg.address, "Updated fixed RSRP to " + std::to_string(value) + " dBm");
+    
+        break;
+    }
     case app::GnbCliCommand::SET_LOC_WGS84: {
         GeoPosition geo{};
         geo.isValid = true;
@@ -702,23 +741,32 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         break;
     }
     case app::GnbCliCommand::GET_LOC_WGS84: {
-        if (!m_base->gnbPosition.isValid)
+        auto gnbPosition = m_base->getGnbPosition();
+        if (!gnbPosition.isValid)
         {
             sendError(msg.address, "gNB location is not set");
             break;
         }
 
-        sendResult(msg.address, ToJsonLocWgs84(m_base->gnbPosition).dumpYaml());
+        sendResult(msg.address, ToJsonLocWgs84(gnbPosition).dumpYaml());
         break;
     }
     case app::GnbCliCommand::GET_LOC_PV: {
-        if (!m_base->gnbPosition.isValid)
+        auto truePv = m_base->rrcTask->getTruePositionVelocity();
+        if (!truePv.isValid)
         {
-            sendError(msg.address, "gNB location is not set");
+            auto gnbPosition = m_base->getGnbPosition();
+            if (!gnbPosition.isValid)
+            {
+                sendError(msg.address, "gNB location is not set");
+                break;
+            }
+
+            sendResult(msg.address, ToJsonLocPvFromGeo(gnbPosition).dumpYaml());
             break;
         }
 
-        sendResult(msg.address, ToJsonLocPvFromGeo(m_base->gnbPosition).dumpYaml());
+        sendResult(msg.address, ToJsonLocPv(truePv).dumpYaml());
         break;
     }
     case app::GnbCliCommand::SAT_LOC_PV: {

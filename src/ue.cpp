@@ -24,7 +24,6 @@
 #include <lib/app/ue_ctl.hpp>
 #include <ue/ue.hpp>
 #include <ue/types.hpp>
-#include <ue/rrc/position.hpp>
 #include <libsgp4/DateTime.h>
 #include <utils/common.hpp>
 #include <utils/concurrent_map.hpp>
@@ -86,6 +85,89 @@ static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
     const libsgp4::DateTime unixEpoch(1970, 1, 1, 0, 0, 0);
     auto delta = dateTime - unixEpoch;
     return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
+}
+
+static std::optional<std::string> TryGetImsiDigits(const nr::ue::UeConfig &config)
+{
+    if (config.supi.has_value())
+        return config.supi->value;
+    return std::nullopt;
+}
+
+static std::string ResolveUeNodeNameTemplateToken(const std::string &token, const nr::ue::UeConfig &config)
+{
+    if (token == "imsi")
+    {
+        auto imsi = TryGetImsiDigits(config);
+        if (!imsi.has_value())
+            throw std::runtime_error("nodeNameTemplate token {imsi} requires SUPI/IMSI in UE config");
+        return *imsi;
+    }
+
+    constexpr const char *kPrefix = "imsi[-";
+    constexpr const char *kSuffix = ":]";
+    const size_t prefixLen = 6;
+    const size_t suffixLen = 2;
+
+    if (token.size() > prefixLen + suffixLen && token.compare(0, prefixLen, kPrefix) == 0 &&
+        token.compare(token.size() - suffixLen, suffixLen, kSuffix) == 0)
+    {
+        auto imsi = TryGetImsiDigits(config);
+        if (!imsi.has_value())
+            throw std::runtime_error("nodeNameTemplate token {" + token + "} requires SUPI/IMSI in UE config");
+
+        auto countText = token.substr(prefixLen, token.size() - prefixLen - suffixLen);
+        int count = 0;
+        try
+        {
+            count = std::stoi(countText);
+        }
+        catch (const std::exception &)
+        {
+            throw std::runtime_error("Invalid nodeNameTemplate slice width in token {" + token + "}");
+        }
+
+        if (count <= 0)
+            throw std::runtime_error("nodeNameTemplate slice width must be positive in token {" + token + "}");
+
+        auto takeCount = static_cast<size_t>(count);
+        if (takeCount >= imsi->size())
+            return *imsi;
+
+        return imsi->substr(imsi->size() - takeCount);
+    }
+
+    throw std::runtime_error("Unsupported token in nodeNameTemplate: {" + token + "}");
+}
+
+static std::string RenderUeNodeNameTemplatePreview(const std::string &pattern, const nr::ue::UeConfig &config)
+{
+    std::string output;
+    output.reserve(pattern.size() + 16);
+
+    size_t i = 0;
+    while (i < pattern.size())
+    {
+        if (pattern[i] != '{')
+        {
+            output.push_back(pattern[i]);
+            i++;
+            continue;
+        }
+
+        size_t close = pattern.find('}', i + 1);
+        if (close == std::string::npos)
+            throw std::runtime_error("nodeNameTemplate has unmatched '{'");
+
+        auto token = pattern.substr(i + 1, close - i - 1);
+        if (token.empty())
+            throw std::runtime_error("nodeNameTemplate has empty token: {}");
+
+        output += ResolveUeNodeNameTemplateToken(token, config);
+        i = close + 1;
+    }
+
+    return output;
 }
 
 struct NwUeControllerCmd : NtsMessage
@@ -226,6 +308,12 @@ static nr::ue::UeConfig *ReadConfigYaml()
         result->tunName = yaml::GetString(config, "tunName", 1, 12);
     if (yaml::HasField(config, "tunNetmask"))
         result->tunNetmask = yaml::GetString(config, "tunNetmask", 9, 15);
+    if (yaml::HasField(config, "nodeNameTemplate"))
+    {
+        result->nodeNameTemplate = yaml::GetString(config, "nodeNameTemplate", cons::MinNodeName, cons::MaxNodeName);
+        result->nodeNameTemplatePreview = RenderUeNodeNameTemplatePreview(*result->nodeNameTemplate, *result);
+        utils::AssertNodeName(*result->nodeNameTemplatePreview);
+    }
 
     yaml::AssertHasField(config, "integrity");
     yaml::AssertHasField(config, "ciphering");
@@ -339,12 +427,16 @@ static nr::ue::UeConfig *ReadConfigYaml()
         geo.latitude  = posNode["latitude"].as<double>(0.0);
         geo.longitude = posNode["longitude"].as<double>(0.0);
         geo.altitude  = posNode["altitude"].as<double>(0.0);
+        geo.isValid = true;
         result->initialPosition = geo;
     }
 
     if (yaml::HasField(config, "ntn"))
     {
         auto ntn = config["ntn"];
+
+        if (yaml::HasField(ntn, "ntnEnabled"))
+            result->ntn.ntnEnabled = yaml::GetBool(ntn, "ntnEnabled");
 
         if (yaml::HasField(ntn, "timewarp"))
             throw std::runtime_error("Field ntn.timewarp is invalid; use ntn.timeWarp");
@@ -400,6 +492,27 @@ static nr::ue::UeConfig *ReadConfigYaml()
                 result->ntn.timeWarp.startEpochMillis = DateTimeToUnixMillis(startEpochDt);
             }
         }
+
+        if (yaml::HasField(ntn, "tle"))
+        {
+            auto tle = ntn["tle"];
+            if (!tle.IsMap())
+                throw std::runtime_error("Field ntn.tle must be a map");
+            if (!yaml::HasField(tle, "line1") || !yaml::HasField(tle, "line2"))
+                throw std::runtime_error("Fields ntn.tle.line1 and ntn.tle.line2 are required");
+
+            nr::ue::UeConfig::NtnConfig::TleEntry entry{};
+            entry.line1 = tle["line1"].as<std::string>();
+            entry.line2 = tle["line2"].as<std::string>();
+
+            if (entry.line1.size() < 69 || entry.line2.size() < 69)
+                throw std::runtime_error("ntn.tle lines must be at least 69 characters (standard TLE format)");
+
+            result->ntn.tle = entry;
+        }
+
+        if (yaml::HasField(ntn, "elevationMinDeg"))
+            result->ntn.elevationMinDeg = yaml::GetInt32(ntn, "elevationMinDeg", 0, 90);
     }
 
     return result;
@@ -533,6 +646,8 @@ static nr::ue::UeConfig *GetConfigByUe(int ueIndex)
     c->rls = g_refConfig->rls;
     c->initialPosition = g_refConfig->initialPosition;
     c->ntn = g_refConfig->ntn;
+    c->nodeNameTemplate = g_refConfig->nodeNameTemplate;
+    c->nodeNameTemplatePreview = g_refConfig->nodeNameTemplatePreview;
 
     if (c->supi.has_value())
         IncrementNumber(c->supi->value, ueIndex);
@@ -540,6 +655,12 @@ static nr::ue::UeConfig *GetConfigByUe(int ueIndex)
         IncrementNumber(*c->imei, ueIndex);
     if (c->imeiSv.has_value())
         IncrementNumber(*c->imeiSv, ueIndex);
+
+    if (c->nodeNameTemplate.has_value())
+    {
+        c->nodeNameTemplatePreview = RenderUeNodeNameTemplatePreview(*c->nodeNameTemplate, *c);
+        utils::AssertNodeName(*c->nodeNameTemplatePreview);
+    }
 
     return c;
 }

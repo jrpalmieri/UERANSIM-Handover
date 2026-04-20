@@ -41,7 +41,7 @@
   },
   "ue": {
     "node": "UE1",
-    "count": 100,
+    "count": 1,
     "config": "./tools/UI/configs/ue1.yaml",
     "auto_setcap": true,
     "run_with_sudo": true,

@@ -12,6 +12,7 @@
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 
 #include <libsgp4/DateTime.h>
 #include <ue/app/task.hpp>
@@ -24,6 +25,7 @@
 #include <utils/constants.hpp>
 #include <utils/printer.hpp>
 #include <utils/sat_time.hpp>
+#include <yaml-cpp/yaml.h>
 
 #include <shared_mutex>
 
@@ -44,6 +46,55 @@ static std::string SignalDescription(int dbm)
 
 namespace nr::ue
 {
+
+static std::vector<std::string> ParseGnbIpListPayload(const std::string &jsonPayload)
+{
+    YAML::Node root;
+    try
+    {
+        root = YAML::Load(jsonPayload);
+    }
+    catch (const std::exception &e)
+    {
+        throw std::runtime_error(std::string("Invalid JSON payload: ") + e.what());
+    }
+
+    if (!root.IsMap())
+        throw std::runtime_error("Payload must be a JSON object.");
+
+    auto ipsNode = root["ipAddresses"];
+    if (!ipsNode || !ipsNode.IsSequence())
+        throw std::runtime_error("Field 'ipAddresses' must be an array.");
+
+    if (ipsNode.size() == 0)
+        throw std::runtime_error("Field 'ipAddresses' must contain at least one IP address.");
+
+    std::unordered_set<std::string> seen;
+    std::vector<std::string> ips;
+    ips.reserve(ipsNode.size());
+
+    size_t i = 0;
+    for (const auto &ipNode : ipsNode)
+    {
+        if (!ipNode.IsScalar())
+            throw std::runtime_error("ipAddresses[" + std::to_string(i) + "] must be a string.");
+
+        auto ip = ipNode.as<std::string>();
+        utils::Trim(ip);
+        if (ip.empty())
+            throw std::runtime_error("ipAddresses[" + std::to_string(i) + "] cannot be empty.");
+
+        InetAddress parsed(ip, cons::RadioLinkPort);
+        if (parsed.getIpVersion() != 4)
+            throw std::runtime_error("ipAddresses[" + std::to_string(i) + "] must be an IPv4 address.");
+
+        if (seen.insert(ip).second)
+            ips.push_back(std::move(ip));
+        i++;
+    }
+
+    return ips;
+}
 
 static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch, const std::string &fieldPath)
 {
@@ -98,6 +149,15 @@ static Json ToJsonSatTimeStatus(const utils::SatTime::Status &status)
     return json;
 }
 
+static Json ToJsonLocWgs84(const GeoPosition &position)
+{
+    return Json::Obj({
+        {"latitude", std::to_string(position.latitude)},
+        {"longitude", std::to_string(position.longitude)},
+        {"altitude", std::to_string(position.altitude)},
+    });
+}
+
 static std::string EscapeForLog(const std::string &value)
 {
     std::string escaped;
@@ -144,12 +204,17 @@ static std::string ToAuditCommand(const app::UeCliCommand &cmd)
     std::ostringstream stream;
     switch (cmd.present)
     {
-    case app::UeCliCommand::INFO:
-        return "info";
+    case app::UeCliCommand::CONFIG_INFO:
+        return "config-info";
     case app::UeCliCommand::STATUS:
         return "status";
     case app::UeCliCommand::UI_STATUS:
         return "ui-status";
+    case app::UeCliCommand::SET_LOC_WGS84:
+        stream << "set-loc-wgs84 lat=" << cmd.geoLat << " lon=" << cmd.geoLon << " alt=" << cmd.geoAlt;
+        return stream.str();
+    case app::UeCliCommand::GET_LOC_WGS84:
+        return "get-loc-wgs84";
     case app::UeCliCommand::TIMERS:
         return "timers";
     case app::UeCliCommand::PS_ESTABLISH: {
@@ -177,6 +242,12 @@ static std::string ToAuditCommand(const app::UeCliCommand &cmd)
         return FormatSatTimeAction(cmd.satTime);
     case app::UeCliCommand::RLS_STATE:
         return "rls-state";
+    case app::UeCliCommand::GNB_IP_ADD:
+        return "gnb-ip-add payload=" + cmd.gnbIpJson;
+    case app::UeCliCommand::GNB_IP_REMOVE:
+        return "gnb-ip-remove payload=" + cmd.gnbIpJson;
+    case app::UeCliCommand::GNB_IP_LIST:
+        return "gnb-ip-list";
     case app::UeCliCommand::COVERAGE:
         return "coverage";
     case app::UeCliCommand::VERSION:
@@ -354,8 +425,31 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
         sendResult(msg.address, json.dumpYaml());
         break;
     }
-    case app::UeCliCommand::INFO: {
+    case app::UeCliCommand::SET_LOC_WGS84: {
+        GeoPosition geo{};
+        geo.isValid = true;
+        geo.latitude = msg.cmd->geoLat;
+        geo.longitude = msg.cmd->geoLon;
+        geo.altitude = msg.cmd->geoAlt;
+
+        m_base->UeLocation = geo;
+        sendResult(msg.address, "Updated true UE WGS84 position");
+        break;
+    }
+    case app::UeCliCommand::GET_LOC_WGS84: {
+        auto uePosition = m_base->UeLocation;
+        if (!uePosition.isValid)
+        {
+            sendError(msg.address, "UE location is not set");
+            break;
+        }
+
+        sendResult(msg.address, ToJsonLocWgs84(uePosition).dumpYaml());
+        break;
+    }
+    case app::UeCliCommand::CONFIG_INFO: {
         auto json = Json::Obj({
+            {"node-name-active", m_base->config->getNodeName()},
             {"supi", ToJson(m_base->config->supi)},
             {"hplmn", ToJson(m_base->config->hplmn)},
             {"imei", ::ToJson(m_base->config->imei)},
@@ -375,6 +469,11 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
                         })},
             {"is-high-priority", m_base->nasTask->mm->isHighPriority()},
         });
+
+        if (m_base->config->nodeNameTemplate.has_value())
+            json.put("node-name-template", *m_base->config->nodeNameTemplate);
+        if (m_base->config->nodeNameTemplatePreview.has_value())
+            json.put("node-name-template-preview", *m_base->config->nodeNameTemplatePreview);
 
         sendResult(msg.address, json.dumpYaml());
         break;
@@ -483,6 +582,77 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
             {"gnb-search-space", ::ToJson(m_base->config->gnbSearchList)},
         });
         sendResult(msg.address, json.dumpYaml());
+        break;
+    }
+    case app::UeCliCommand::GNB_IP_ADD: {
+        std::vector<std::string> ipAddresses;
+        try
+        {
+            ipAddresses = ParseGnbIpListPayload(msg.cmd->gnbIpJson);
+        }
+        catch (const std::exception &e)
+        {
+            sendError(msg.address, std::string("gnb-ip-add payload error: ") + e.what());
+            break;
+        }
+
+        auto addedCount = m_base->rlsTask->m_udpTask->addSearchSpaceIps(ipAddresses);
+
+        for (const auto &ip : ipAddresses)
+        {
+            bool exists = std::find(m_base->config->gnbSearchList.begin(), m_base->config->gnbSearchList.end(), ip) !=
+                          m_base->config->gnbSearchList.end();
+            if (!exists)
+                m_base->config->gnbSearchList.push_back(ip);
+        }
+
+        Json response = Json::Obj({
+            {"result", "ok"},
+            {"requestedCount", static_cast<int>(ipAddresses.size())},
+            {"addedCount", addedCount},
+            {"gnb-search-space", ::ToJson(m_base->rlsTask->m_udpTask->listSearchSpaceIps())},
+        });
+        sendResult(msg.address, response.dumpYaml());
+        break;
+    }
+    case app::UeCliCommand::GNB_IP_REMOVE: {
+        std::vector<std::string> ipAddresses;
+        try
+        {
+            ipAddresses = ParseGnbIpListPayload(msg.cmd->gnbIpJson);
+        }
+        catch (const std::exception &e)
+        {
+            sendError(msg.address, std::string("gnb-ip-remove payload error: ") + e.what());
+            break;
+        }
+
+        auto removedCount = m_base->rlsTask->m_udpTask->removeSearchSpaceIps(ipAddresses);
+
+        std::unordered_set<std::string> removeSet(ipAddresses.begin(), ipAddresses.end());
+        std::vector<std::string> kept;
+        kept.reserve(m_base->config->gnbSearchList.size());
+        for (const auto &ip : m_base->config->gnbSearchList)
+        {
+            if (removeSet.count(ip) == 0)
+                kept.push_back(ip);
+        }
+        m_base->config->gnbSearchList = std::move(kept);
+
+        Json response = Json::Obj({
+            {"result", "ok"},
+            {"requestedCount", static_cast<int>(ipAddresses.size())},
+            {"removedCount", removedCount},
+            {"gnb-search-space", ::ToJson(m_base->rlsTask->m_udpTask->listSearchSpaceIps())},
+        });
+        sendResult(msg.address, response.dumpYaml());
+        break;
+    }
+    case app::UeCliCommand::GNB_IP_LIST: {
+        Json response = Json::Obj({
+            {"gnb-search-space", ::ToJson(m_base->rlsTask->m_udpTask->listSearchSpaceIps())},
+        });
+        sendResult(msg.address, response.dumpYaml());
         break;
     }
     case app::UeCliCommand::COVERAGE: {

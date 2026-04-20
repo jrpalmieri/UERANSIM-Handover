@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import math
 import os
 import random
 import re
@@ -229,6 +230,10 @@ class WindowedDashboard:
         self.log_widgets: Dict[str, scrolledtext.ScrolledText] = {}
         self.summary_window: Optional[tk.Toplevel] = None
         self.summary_widget: Optional[scrolledtext.ScrolledText] = None
+        self.location_window: Optional[tk.Toplevel] = None
+        self.rsrp_window: Optional[tk.Toplevel] = None
+        self.current_rsrp_dbm: Dict[str, Optional[int]] = {"gnb1": None, "gnb2": None}
+        self.rsrp_current_vars: Dict[str, tk.StringVar] = {}
         self.inject_target_var = tk.StringVar(value="gnb1")
         self.inject_dbm_var = tk.StringVar(value="-80")
         self.inject_status_var = tk.StringVar(value="Ready")
@@ -533,6 +538,14 @@ class WindowedDashboard:
         handover_menu.add_command(label="Program", command=self._open_handover_program_dialog)
         handover_menu.add_command(label="Stop Program", command=self._stop_handover_program)
         menubar.add_cascade(label="Handover", menu=handover_menu)
+
+        location_menu = tk.Menu(menubar, tearoff=0)
+        location_menu.add_command(label="Open gNB WGS84 Editor", command=self._open_location_window)
+        menubar.add_cascade(label="Location", menu=location_menu)
+
+        rsrp_menu = tk.Menu(menubar, tearoff=0)
+        rsrp_menu.add_command(label="Open gNB RSRP Editor", command=self._open_rsrp_window)
+        menubar.add_cascade(label="RSRP", menu=rsrp_menu)
 
         user_plane_menu = tk.Menu(menubar, tearoff=0)
         user_plane_menu.add_command(label="Open Demo", command=self._open_user_plane_demo_window)
@@ -1757,6 +1770,9 @@ class WindowedDashboard:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
                 udp.sendto(packet, (target_ip, RLS_PORT))
 
+            self.current_rsrp_dbm[key] = dbm
+            self._sync_rsrp_current_vars()
+
             msg = f"Injected {dbm} dBm to {key} ({target_ip}:{RLS_PORT})"
             if source == "program":
                 self.inject_status_var.set("Program running: " + msg)
@@ -1831,8 +1847,349 @@ class WindowedDashboard:
         self._inject_rsrp_value(key, dbm, source="manual")
 
     @staticmethod
+    def _format_current_rsrp(value: Optional[int]) -> str:
+        if value is None:
+            return "Unknown"
+        return f"{value} dBm"
+
+    def _sync_rsrp_current_vars(self) -> None:
+        for key, var in self.rsrp_current_vars.items():
+            var.set(self._format_current_rsrp(self.current_rsrp_dbm.get(key)))
+
+    def _open_rsrp_window(self) -> None:
+        if self.rsrp_window is not None and self.rsrp_window.winfo_exists():
+            self.rsrp_window.lift()
+            self.rsrp_window.focus_set()
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("gNB RSRP Editor")
+        dialog.geometry("760x260")
+        dialog.resizable(True, False)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            frame,
+            text="View current gNB RSRP and inject new values. Current value is the last successful UI injection.",
+        ).grid(row=0, column=0, columnspan=7, sticky="w", pady=(0, 10))
+
+        headers = ["gNB", "Current RSRP", "New RSRP (dBm)", "Range", "Actions"]
+        for idx, header in enumerate(headers):
+            col = idx if idx < 4 else 6
+            ttk.Label(frame, text=header).grid(row=1, column=col, sticky="w", padx=(0, 8), pady=(0, 4))
+
+        row_map = {"gnb1": 2, "gnb2": 3}
+        new_rsrp_vars: Dict[str, tk.StringVar] = {}
+        self.rsrp_current_vars = {}
+
+        for key, row in row_map.items():
+            self.rsrp_current_vars[key] = tk.StringVar(value=self._format_current_rsrp(self.current_rsrp_dbm.get(key)))
+            current_var = self.rsrp_current_vars[key]
+
+            default_value = self.current_rsrp_dbm.get(key)
+            new_rsrp_vars[key] = tk.StringVar(value=str(default_value if default_value is not None else -80))
+
+            ttk.Label(frame, text=key).grid(row=row, column=0, sticky="w", pady=4)
+            ttk.Label(frame, textvariable=current_var, width=16).grid(row=row, column=1, sticky="w", pady=4)
+            ttk.Entry(frame, textvariable=new_rsrp_vars[key], width=16).grid(row=row, column=2, sticky="ew", pady=4)
+            ttk.Label(frame, text=f"[{MIN_RSRP}, {MAX_RSRP}] dBm").grid(row=row, column=3, sticky="w", pady=4)
+
+        status_var = tk.StringVar(value="Ready")
+        ttk.Label(frame, textvariable=status_var).grid(row=4, column=0, columnspan=7, sticky="w", pady=(8, 0))
+
+        def _apply_target(target_key: str) -> None:
+            try:
+                dbm = int(new_rsrp_vars[target_key].get().strip())
+            except ValueError:
+                status_var.set(f"Invalid numeric RSRP value for {target_key}")
+                return
+
+            self._inject_rsrp_value(target_key, dbm, source="manual")
+            status_var.set(f"Applied {target_key} RSRP")
+            self._sync_rsrp_current_vars()
+
+        def _apply_both() -> None:
+            _apply_target("gnb1")
+            _apply_target("gnb2")
+
+        btn_row_1 = ttk.Frame(frame)
+        btn_row_1.grid(row=2, column=6, sticky="e", pady=4)
+        ttk.Button(btn_row_1, text="Apply", command=lambda: _apply_target("gnb1")).pack(side=tk.LEFT)
+
+        btn_row_2 = ttk.Frame(frame)
+        btn_row_2.grid(row=3, column=6, sticky="e", pady=4)
+        ttk.Button(btn_row_2, text="Apply", command=lambda: _apply_target("gnb2")).pack(side=tk.LEFT)
+
+        footer = ttk.Frame(frame)
+        footer.grid(row=5, column=0, columnspan=7, sticky="e", pady=(12, 0))
+        ttk.Button(footer, text="Apply Both", command=_apply_both).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(footer, text="Close", command=dialog.destroy).pack(side=tk.LEFT)
+
+        frame.grid_columnconfigure(2, weight=1)
+
+        self.rsrp_window = dialog
+        self._sync_rsrp_current_vars()
+
+        def _on_close() -> None:
+            self.rsrp_window = None
+            self.rsrp_current_vars = {}
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", _on_close)
+
+    @staticmethod
     def _format_cli_float(value: float) -> str:
         return f"{value:.12g}"
+
+    @staticmethod
+    def _haversine_2d_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        radius_m = 6371000.0
+        lat1_rad = math.radians(lat1)
+        lon1_rad = math.radians(lon1)
+        lat2_rad = math.radians(lat2)
+        lon2_rad = math.radians(lon2)
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+        a = math.sin(dlat / 2.0) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2.0) ** 2
+        c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+        return radius_m * c
+
+    def _cli_exec_for_location_target(self, target_key: str, command: str) -> Dict[str, str]:
+        node = self.node_names.get(target_key)
+        if not node:
+            raise RuntimeError(f"Unknown target '{target_key}'")
+
+        if target_key in self.ue_keys:
+            return self._cli_exec_with_mode(node, command, use_sudo=self.ue_cli_with_sudo)
+        return self._cli_exec(node, command)
+
+    def _fetch_location_wgs84(self, target_key: str) -> Dict[str, float]:
+        node = self.node_names.get(target_key)
+        if not node:
+            raise RuntimeError(f"Unknown target '{target_key}'")
+
+        out = self._cli_exec_for_location_target(target_key, "get-loc-wgs84")
+        if "error" in out:
+            raise RuntimeError(f"get-loc-wgs84 failed for {target_key} ({node}): {out['error']}")
+
+        try:
+            latitude = float(out["latitude"])
+            longitude = float(out["longitude"])
+            altitude = float(out["altitude"])
+        except KeyError as ex:
+            raise RuntimeError(f"Missing field in get-loc-wgs84 output: {ex}") from ex
+        except ValueError as ex:
+            raise RuntimeError(f"Invalid get-loc-wgs84 numeric value: {ex}") from ex
+
+        return {"latitude": latitude, "longitude": longitude, "altitude": altitude}
+
+    def _set_location_wgs84(
+        self,
+        target_key: str,
+        latitude: float,
+        longitude: float,
+        altitude: float,
+    ) -> None:
+        node = self.node_names.get(target_key)
+        if not node:
+            raise RuntimeError(f"Unknown target '{target_key}'")
+
+        arg = ":".join(
+            [
+                self._format_cli_float(latitude),
+                self._format_cli_float(longitude),
+                self._format_cli_float(altitude),
+            ]
+        )
+        out = self._cli_exec_for_location_target(target_key, f"set-loc-wgs84 {arg}")
+        if "error" in out:
+            raise RuntimeError(f"set-loc-wgs84 failed for {target_key} ({node}): {out['error']}")
+
+        msg = (
+            f"Updated {target_key} WGS84 to lat={self._format_cli_float(latitude)}, "
+            f"lon={self._format_cli_float(longitude)}, alt={self._format_cli_float(altitude)}"
+        )
+        self.inject_status_var.set(msg)
+        self.panes[target_key].append_log("[set-loc-wgs84] " + msg)
+
+    def _open_location_window(self) -> None:
+        if self.location_window is not None and self.location_window.winfo_exists():
+            self.location_window.lift()
+            self.location_window.focus_set()
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Node WGS84 Location Editor")
+        dialog.geometry("930x380")
+        dialog.resizable(True, False)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            frame,
+            text="View/edit UE1, gNB1, gNB2 locations in WGS84 and preview 2D distance from UE1 to each gNB.",
+        ).grid(row=0, column=0, columnspan=8, sticky="w", pady=(0, 10))
+
+        headers = ["Node", "Current Location", "Latitude", "Longitude", "Altitude (m)", "Actions"]
+        for idx, header in enumerate(headers):
+            col = idx if idx < 5 else 7
+            ttk.Label(frame, text=header).grid(row=1, column=col, sticky="w", padx=(0, 8), pady=(0, 4))
+
+        editable_keys = [self.primary_ue_key, "gnb1", "gnb2"]
+        row_map = {
+            self.primary_ue_key: 2,
+            "gnb1": 3,
+            "gnb2": 4,
+        }
+        current_vars: Dict[str, tk.StringVar] = {}
+        lat_vars: Dict[str, tk.StringVar] = {}
+        lon_vars: Dict[str, tk.StringVar] = {}
+        alt_vars: Dict[str, tk.StringVar] = {}
+
+        for key in editable_keys:
+            row = row_map[key]
+            node = self.node_names.get(key, "unknown")
+            current_vars[key] = tk.StringVar(value="Not loaded")
+            lat_vars[key] = tk.StringVar(value="")
+            lon_vars[key] = tk.StringVar(value="")
+            alt_vars[key] = tk.StringVar(value="")
+
+            ttk.Label(frame, text=f"{key} ({node})").grid(row=row, column=0, sticky="w", pady=4)
+            ttk.Label(frame, textvariable=current_vars[key], width=32).grid(row=row, column=1, sticky="w", pady=4)
+            ttk.Entry(frame, textvariable=lat_vars[key], width=16).grid(row=row, column=2, sticky="ew", pady=4)
+            ttk.Entry(frame, textvariable=lon_vars[key], width=16).grid(row=row, column=3, sticky="ew", pady=4)
+            ttk.Entry(frame, textvariable=alt_vars[key], width=16).grid(row=row, column=4, sticky="ew", pady=4)
+
+        dist_to_gnb1_var = tk.StringVar(value="UE1 -> gNB1 (2D): N/A")
+        dist_to_gnb2_var = tk.StringVar(value="UE1 -> gNB2 (2D): N/A")
+
+        ttk.Label(frame, textvariable=dist_to_gnb1_var).grid(row=5, column=0, columnspan=8, sticky="w", pady=(8, 0))
+        ttk.Label(frame, textvariable=dist_to_gnb2_var).grid(row=6, column=0, columnspan=8, sticky="w", pady=(2, 0))
+
+        status_var = tk.StringVar(value="Ready")
+        ttk.Label(frame, textvariable=status_var).grid(row=7, column=0, columnspan=8, sticky="w", pady=(8, 0))
+
+        def _location_text(latitude: float, longitude: float, altitude: float) -> str:
+            return (
+                f"lat={self._format_cli_float(latitude)}, "
+                f"lon={self._format_cli_float(longitude)}, "
+                f"alt={self._format_cli_float(altitude)}"
+            )
+
+        def _refresh_target(target_key: str) -> None:
+            try:
+                location = self._fetch_location_wgs84(target_key)
+            except RuntimeError as ex:
+                current_vars[target_key].set("<unavailable>")
+                status_var.set(str(ex))
+                pane_key = self.primary_ue_key if target_key in self.ue_keys else target_key
+                self.panes[pane_key].append_log("[get-loc-wgs84] " + str(ex))
+                return
+
+            lat = location["latitude"]
+            lon = location["longitude"]
+            alt = location["altitude"]
+            current_vars[target_key].set(_location_text(lat, lon, alt))
+            lat_vars[target_key].set(self._format_cli_float(lat))
+            lon_vars[target_key].set(self._format_cli_float(lon))
+            alt_vars[target_key].set(self._format_cli_float(alt))
+            status_var.set(f"Loaded {target_key} location")
+            _update_distance_preview()
+
+        def _refresh_all() -> None:
+            for key in editable_keys:
+                _refresh_target(key)
+
+        def _apply_target(target_key: str) -> None:
+            try:
+                latitude = float(lat_vars[target_key].get().strip())
+                longitude = float(lon_vars[target_key].get().strip())
+                altitude = float(alt_vars[target_key].get().strip())
+            except ValueError:
+                status_var.set(f"Invalid numeric value for {target_key}")
+                return
+
+            try:
+                self._set_location_wgs84(target_key, latitude, longitude, altitude)
+            except RuntimeError as ex:
+                status_var.set(str(ex))
+                pane_key = self.primary_ue_key if target_key in self.ue_keys else target_key
+                self.panes[pane_key].append_log("[set-loc-wgs84] " + str(ex))
+                return
+
+            current_vars[target_key].set(_location_text(latitude, longitude, altitude))
+            status_var.set(f"Updated {target_key} location")
+            _update_distance_preview()
+
+        def _apply_all() -> None:
+            for key in editable_keys:
+                _apply_target(key)
+
+        def _parse_lat_lon(target_key: str) -> Optional[tuple[float, float]]:
+            try:
+                return (
+                    float(lat_vars[target_key].get().strip()),
+                    float(lon_vars[target_key].get().strip()),
+                )
+            except ValueError:
+                return None
+
+        def _format_distance(distance_m: float) -> str:
+            return f"{distance_m:.1f} m"
+
+        def _update_distance_preview(*_args: object) -> None:
+            ue_key = self.primary_ue_key
+            ue = _parse_lat_lon(ue_key)
+            g1 = _parse_lat_lon("gnb1")
+            g2 = _parse_lat_lon("gnb2")
+
+            if ue is None or g1 is None:
+                dist_to_gnb1_var.set("UE1 -> gNB1 (2D): N/A")
+            else:
+                d1 = self._haversine_2d_distance_m(ue[0], ue[1], g1[0], g1[1])
+                dist_to_gnb1_var.set("UE1 -> gNB1 (2D): " + _format_distance(d1))
+
+            if ue is None or g2 is None:
+                dist_to_gnb2_var.set("UE1 -> gNB2 (2D): N/A")
+            else:
+                d2 = self._haversine_2d_distance_m(ue[0], ue[1], g2[0], g2[1])
+                dist_to_gnb2_var.set("UE1 -> gNB2 (2D): " + _format_distance(d2))
+
+        for key in editable_keys:
+            row = row_map[key]
+            btn_row = ttk.Frame(frame)
+            btn_row.grid(row=row, column=7, sticky="e", pady=4)
+            ttk.Button(btn_row, text="Load", command=lambda k=key: _refresh_target(k)).pack(
+                side=tk.LEFT, padx=(0, 6)
+            )
+            ttk.Button(btn_row, text="Apply", command=lambda k=key: _apply_target(k)).pack(side=tk.LEFT)
+
+        footer = ttk.Frame(frame)
+        footer.grid(row=8, column=0, columnspan=8, sticky="e", pady=(12, 0))
+        ttk.Button(footer, text="Refresh All", command=_refresh_all).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(footer, text="Apply All", command=_apply_all).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(footer, text="Close", command=dialog.destroy).pack(side=tk.LEFT)
+
+        for key in editable_keys:
+            lat_vars[key].trace_add("write", _update_distance_preview)
+            lon_vars[key].trace_add("write", _update_distance_preview)
+
+        frame.grid_columnconfigure(1, weight=1)
+        frame.grid_columnconfigure(2, weight=1)
+        frame.grid_columnconfigure(3, weight=1)
+        frame.grid_columnconfigure(4, weight=1)
+
+        self.location_window = dialog
+
+        def _on_close() -> None:
+            self.location_window = None
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", _on_close)
+        _refresh_all()
 
     def _send_gnb_loc_pv(
         self,

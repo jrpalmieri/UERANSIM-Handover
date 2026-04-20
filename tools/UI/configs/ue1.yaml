@@ -26,6 +26,10 @@ imei: '356938035643803'
 # IMEISV number of the device. It is used if no SUPI and IMEI is provided
 imeiSv: '4370816125816151'
 
+# Optional staged node name template (preview only, not active yet):
+# Supported UE tokens: {imsi}, {imsi[-N:]} (example below uses last 4 IMSI digits)
+# nodeNameTemplate: 'ue-{imsi[-4:]}'
+
 # Network mask used for the UE's TUN interface to define the subnet size
 tunNetmask: '255.255.255.0'
 
@@ -33,8 +37,12 @@ tunNetmask: '255.255.255.0'
 gnbSearchList:
   - 127.0.0.2
   - 127.0.0.3
+  - 127.0.0.4
 
 # RLS loop/timer settings (ms).
+#  LOOP_COUNTER - period of UE Heartbeat loop
+#  RECEIVE_TIMEOUT - if no message received from gNB for RECEIVE_TIMEOUT+LOOP_COUNTER duration, 
+#                    UE will remove from its cell tracking structs
 # If not specified, default values will be used:
 #   LOOP_COUNTER: 1000
 #   RECEIVE_TIMEOUT: 200
@@ -44,7 +52,7 @@ gnbSearchList:
 # HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT.
 rls:
   LOOP_COUNTER: 200
-  RECEIVE_TIMEOUT: 100
+  RECEIVE_TIMEOUT: 300
   TIMER_PERIOD_ACK_SEND: 300
   TIMER_PERIOD_ACK_CONTROL: 500
 
@@ -120,10 +128,67 @@ measSource:
   udpPort: 7200
 
 # UE position - used in RSRP calculations and CHO distance-based conditions.
-# Specified in WGS-84 geographic coordinates (converted to ECEF by UE).
+# Specified in WGS-84 geographic coordinates (latitude, longitude, altitude).
 position:
   latitude: 45.000     # degrees North
   longitude: 90.000    # degrees East
   altitude: 0.0      # meters above WGS-84 ellipsoid
 
+# NTN (non-Terrestrial Network) configuration
+ntn:
 
+  # setting ntnEnabled to false will ignore all other ntn parameters and cause gnb to 
+  #   operate in regular (terrestrial) mode
+  ntnEnabled: false
+
+  # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
+#  tle:
+    # Samples - same epoch, nadir: lat=45N, lon=90W
+    #  Sat 1: Zenith (Elevation ~90 deg)
+    #line1: '1 99991U 26106A   26106.97180556  .00000000  00000-0  00000-0 0  9993'
+    #line2: '2 99991  45.0000 270.0000 0001000   0.0000  90.0000 15.00000000    14'
+    #    Sat 2: Rising (Elevation ~30 deg)
+    #line1: '1 99992U 26106B   26106.97180556  .00000000  00000-0  00000-0 0  9995'
+    #line2: '2 99992  45.0000 270.0000 0001000   0.0000  70.0000 15.00000000    12'
+    #    Sat 3: Trailing (Elevation ~10 deg)
+#    line1: '1 99993U 26106C   26106.97180556  .00000000  00000-0  00000-0 0  9997'
+#    line2: '2 99993  45.0000 270.0000 0001000   0.0000  50.0000 15.00000000    10'
+    #    Sat 4: Distant 1 (Below Horizon)
+    # line1: '1 99994U 26106D   26106.97180556  .00000000  00000-0  00000-0 0  9999'
+    # line2: '2 99994  45.0000 270.0000 0001000   0.0000  30.0000 15.00000000    18'
+    #    Sat 5: Distant 2 (Below Horizon)
+    # line1: '1 99995U 26106E   26106.97180556  .00000000  00000-0  00000-0 0  9990'
+    # line2: '2 99995  45.0000 270.0000 0001000   0.0000  10.0000 15.00000000    16'
+
+  # Satellite time control for NTN simulation.
+  timeWarp:
+    # startEpoch must be in TLE epoch format YYDDD.DDDDDDDD
+    startEpoch: "26106.97180556"   # lines up with the TLE epoch
+    # startCondition controls whether the satellite time starts immediately (moving) 
+    #   or waits for a trigger (paused).
+    startCondition: paused
+    # tickScaling controls the speed of time progression relative to real time
+    #   tickScaling=2.0 means satellite time progresses twice as fast as real time.
+    #   tickScaling=0.5 means satellite time progresses at half the speed of real time.
+    tickScaling: 1.0
+
+  # minimum elevation angle (degrees) for the satellite to be considered 
+  #   "visible" to the UE - used for CHO conditions
+  elevationMinDeg: 20
+
+  # controls how SIB19 is configured/sent
+  # sib19:
+  #   # sib19on must be true to enable SIB19 transmissions
+  #   sib19on: true
+  #   # send period (in ms)
+  #   sib19timing: 1000
+  #   # ephemeris type ('orbital' or 'pos-vel')
+  #   ephType: orbital
+  #   # these params are not used in the simulation, set to default values for completeness
+  #   kOffset: 0
+  #   taCommon: 0
+  #   taCommonDrift: 0
+  #   # taCommonDriftVariation: 0
+  #   # ulSyncValidityDuration: 60
+  #   # cellSpecificKoffset: 0
+  #   # polarization: 0          # 0: RHCP, 1: LHCP, 2: LINEAR

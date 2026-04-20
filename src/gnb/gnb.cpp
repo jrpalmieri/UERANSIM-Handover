@@ -33,7 +33,7 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     base->logBase = new LogBase("logs/" + config->name + ".log");
     base->nodeListener = nodeListener;
     base->cliCallbackTask = cliCallbackTask;
-    base->gnbPosition = config->geoLocation;
+    base->setGnbPosition(config->geoLocation);
 
     base->satTleStore = new SatTleStore();
     int64_t startEpochMillis = config->ntn.timeWarp.startEpochMillis.value_or(utils::CurrentTimeMillis());
@@ -55,6 +55,8 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     base->gtpTask = new GtpTask(base);
     base->rlsTask = new GnbRlsTask(base);
     base->xnTask = new XnTask(base);
+
+    base->fixedRsrp = config->rfLink.updateMode == EGnbRsrpMode::Fixed ? config->rfLink.rsrpDbValue : 0;
 
     taskBase = base;
 }

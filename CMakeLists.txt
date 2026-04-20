@@ -83,6 +83,11 @@ if(BUILD_UNIT_TESTS)
     target_compile_options(position_calcs_tests PRIVATE -Wall -Wextra -pedantic)
     target_link_libraries(position_calcs_tests utils)
 
+    add_executable(rrc_reference_location_tests tests/rrc_reference_location_tests.cpp)
+    target_compile_options(rrc_reference_location_tests PRIVATE -Wall -Wextra -pedantic)
+    target_link_libraries(rrc_reference_location_tests asn-rrc)
+    target_link_libraries(rrc_reference_location_tests common-lib)
+
     add_executable(rrc_d1_probe tools/rrc_d1_probe.cpp)
     target_compile_options(rrc_d1_probe PRIVATE -Wall -Wextra -pedantic)
     target_compile_definitions(rrc_d1_probe PRIVATE ASN_EMIT_DEBUG=1)

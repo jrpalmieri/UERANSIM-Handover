@@ -200,6 +200,36 @@ static bool ParseLocWgs84Argument(const std::string &arg, app::GnbCliCommand &cm
     return true;
 }
 
+static bool ParseLocWgs84Argument(const std::string &arg, app::UeCliCommand &cmd)
+{
+    std::vector<std::string> tokens;
+    std::stringstream ss(arg);
+    std::string token;
+    while (std::getline(ss, token, ':'))
+        tokens.push_back(token);
+
+    if (tokens.size() != 3)
+        return false;
+
+    try
+    {
+        cmd.geoLat = std::stod(tokens[0]);
+        cmd.geoLon = std::stod(tokens[1]);
+        cmd.geoAlt = std::stod(tokens[2]);
+    }
+    catch (...)
+    {
+        return false;
+    }
+
+    if (cmd.geoLat < -90.0 || cmd.geoLat > 90.0)
+        return false;
+    if (cmd.geoLon < -180.0 || cmd.geoLon > 180.0)
+        return false;
+
+    return true;
+}
+
 static bool StartsWith(const std::string &value, const std::string &prefix)
 {
     return value.size() >= prefix.size() && value.compare(0, prefix.size(), prefix) == 0;
@@ -272,39 +302,40 @@ namespace app
 {
 
 static OrderedMap<std::string, CmdEntry> g_gnbCmdEntries = {
-    {"info", {"Show some information about the gNB", "", DefaultDesc, false}},
-    {"status", {"Show some status information about the gNB", "", DefaultDesc, false}},
-    {"ui-status", {"Show compact status information for UI polling", "", DefaultDesc, false}},
-    {"amf-list", {"List all AMFs associated with the gNB", "", DefaultDesc, false}},
-    {"amf-info", {"Show some status information about the given AMF", "<amf-id>", DefaultDesc, true}},
-    {"ue-list", {"List all UEs associated with the gNB", "", DefaultDesc, false}},
-    {"ue-count", {"Print the total number of UEs connected the this gNB", "", DefaultDesc, false}},
-    {"ue-release", {"Request a UE context release for the given UE", "<ue-id>", DefaultDesc, false}},
-    {"set-loc-wgs84", {"Set true gNB location as WGS84 coordinates. Format: lat:lon:alt",
-                         "<lat:lon:alt>", DefaultDesc, true}},
-    {"set-loc-pv", {"Set true gNB location as ECEF position/velocity. Format: x:y:z:vx:vy:vz:epoch-ms",
-                      "<x:y:z:vx:vy:vz:epoch-ms>", DefaultDesc, true}},
-    {"get-loc-wgs84", {"Get true gNB location as WGS84 JSON", "", DefaultDesc, false}},
-    {"get-loc-pv", {"Get true gNB location as ECEF position/velocity JSON", "", DefaultDesc, false}},
-    {"sat-loc-pv", {"Upsert one satellite SIB19 position/velocity entry from JSON payload",
-                     "<json-payload>", DefaultDesc, true}},
-    {"sat-tle", {"Upsert TLE orbital elements for one or more satellite gNBs from JSON payload",
-                  "<json-payload>", DefaultDesc, true}},
-    {"sat-time", {"Control satellite time: pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|"
-                    "pause-at-wallclock=<unix-ms>",
-                    "[pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>]",
-                    DefaultDesc,
-                    false}},
-    {"neighbors", {"Update gNB neighbor list from JSON payload", "<json-payload>", DefaultDesc, true}},
-    {"version", {"Show gNB version information", "", DefaultDesc, false}},
+    std::make_pair("config-info", CmdEntry{"Show gNB configuration information", "", DefaultDesc, false}),
+    std::make_pair("status", CmdEntry{"Show some status information about the gNB", "", DefaultDesc, false}),
+    std::make_pair("ui-status", CmdEntry{"Show compact status information for UI polling", "", DefaultDesc, false}),
+    std::make_pair("amf-list", CmdEntry{"List all AMFs associated with the gNB", "", DefaultDesc, false}),
+    std::make_pair("amf-info", CmdEntry{"Show some status information about the given AMF", "<amf-id>", DefaultDesc, true}),
+    std::make_pair("ue-list", CmdEntry{"List all UEs associated with the gNB", "", DefaultDesc, false}),
+    std::make_pair("ue-count", CmdEntry{"Print the total number of UEs connected the this gNB", "", DefaultDesc, false}),
+    std::make_pair("ue-release", CmdEntry{"Request a UE context release for the given UE", "<ue-id>", DefaultDesc, false}),
+    std::make_pair("set-loc-wgs84", CmdEntry{"Set true gNB location as WGS84 coordinates. Format: lat:lon:alt", "<lat:lon:alt>", DefaultDesc, true}),
+    std::make_pair("set-loc-pv", CmdEntry{"Set true gNB location as ECEF position/velocity. Format: x:y:z:vx:vy:vz:epoch-ms", "<x:y:z:vx:vy:vz:epoch-ms>", DefaultDesc, true}),
+    std::make_pair("get-loc-wgs84", CmdEntry{"Get true gNB location as WGS84 JSON", "", DefaultDesc, false}),
+    std::make_pair("get-loc-pv", CmdEntry{"Get true gNB location as ECEF position/velocity JSON", "", DefaultDesc, false}),
+    std::make_pair("sat-loc-pv", CmdEntry{"Upsert one satellite SIB19 position/velocity entry from JSON payload", "<json-payload>", DefaultDesc, true}),
+    std::make_pair("sat-tle", CmdEntry{"Upsert TLE orbital elements for one or more satellite gNBs from JSON payload", "<json-payload>", DefaultDesc, true}),
+    std::make_pair("sat-time", CmdEntry{"Control satellite time: pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>", "[pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>]", DefaultDesc, false}),
+    std::make_pair("neighbors", CmdEntry{"Update gNB neighbor list from JSON payload", "<json-payload>", DefaultDesc, true}),
+    std::make_pair("set-rsrp", CmdEntry{"Set global fixed RSRP value (dBm)", "<rsrp>", DefaultDesc, true}),
+    std::make_pair("version", CmdEntry{"Show gNB version information", "", DefaultDesc, false}),
 };
 
 static OrderedMap<std::string, CmdEntry> g_ueCmdEntries = {
-    {"info", {"Show some information about the UE", "", DefaultDesc, false}},
+    std::make_pair("config-info", CmdEntry{"Show UE configuration information", "", DefaultDesc, false}),
     {"status", {"Show some status information about the UE", "", DefaultDesc, false}},
     {"ui-status", {"Show compact status information for UI polling", "", DefaultDesc, false}},
+    {"set-loc-wgs84", {"Set true UE location as WGS84 coordinates. Format: lat:lon:alt", "<lat:lon:alt>",
+                         DefaultDesc, true}},
+    {"get-loc-wgs84", {"Get true UE location as WGS84 JSON", "", DefaultDesc, false}},
     {"timers", {"Dump current status of the timers in the UE", "", DefaultDesc, false}},
     {"rls-state", {"Show status information about RLS", "", DefaultDesc, false}},
+    {"gnb-ip-add", {"Add one or more gNB IPv4 addresses to UE RLS search list", "<json-payload>",
+                     DefaultDesc, true}},
+    {"gnb-ip-remove", {"Remove one or more gNB IPv4 addresses from UE RLS search list", "<json-payload>",
+                        DefaultDesc, true}},
+    {"gnb-ip-list", {"List UE RLS gNB IPv4 addresses", "", DefaultDesc, false}},
     {"coverage", {"Dump available cells and PLMNs in the coverage", "", DefaultDesc, false}},
     {"ps-establish",
      {"Trigger a PDU session establishment procedure", "<session-type> [options]", DescForPsEstablish, true}},
@@ -324,9 +355,9 @@ static OrderedMap<std::string, CmdEntry> g_ueCmdEntries = {
 static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd, const opt::OptionsResult &options,
                                                       std::string &error)
 {
-    if (subCmd == "info")
+    if (subCmd == "config-info")
     {
-        return std::make_unique<GnbCliCommand>(GnbCliCommand::INFO);
+        return std::make_unique<GnbCliCommand>(GnbCliCommand::CONFIG_INFO);
     }
     if (subCmd == "status")
     {
@@ -427,6 +458,20 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
         cmd->neighborsJson = options.getPositional(0);
         return cmd;
     }
+    else if (subCmd == "set-rsrp")
+    {
+        auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::SET_RSRP);
+        if (options.positionalCount() == 0)
+            CMD_ERR("RSRP value is expected")
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one RSRP value is expected")
+        try {
+            cmd->rsrpValue = utils::ParseInt(options.getPositional(0));
+        } catch (...) {
+            CMD_ERR("Invalid RSRP value (must be integer)")
+        }
+        return cmd;
+    }
     else if (subCmd == "sat-loc-pv")
     {
         auto cmd = std::make_unique<GnbCliCommand>(GnbCliCommand::SAT_LOC_PV);
@@ -475,9 +520,9 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
 static std::unique_ptr<UeCliCommand> UeCliParseImpl(const std::string &subCmd, const opt::OptionsResult &options,
                                                     std::string &error)
 {
-    if (subCmd == "info")
+    if (subCmd == "config-info")
     {
-        return std::make_unique<UeCliCommand>(UeCliCommand::INFO);
+        return std::make_unique<UeCliCommand>(UeCliCommand::CONFIG_INFO);
     }
     else if (subCmd == "status")
     {
@@ -486,6 +531,26 @@ static std::unique_ptr<UeCliCommand> UeCliParseImpl(const std::string &subCmd, c
     else if (subCmd == "ui-status")
     {
         return std::make_unique<UeCliCommand>(UeCliCommand::UI_STATUS);
+    }
+    else if (subCmd == "set-loc-wgs84")
+    {
+        auto cmd = std::make_unique<UeCliCommand>(UeCliCommand::SET_LOC_WGS84);
+        if (options.positionalCount() == 0)
+            CMD_ERR("WGS84 position argument is expected")
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one WGS84 position argument is expected")
+
+        if (!ParseLocWgs84Argument(options.getPositional(0), *cmd))
+            CMD_ERR("Invalid format. Expected lat:lon:alt with valid WGS84 bounds")
+
+        return cmd;
+    }
+    else if (subCmd == "get-loc-wgs84")
+    {
+        auto cmd = std::make_unique<UeCliCommand>(UeCliCommand::GET_LOC_WGS84);
+        if (options.positionalCount() > 0)
+            CMD_ERR("No argument is expected")
+        return cmd;
     }
     else if (subCmd == "timers")
     {
@@ -601,6 +666,34 @@ static std::unique_ptr<UeCliCommand> UeCliParseImpl(const std::string &subCmd, c
     else if (subCmd == "rls-state")
     {
         return std::make_unique<UeCliCommand>(UeCliCommand::RLS_STATE);
+    }
+    else if (subCmd == "gnb-ip-add")
+    {
+        auto cmd = std::make_unique<UeCliCommand>(UeCliCommand::GNB_IP_ADD);
+        if (options.positionalCount() == 0)
+            CMD_ERR("JSON payload is expected")
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one JSON payload argument is expected")
+
+        cmd->gnbIpJson = options.getPositional(0);
+        return cmd;
+    }
+    else if (subCmd == "gnb-ip-remove")
+    {
+        auto cmd = std::make_unique<UeCliCommand>(UeCliCommand::GNB_IP_REMOVE);
+        if (options.positionalCount() == 0)
+            CMD_ERR("JSON payload is expected")
+        if (options.positionalCount() > 1)
+            CMD_ERR("Only one JSON payload argument is expected")
+
+        cmd->gnbIpJson = options.getPositional(0);
+        return cmd;
+    }
+    else if (subCmd == "gnb-ip-list")
+    {
+        if (options.positionalCount() > 0)
+            CMD_ERR("No argument is expected")
+        return std::make_unique<UeCliCommand>(UeCliCommand::GNB_IP_LIST);
     }
     else if (subCmd == "coverage")
     {

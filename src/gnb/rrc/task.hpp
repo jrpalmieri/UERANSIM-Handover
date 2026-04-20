@@ -78,6 +78,7 @@ class GnbRrcTask : public NtsTask
     void setTrueGeoPosition(const GeoPosition &value);
     GeoPosition getTrueGeoPosition() const;
     void setTruePositionVelocity(const PositionVelocity &value);
+    PositionVelocity getTruePositionVelocity() const;
     void upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value);
     void upsertSatTles(const std::vector<SatTleEntry> &entries);
 
@@ -156,20 +157,24 @@ class GnbRrcTask : public NtsTask
     void handleHandoverComplete(int ueId);
     void sendMeasConfig(int ueId, bool forceResend = false);
     void evaluateHandoverDecision(int ueId, const std::string &eventType);
-    void processConditionalHandover(int ueId, const std::string &reason);
+    void processConditionalHandover(int ueId,
+                    const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
+                    int choProfileIdx);
     void handleNgapHandoverCommand(int ueId, const OctetString &rrcContainer, bool hoForChoPreparation);
     void handleNgapHandoverFailure(int ueId, int targetPci, bool hoForChoPreparation);
     void handoverContextRelease(int ueId);
     void completeConditionalHandover(RrcUeContext *ue, const OctetString &rrcContainer);
+    void calculateTriggerConditions(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
+                    int ownPci,
+                    RrcUeContext *ue);
     void clearChoPendingState(RrcUeContext *ue);
     std::vector<long> createMeasConfig(
       ASN_RRC_MeasConfig *&mc,
       RrcUeContext *ue,
       std::vector<nr::rrc::common::ReportConfigEvent> selectedEvents,
-      bool isChoRequest,
-      int triggerTimerSec, 
-      int distanceThreshold,
-      int choProfileId); 
+      const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
+      int choProfileId
+      ); 
 
 };
 

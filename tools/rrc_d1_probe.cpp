@@ -6,6 +6,7 @@
 
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/encode.hpp>
+#include <lib/rrc/common/asn_converters.hpp>
 #include <utils/octet_string.hpp>
 
 #include <asn/rrc/ASN_RRC_DL-DCCH-Message.h>
@@ -207,27 +208,27 @@ OctetString buildD1Pdu(bool useFixedReference)
 
     if (useFixedReference)
     {
-        d1->referenceLocation1_r17.present =
-            ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_fixedReferenceLocation_r17;
-        asn::MakeNew(d1->referenceLocation1_r17.choice.fixedReferenceLocation_r17);
-        auto *fixed = d1->referenceLocation1_r17.choice.fixedReferenceLocation_r17;
-        fixed->latitudeSign = ASN_RRC_EventTriggerConfig__latitudeSign_north;
-        fixed->degreesLatitude = static_cast<long>(33.77 * 8388608.0 / 90.0);
-        fixed->degreesLongitude = static_cast<long>(-84.39 * 16777216.0 / 360.0);
+        nr::rrc::common::EventReferenceLocation ref1{};
+        ref1.latitudeDeg = 33.77;
+        ref1.longitudeDeg = -84.39;
+        nr::rrc::common::referenceLocationToAsnValue(ref1, d1->referenceLocation1_r17);
 
-        d1->referenceLocation2_r17.present =
-            ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_nadirReferenceLocation_r17;
-        d1->referenceLocation2_r17.choice.nadirReferenceLocation_r17 = asn::New<NULL_t>();
+        nr::rrc::common::EventReferenceLocation ref2{};
+        ref2.latitudeDeg = 34.05;
+        ref2.longitudeDeg = -118.24;
+        nr::rrc::common::referenceLocationToAsnValue(ref2, d1->referenceLocation2_r17);
     }
     else
     {
-        d1->referenceLocation1_r17.present =
-            ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_nadirReferenceLocation_r17;
-        d1->referenceLocation1_r17.choice.nadirReferenceLocation_r17 = asn::New<NULL_t>();
+        nr::rrc::common::EventReferenceLocation ref1{};
+        ref1.latitudeDeg = 0.0;
+        ref1.longitudeDeg = 0.0;
+        nr::rrc::common::referenceLocationToAsnValue(ref1, d1->referenceLocation1_r17);
 
-        d1->referenceLocation2_r17.present =
-            ASN_RRC_EventTriggerConfig__eventId__eventD1_r17__referenceLocation_r17_PR_nadirReferenceLocation_r17;
-        d1->referenceLocation2_r17.choice.nadirReferenceLocation_r17 = asn::New<NULL_t>();
+        nr::rrc::common::EventReferenceLocation ref2{};
+        ref2.latitudeDeg = 0.0;
+        ref2.longitudeDeg = 0.0;
+        nr::rrc::common::referenceLocationToAsnValue(ref2, d1->referenceLocation2_r17);
     }
 
     et->rsType = ASN_RRC_NR_RS_Type_ssb;
