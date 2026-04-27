@@ -29,6 +29,7 @@ class SatTime
         double tickScaling{1.0};
         bool paused{false};
         std::optional<int64_t> scheduledPauseWallclockMillis{};
+    std::optional<int64_t> scheduledRunWallclockMillis{};
     };
 
     explicit SatTime(int64_t startEpochMillis,
@@ -42,6 +43,7 @@ class SatTime
     void SetTickScaling(double tickScaling);
     void SetStartEpochMillis(int64_t startEpochMillis);
     void SchedulePauseAtWallclockMillis(int64_t wallclockMillis);
+    void ScheduleRunAtWallclockMillis(int64_t wallclockMillis);
     void ClearScheduledPause();
 
     [[nodiscard]] Status GetStatus();
@@ -57,9 +59,11 @@ class SatTime
     double m_tickScaling{1.0};
     bool m_paused{false};
     std::optional<int64_t> m_scheduledPauseWallclockMillis{};
+    std::optional<int64_t> m_scheduledRunWallclockMillis{};
 
     int64_t satTimeAtWallclockLocked(int64_t wallclockMillis) const;
     void applyScheduledPauseIfDueLocked(int64_t wallclockMillis);
+    void applyScheduledRunIfDueLocked(int64_t wallclockMillis);
 };
 
 } // namespace utils

@@ -27,6 +27,7 @@ void UeRrcTask::handleRlsSapMessage(NmUeRlsToRrc &msg)
 {
     switch (msg.present)
     {
+    // received for new cells and for signal strngth below RLF
     case NmUeRlsToRrc::SIGNAL_CHANGED: {
         handleCellSignalChange(msg.cellId, msg.dbm);
         break;
@@ -35,8 +36,9 @@ void UeRrcTask::handleRlsSapMessage(NmUeRlsToRrc &msg)
         handleDownlinkRrc(msg.cellId, msg.channel, msg.pdu);
         break;
     }
+    // received for transmission errors such as duplicate PDU ID, PDU ID full
     case NmUeRlsToRrc::RADIO_LINK_FAILURE: {
-        handleRadioLinkFailure(msg.rlfCause);
+        handleRadioLinkFailure(msg.rlfCause, msg.cellId, 0);
         break;
     }
     }

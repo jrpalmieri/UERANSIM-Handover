@@ -43,6 +43,22 @@ int64_t SatTime::satTimeAtWallclockLocked(int64_t wallclockMillis) const
     return m_anchorSatMillis + static_cast<int64_t>(std::llround(scaledDelta));
 }
 
+void SatTime::applyScheduledRunIfDueLocked(int64_t wallclockMillis)
+{
+    if (!m_scheduledRunWallclockMillis.has_value() || !m_paused)
+        return;
+
+    if (wallclockMillis < *m_scheduledRunWallclockMillis)
+        return;
+
+    // Anchor to the scheduled time (not now) so sat time is consistent
+    // across nodes that coordinated on the same wallclock start instant.
+    m_anchorSatMillis = m_pausedSatMillis;
+    m_anchorWallclockMillis = *m_scheduledRunWallclockMillis;
+    m_paused = false;
+    m_scheduledRunWallclockMillis.reset();
+}
+
 void SatTime::applyScheduledPauseIfDueLocked(int64_t wallclockMillis)
 {
     if (!m_scheduledPauseWallclockMillis.has_value() || m_paused)
@@ -60,6 +76,7 @@ int64_t SatTime::CurrentSatTimeMillis()
 {
     std::lock_guard<std::mutex> guard(m_mutex);
     int64_t now = m_wallclockNow();
+    applyScheduledRunIfDueLocked(now);
     applyScheduledPauseIfDueLocked(now);
     return satTimeAtWallclockLocked(now);
 }
@@ -68,6 +85,7 @@ void SatTime::SetPaused(bool paused)
 {
     std::lock_guard<std::mutex> guard(m_mutex);
     int64_t now = m_wallclockNow();
+    applyScheduledRunIfDueLocked(now);
     applyScheduledPauseIfDueLocked(now);
 
     if (paused == m_paused)
@@ -92,6 +110,7 @@ void SatTime::SetTickScaling(double tickScaling)
 
     std::lock_guard<std::mutex> guard(m_mutex);
     int64_t now = m_wallclockNow();
+    applyScheduledRunIfDueLocked(now);
     applyScheduledPauseIfDueLocked(now);
 
     if (m_paused)
@@ -109,6 +128,7 @@ void SatTime::SetStartEpochMillis(int64_t startEpochMillis)
 {
     std::lock_guard<std::mutex> guard(m_mutex);
     int64_t now = m_wallclockNow();
+    applyScheduledRunIfDueLocked(now);
     applyScheduledPauseIfDueLocked(now);
 
     m_startEpochMillis = startEpochMillis;
@@ -121,6 +141,7 @@ void SatTime::SchedulePauseAtWallclockMillis(int64_t wallclockMillis)
 {
     std::lock_guard<std::mutex> guard(m_mutex);
     int64_t now = m_wallclockNow();
+    applyScheduledRunIfDueLocked(now);
     applyScheduledPauseIfDueLocked(now);
 
     if (m_paused)
@@ -146,10 +167,34 @@ void SatTime::ClearScheduledPause()
     m_scheduledPauseWallclockMillis.reset();
 }
 
+void SatTime::ScheduleRunAtWallclockMillis(int64_t wallclockMillis)
+{
+    std::lock_guard<std::mutex> guard(m_mutex);
+    int64_t now = m_wallclockNow();
+    applyScheduledRunIfDueLocked(now);
+    applyScheduledPauseIfDueLocked(now);
+
+    if (!m_paused)
+        return;
+
+    if (wallclockMillis <= now)
+    {
+        m_anchorSatMillis = m_pausedSatMillis;
+        m_anchorWallclockMillis = now;
+        m_paused = false;
+        m_scheduledRunWallclockMillis.reset();
+        return;
+    }
+
+    m_scheduledRunWallclockMillis = wallclockMillis;
+}
+
+
 SatTime::Status SatTime::GetStatus()
 {
     std::lock_guard<std::mutex> guard(m_mutex);
     int64_t now = m_wallclockNow();
+    applyScheduledRunIfDueLocked(now);
     applyScheduledPauseIfDueLocked(now);
 
     Status status{};
@@ -159,6 +204,7 @@ SatTime::Status SatTime::GetStatus()
     status.tickScaling = m_tickScaling;
     status.paused = m_paused;
     status.scheduledPauseWallclockMillis = m_scheduledPauseWallclockMillis;
+    status.scheduledRunWallclockMillis = m_scheduledRunWallclockMillis;
     return status;
 }
 

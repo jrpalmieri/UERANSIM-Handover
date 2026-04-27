@@ -114,7 +114,7 @@ class UeRrcTask : public NtsTask
     /* Cell Management */
     void handleCellSignalChange(int cellId, int dbm);
     void notifyCellDetected(int cellId, int dbm);
-    void notifyCellLost(int cellId);
+    void notifyCellLost(int cellId, int dbm);
     bool hasSignalToCell(int cellId);
     bool isActiveCell(int cellId);
     void updateAvailablePlmns();
@@ -136,8 +136,8 @@ class UeRrcTask : public NtsTask
     void receiveRrcRelease(const ASN_RRC_RRCRelease &msg);
 
     /* Failures */
-    void declareRadioLinkFailure(rls::ERlfCause cause);
-    void handleRadioLinkFailure(rls::ERlfCause cause);
+    // void declareRadioLinkFailure(rls::ERlfCause cause);
+    void handleRadioLinkFailure(rls::ERlfCause cause, int cellId, int dbm);
 
     /* Access Control */
     void performUac(std::shared_ptr<LightSync<UacInput, UacOutput>> &uacCtl);

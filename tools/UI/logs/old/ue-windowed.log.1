@@ -1,0 +1,315 @@
+$ sudo /home/joe/repos/GT/cs8903/UERANSIM-Handover/build/nr-ue -c /home/joe/repos/GT/cs8903/UERANSIM-Handover/tools/UI/configs/ue1.yaml
+UERANSIM v3.3.7
+[2026-04-22 15:55:55.450] [ue] [info] UE version 2.0.1 (base v3.3.7) starting
+[2026-04-22 15:55:55.450] [rrc] [info] UE position configured: lat=45.000000 lon=90.000000 alt=0.0m ECEF=(0.0, 4517590.9, 4487348.4)
+[2026-04-22 15:55:55.450] [nas] [info] UE switches to state [MM-DEREGISTERED/PLMN-SEARCH]
+[2026-04-22 15:55:55.450] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:55:55.450] [rls-udp] [debug] RLS heartbeat ACK - new cell found 1, adding to RRC cell map
+[2026-04-22 15:55:55.450] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:55:55.450] [rls-udp] [debug] RLS heartbeat ACK - new cell found 2, adding to RRC cell map
+[2026-04-22 15:55:55.450] [rrc] [debug] New signal detected for cell[1], total [1] cells in coverage
+[2026-04-22 15:55:55.450] [rrc] [debug] New signal detected for cell[2], total [2] cells in coverage
+[2026-04-22 15:55:55.451] [nas] [info] Selected plmn[001/01]
+[2026-04-22 15:55:55.451] [rrc] [info] Selected cell plmn[001/01] tac[1] category[SUITABLE]
+[2026-04-22 15:55:55.451] [nas] [info] UE switches to state [MM-DEREGISTERED/PS]
+[2026-04-22 15:55:55.451] [nas] [info] UE switches to state [MM-DEREGISTERED/NORMAL-SERVICE]
+[2026-04-22 15:55:55.451] [nas] [debug] Initial registration required due to [MM-DEREG-NORMAL-SERVICE]
+[2026-04-22 15:55:55.451] [nas] [debug] UAC access attempt is allowed for identity[0], category[MO_sig]
+[2026-04-22 15:55:55.451] [nas] [debug] Sending Initial Registration
+[2026-04-22 15:55:55.451] [nas] [info] UE switches to state [MM-REGISTER-INITIATED]
+[2026-04-22 15:55:55.451] [rrc] [debug] Sending RRC Setup Request
+[2026-04-22 15:55:55.451] [rrc] [info] RRC connection established
+[2026-04-22 15:55:55.451] [rrc] [info] UE switches to state [RRC-CONNECTED]
+[2026-04-22 15:55:55.451] [nas] [info] UE switches to state [CM-CONNECTED]
+[2026-04-22 15:55:55.455] [nas] [debug] Authentication Request received
+[2026-04-22 15:55:55.455] [nas] [debug] Received SQN [000000001381]
+[2026-04-22 15:55:55.455] [nas] [debug] SQN-MS [000000000000]
+[2026-04-22 15:55:55.457] [nas] [debug] Security Mode Command received
+[2026-04-22 15:55:55.457] [nas] [debug] Selected integrity[2] ciphering[0]
+[2026-04-22 15:55:55.480] [nas] [debug] Registration accept received
+[2026-04-22 15:55:55.480] [nas] [info] UE switches to state [MM-REGISTERED/NORMAL-SERVICE]
+[2026-04-22 15:55:55.480] [nas] [debug] Sending Registration Complete
+[2026-04-22 15:55:55.481] [nas] [info] Initial Registration is successful
+[2026-04-22 15:55:55.481] [nas] [debug] Sending PDU Session Establishment Request
+[2026-04-22 15:55:55.481] [nas] [debug] UAC access attempt is allowed for identity[0], category[MO_sig]
+[2026-04-22 15:55:55.700] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:55:55.700] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:55:55.700] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:55:55.700] [nas] [debug] Configuration Update Command received
+[2026-04-22 15:55:55.704] [nas] [debug] PDU Session Establishment Accept received
+[2026-04-22 15:55:55.704] [nas] [info] PDU Session establishment is successful PSI[1]
+[2026-04-22 15:55:55.712] [app] [info] Connection setup for PDU session[1] is successful, TUN interface[uesimtun0, 10.45.0.25] is up.
+[2026-04-22 15:55:56.204] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:55:56.204] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:55:56.204] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:55:56.705] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:55:56.705] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:55:56.705] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:55:57.206] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:55:57.206] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:55:57.206] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:55:57.707] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:55:57.707] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:55:57.707] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:55:58.207] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:55:58.207] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:55:58.207] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:55:58.708] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:55:58.708] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:55:58.708] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:55:59.208] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:55:59.208] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:55:59.208] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:55:59.709] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:55:59.709] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:55:59.710] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:56:00.210] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:56:00.210] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:56:00.210] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:00.711] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:00.711] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:56:00.711] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:56:01.212] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:01.212] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:56:01.212] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:56:01.713] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:01.713] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:56:01.713] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:56:02.214] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:02.214] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:56:02.214] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:56:02.715] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:02.715] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:56:02.715] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:56:03.216] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:03.216] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-150
+[2026-04-22 15:56:03.216] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 2, dbm=-150, notifying RRC
+[2026-04-22 15:56:03.735] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:03.735] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:04.236] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:04.236] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:04.737] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:04.737] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:05.237] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:05.238] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:05.738] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:05.738] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:06.239] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:06.239] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:06.740] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:06.740] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:07.240] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:07.240] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:07.741] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:07.741] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:08.241] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-80
+[2026-04-22 15:56:08.241] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:08.742] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:08.742] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:08.742] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:08.743] [rrc] [info] Radio Link failure detected for active cell[1], dbm=63         
+[2026-04-22 15:56:08.743] [nas] [error] Radio link failure detected
+[2026-04-22 15:56:08.743] [nas] [info] UE switches to state [CM-IDLE]
+[2026-04-22 15:56:08.743] [nas] [info] UE switches to state [MM-REGISTERED/PS]
+[2026-04-22 15:56:08.743] [nas] [info] UE switches to state [MM-REGISTERED/PLMN-SEARCH]
+[2026-04-22 15:56:08.988] [rrc] [info] Selected cell plmn[001/01] tac[1] category[SUITABLE]
+[2026-04-22 15:56:08.988] [nas] [info] UE switches to state [MM-REGISTERED/PS]
+[2026-04-22 15:56:08.988] [nas] [info] UE switches to state [MM-REGISTERED/NORMAL-SERVICE]
+[2026-04-22 15:56:09.243] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:09.243] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:09.243] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:09.744] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:09.744] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:09.744] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:10.244] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:10.244] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:10.244] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:10.745] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:10.745] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:10.745] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:11.028] [nas] [debug] Uplink data status changed PSI[1] pending[true]
+[2026-04-22 15:56:11.029] [nas] [debug] Service request required due to [IDLE-UPLINK-DATA-PENDING]
+[2026-04-22 15:56:11.029] [nas] [debug] UAC access attempt is allowed for identity[0], category[MO_data]
+[2026-04-22 15:56:11.029] [nas] [debug] Sending Service Request due to [IDLE-UPLINK-DATA-PENDING]
+[2026-04-22 15:56:11.029] [nas] [info] UE switches to state [MM-SERVICE-REQUEST-INITIATED]
+[2026-04-22 15:56:11.029] [rrc] [debug] Sending RRC Setup Request
+[2026-04-22 15:56:11.035] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:11.035] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:11.035] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:11.035] [rrc] [info] RRC connection established
+[2026-04-22 15:56:11.035] [rrc] [info] UE switches to state [RRC-CONNECTED]
+[2026-04-22 15:56:11.035] [nas] [info] UE switches to state [CM-CONNECTED]
+[2026-04-22 15:56:11.054] [nas] [info] Service Accept received
+[2026-04-22 15:56:11.054] [nas] [info] UE switches to state [MM-REGISTERED/PS]
+[2026-04-22 15:56:11.054] [nas] [info] UE switches to state [MM-REGISTERED/NORMAL-SERVICE]
+[2026-04-22 15:56:11.555] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:11.555] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:11.555] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:12.055] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:12.055] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:12.055] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:12.556] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:12.556] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:12.556] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:13.057] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:13.057] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:13.057] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:13.736] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:13.736] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:13.736] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:14.237] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:14.237] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:14.237] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:14.737] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:14.737] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:14.738] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:15.238] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:15.238] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:15.238] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:15.739] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:15.739] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:15.739] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:16.239] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:16.239] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:16.240] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:16.740] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:16.741] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:16.741] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:17.242] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:17.242] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:17.242] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:17.743] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:17.743] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:17.743] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:18.244] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:18.244] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:18.244] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:18.744] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:18.745] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:18.745] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:19.245] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:19.245] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:19.245] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:19.746] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:19.746] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:19.746] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:20.247] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:20.247] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:20.247] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:20.748] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:20.748] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:20.748] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:21.248] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:21.249] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:21.249] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:21.750] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:21.750] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:21.750] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:22.251] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:22.251] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:22.251] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:22.752] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:22.752] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:22.752] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:23.236] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:23.236] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:23.236] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:23.738] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:23.738] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:23.738] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:24.239] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:24.239] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:24.239] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:24.740] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:24.740] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:24.740] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:25.240] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:25.240] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:25.241] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:25.742] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:25.742] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:25.742] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:26.242] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:26.242] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:26.243] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:26.743] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:26.744] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:26.744] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:27.244] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:27.244] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:27.244] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:27.413] [nas] [debug] Uplink data status changed PSI[1] pending[false]
+[2026-04-22 15:56:27.744] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:27.745] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:27.745] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:28.245] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:28.245] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:28.245] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:28.746] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:28.746] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:28.746] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:29.247] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:29.247] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:29.247] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:29.748] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:29.748] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:29.748] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:30.249] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:30.249] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:30.249] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:30.750] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:30.750] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:30.750] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:31.251] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:31.251] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:31.251] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:31.752] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:31.752] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:31.752] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:32.253] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:32.253] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:32.253] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:32.754] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:32.754] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:32.754] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:33.237] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:33.237] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:33.237] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:33.738] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:33.738] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:33.738] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:34.239] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:34.239] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:34.239] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:34.740] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:34.740] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:34.740] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:35.241] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:35.241] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:35.241] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:35.742] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:35.742] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:35.742] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:36.243] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:36.243] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:36.243] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:36.743] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:36.743] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:36.743] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:37.244] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:37.244] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:37.244] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:37.745] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:37.745] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:37.745] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:38.246] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:38.246] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:38.246] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:38.747] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[2026-04-22 15:56:38.747] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:38.747] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:39.248] [rls-udp] [debug] RLS heartbeat ACK received: sti=5245835474550388347 cellId=1 dbm=-150
+[2026-04-22 15:56:39.248] [rls-udp] [debug] RLS heartbeat ACK - low signal detected for cell 1, dbm=-150, notifying RRC
+[2026-04-22 15:56:39.248] [rls-udp] [debug] RLS heartbeat ACK received: sti=7505602073997363039 cellId=2 dbm=-70
+[stopping process]
+[process exited with code 0]

@@ -4,6 +4,7 @@
 -- (UERANSIM project <https://github.com/aligungr/UERANSIM>).
 --
 -- CC0-1.0 2021 - Louis Royer (<https://github.com/louisroyer/RLS-wireshark-dissector>)
+-- Updated 2024 - for extended RLS header (senderId/senderId2, lat/lon/alt position)
 --
 --]]
 
@@ -27,7 +28,7 @@ local pduTypeNames = {
     [2] = "Data"
 }
 
-local rrcMsgTypeNames = {
+local rrcChannelNames = {
     [0] = "BCCH-BCH",
     [1] = "BCCH-DL-SCH",
     [2] = "DL-CCCH",
@@ -49,19 +50,31 @@ local nrRrcDissectors = {
     [7] = "nr-rrc.ul.dcch",
 }
 
-fields.Version = ProtoField.string("rls.version", "Version")
-fields.MsgType = ProtoField.uint8("rls.message_type", "Message Type", base.DEC, msgTypeNames)
-fields.Sti = ProtoField.uint64("rls.sti", "Sender Node Temporary ID", base.DEC)
-fields.PduType = ProtoField.uint8("rls.pdu_type", "PDU Type", base.DEC, pduTypeNames)
-fields.PduId = ProtoField.uint32("rls.pdu_id", "PDU ID", base.DEC)
-fields.RrcMsgType = ProtoField.uint32("rls.rrc_message_type", "RRC Message Type", base.DEC, rrcMsgTypeNames)
-fields.PduLength = ProtoField.uint32("rls.pdu_length", "PDU Length", base.DEC)
-fields.PduSessionId = ProtoField.uint32("rls.pdu_session_id", "PDU Session ID", base.DEC)
+-- Common header fields
+fields.Version    = ProtoField.string("rls.version",     "Version")
+fields.MsgType    = ProtoField.uint8( "rls.message_type","Message Type",           base.DEC, msgTypeNames)
+fields.Sti        = ProtoField.uint64("rls.sti",         "Sender Node Temporary ID",base.DEC)
+fields.SenderId   = ProtoField.uint32("rls.sender_id",   "Sender ID",              base.DEC)
+fields.SenderId2  = ProtoField.uint32("rls.sender_id2",  "Sender ID 2",            base.DEC)
+
+-- Heartbeat fields (position as IEEE 754 doubles, 8 bytes each)
+fields.Latitude   = ProtoField.bytes("rls.latitude",    "Latitude (double)")
+fields.Longitude  = ProtoField.bytes("rls.longitude",   "Longitude (double)")
+fields.Altitude   = ProtoField.bytes("rls.altitude",    "Altitude (double)")
+
+-- Heartbeat ACK fields
+fields.Dbm        = ProtoField.int32("rls.dbm",          "RLS Signal Strength (dBm)", base.DEC)
+
+-- PDU Transmission fields
+fields.PduType    = ProtoField.uint8( "rls.pdu_type",    "PDU Type",               base.DEC, pduTypeNames)
+fields.PduId      = ProtoField.uint32("rls.pdu_id",      "PDU ID",                 base.DEC)
+fields.Payload    = ProtoField.uint32("rls.payload",     "Payload (RRC channel / PDU session ID)", base.DEC)
+fields.RrcChannel = ProtoField.uint32("rls.rrc_channel", "RRC Channel",            base.DEC, rrcChannelNames)
+fields.PduSessionId = ProtoField.uint32("rls.pdu_session_id", "PDU Session ID",    base.DEC)
+fields.PduLength  = ProtoField.uint32("rls.pdu_length",  "PDU Length",             base.DEC)
+
+-- PDU Transmission ACK fields
 fields.AcknowledgeItem = ProtoField.uint32("rls.ack_item", "PDU ID")
-fields.Dbm = ProtoField.int32("rls.dbm", "RLS Signal Strength (dBm)", base.DEC)
-fields.PosX = ProtoField.uint32("rls.pos_x", "RLS Position X", base.DEC)
-fields.PosY = ProtoField.uint32("rls.pos_y", "RLS Position Y", base.DEC)
-fields.PosZ = ProtoField.uint32("rls.pos_z", "RLS Position Z", base.DEC)
 
 function rlsProtocol.dissector(buffer, pinfo, tree)
     if buffer:len() == 0 then return end
@@ -72,40 +85,54 @@ function rlsProtocol.dissector(buffer, pinfo, tree)
     local versionNumber = buffer(1, 1):uint() .. "." .. buffer(2, 1):uint() .. "." .. buffer(3, 1):uint()
     local subtree = tree:add(rlsProtocol, buffer(), "UERANSIM Radio Link Simulation (RLS) protocol")
 
-    subtree:add(fields.Version, buffer(1, 3), versionNumber)
-    subtree:add(fields.MsgType, buffer(4, 1))
+    -- Common header: magic(1) + version(3) + msgType(1) + sti(8) + senderId(4) + senderId2(4) = 21 bytes
+    subtree:add(fields.Version,   buffer(1, 3),  versionNumber)
+    subtree:add(fields.MsgType,   buffer(4, 1))
     local msgType = buffer(4, 1):uint()
+    subtree:add(fields.Sti,       buffer(5, 8))
+    subtree:add(fields.SenderId,  buffer(13, 4))
+    subtree:add(fields.SenderId2, buffer(17, 4))
 
     pinfo.cols.info = msgTypeNames[msgType]
-    subtree:add(fields.Sti, buffer(5, 8))
 
+    -- Message-specific fields start at offset 21
     if msgType == 4 then -- Heartbeat
-        subtree:add(fields.PosX, buffer(13,4))
-        subtree:add(fields.PosY, buffer(17,4))
-        subtree:add(fields.PosZ, buffer(21,4))
+        subtree:add(fields.Latitude,  buffer(21, 8))
+        subtree:add(fields.Longitude, buffer(29, 8))
+        subtree:add(fields.Altitude,  buffer(37, 8))
+
     elseif msgType == 5 then -- Heartbeat ACK
-        subtree:add(fields.Dbm, buffer(13,4))
+        subtree:add(fields.Dbm, buffer(21, 4))
+
     elseif msgType == 6 then -- PDU Transmission
-        local pduType = buffer(13, 1):uint()
-        subtree:add(fields.PduType, buffer(13, 1))
-        subtree:add(fields.PduId, buffer(14, 4))
-        if pduType == 1 then -- RRC PDU
-            local rrcMsgType = buffer(18, 4):uint()
-            local pduLength = buffer(22, 4):uint()
-            subtree:add(fields.RrcMsgType, buffer(18, 4))
-            subtree:add(fields.PduLength, buffer(22, 4))
-            Dissector.get(nrRrcDissectors[rrcMsgType]):call(buffer(26, pduLength):tvb(), pinfo, tree)
-        elseif (pduType == 2) then -- Data PDU
-            subtree:add(fields.PduSessionId, buffer(18, 4))
-            local pduLength = buffer(22, 4):uint()
-            subtree:add(fields.PduLength, buffer(22, 4))
-            Dissector.get("ip"):call(buffer(26, pduLength):tvb(), pinfo, tree)
+        local pduType   = buffer(21, 1):uint()
+        local payload   = buffer(26, 4):uint()
+        local pduLength = buffer(30, 4):uint()
+
+        subtree:add(fields.PduType,  buffer(21, 1))
+        subtree:add(fields.PduId,    buffer(22, 4))
+
+        if pduType == 1 then -- RRC: payload = RRC channel enum
+            subtree:add(fields.RrcChannel, buffer(26, 4))
+            subtree:add(fields.PduLength,  buffer(30, 4))
+            local dissectorName = nrRrcDissectors[payload]
+            if dissectorName then
+                Dissector.get(dissectorName):call(buffer(34, pduLength):tvb(), pinfo, tree)
+            end
+        elseif pduType == 2 then -- Data: payload = PDU session ID
+            subtree:add(fields.PduSessionId, buffer(26, 4))
+            subtree:add(fields.PduLength,    buffer(30, 4))
+            Dissector.get("ip"):call(buffer(34, pduLength):tvb(), pinfo, tree)
+        else
+            subtree:add(fields.Payload,   buffer(26, 4))
+            subtree:add(fields.PduLength, buffer(30, 4))
         end
+
     elseif msgType == 7 then -- PDU Transmission ACK
-        local ackCount = buffer(13, 4):uint()
-        local ackArray = subtree:add(rlsProtocol, buffer(13, 4), "Acknowledge List (" .. ackCount .. ")")
-        for i = 1,ackCount,1 do
-            ackArray:add(fields.AcknowledgeItem, buffer(17 + (i - 1) * 4, 4))
+        local ackCount = buffer(21, 4):uint()
+        local ackArray = subtree:add(rlsProtocol, buffer(21, 4), "Acknowledge List (" .. ackCount .. ")")
+        for i = 1, ackCount, 1 do
+            ackArray:add(fields.AcknowledgeItem, buffer(25 + (i - 1) * 4, 4))
         end
     end
 end

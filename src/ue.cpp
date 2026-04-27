@@ -398,27 +398,6 @@ static nr::ue::UeConfig *ReadConfigYaml()
         result->uacAcc.cls15 = yaml::GetBool(config["uacAcc"], "class15");
     }
 
-    result->measSourceConfig.type = nr::ue::EMeasSourceType::NONE;
-
-    // check if the advanced handover simulation flag is set
-    if (yaml::HasField(config, "enableHandoverSim"))
-        result->useHandoverMeasFramework = yaml::GetBool(config, "enableHandoverSim");
-
-
-    if (yaml::HasField(config, "handoverServer") && result->useHandoverMeasFramework)
-    {
-        auto hoServer = config["handoverServer"];
-        if (yaml::HasField(hoServer, "address"))
-                result->handoverServerConfig.address = yaml::GetString(hoServer, "address");
-        if (yaml::HasField(hoServer, "transport"))
-                result->handoverServerConfig.transport = yaml::GetString(hoServer, "transport");
-        if (yaml::HasField(hoServer, "port"))
-            result->handoverServerConfig.port =
-                static_cast<uint16_t>(yaml::GetInt32(hoServer, "port", 1, 65535));
-        
-
-    }
-
     // UE initial position
     if (yaml::HasField(config, "position"))
     {
@@ -642,7 +621,6 @@ static nr::ue::UeConfig *GetConfigByUe(int ueIndex)
     c->integrityMaxRate = g_refConfig->integrityMaxRate;
     c->uacAic = g_refConfig->uacAic;
     c->uacAcc = g_refConfig->uacAcc;
-    c->useHandoverMeasFramework = g_refConfig->useHandoverMeasFramework;
     c->rls = g_refConfig->rls;
     c->initialPosition = g_refConfig->initialPosition;
     c->ntn = g_refConfig->ntn;

@@ -1,10 +1,10 @@
 //
-// Phase 2+3 – Handover execution upon ReconfigurationWithSync reception.
+// UE Handover
 //
-// Phase 2: Core handover – cell switch, RRCReconfigurationComplete, T304.
-// Phase 3: Enhanced handover – RACH config, measurement suspension,
-//           MAC reset indication, improved PCI resolution, security key
-//           refresh placeholder.
+// Implements US-side handover support
+//   performHandover        – execute connection to new gNB
+//   suspendMeasurements    – suspend measurement evaluation during handover
+//   resumeMeasurements     – resume measurement evaluation after handover
 //
 
 #include "task.hpp"
@@ -145,8 +145,8 @@ void UeRrcTask::performHandover(long txId, int targetPhysCellId, int newCRNTI,
                       targetPhysCellId, static_cast<int>(m_cellDesc.size()));
         m_handoverInProgress = false;
         resumeMeasurements();
-        // T304 will fire but handleT304Expiry checks the flag
-        declareRadioLinkFailure(rls::ERlfCause::SIGNAL_LOST_TO_CONNECTED_CELL);
+        // T304 will fire but handleT304Expiry checks the handover_in_progress flag
+        //declareRadioLinkFailure(rls::ERlfCause::SIGNAL_LOST_TO_CONNECTED_CELL);
         return;
     }
 
@@ -240,15 +240,16 @@ void UeRrcTask::handleT304Expiry()
         return;
     }
 
-    m_logger->err("T304 expired – handover to PCI %d failed", m_hoTargetPci);
+    m_logger->err("T304 expired - handover to PCI %d failed", m_hoTargetPci);
     m_handoverInProgress = false;
 
     // Resume measurements so the UE can attempt re-establishment
     resumeMeasurements();
 
+
     // Per TS 38.331 §5.3.5.8.3: upon T304 expiry the UE shall
     // initiate the RRC re-establishment procedure.
-    declareRadioLinkFailure(rls::ERlfCause::SIGNAL_LOST_TO_CONNECTED_CELL);
+    //declareRadioLinkFailure(rls::ERlfCause::SIGNAL_LOST_TO_CONNECTED_CELL);
 }
 
 } // namespace nr::ue

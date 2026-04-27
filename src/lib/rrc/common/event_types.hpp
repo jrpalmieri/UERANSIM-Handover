@@ -218,37 +218,35 @@ class ReportConfigEvent
 
         int reportConfigId{0};
 
-        nr::rrc::common::HandoverEventType eventKind{nr::rrc::common::HandoverEventType::A3};
+        nr::rrc::common::HandoverEventType eventKind{nr::rrc::common::HandoverEventType::UNKNOWN};
 
         // Event type string (e.g. "A3", "A2", "D1", "condT1", etc.)
         // Kept for compatibility while migrating callers to eventKind.
-        std::string eventType{"A3"};
+        std::string eventType{""};
 
         // common fields
 
-        E_TTT_ms ttt{E_TTT_ms::ms100};
+        E_TTT_ms ttt{E_TTT_ms::ms0};
         int maxReportCells{8};
+        
+        bool reportOnLeave{true};
+        bool useAllowedCellList{false};
         
         // eventA2 fields
 
         int a2_thresholdDbm{-110};
         int a2_hysteresisDb{1};
-        bool a2_reportOnLeave{true};
 
         // event a3 fields
 
         int a3_offsetDb{3};
         int a3_hysteresisDb{1};
-        bool a3_reportOnLeave{true};
-        bool a3_useAllowedCellList{false};
         
         // eventA5 fields
         
         int a5_threshold1Dbm{-110};
         int a5_threshold2Dbm{-95};
         int a5_hysteresisDb{1};
-        bool a5_reportOnLeave{true};
-        bool a5_useAllowedCellList{false};
 
         // eventD1-r17 fields
 
@@ -257,7 +255,6 @@ class ReportConfigEvent
         EventReferenceLocation d1_referenceLocation1{};
         EventReferenceLocation d1_referenceLocation2{};
         int d1_hysteresisLocation{1};
-        bool d1_reportOnLeave{true};
 
         // condEventT1-r17 fields
 
@@ -271,7 +268,12 @@ class ReportConfigEvent
         EventReferenceLocation condD1_referenceLocation1{};
         EventReferenceLocation condD1_referenceLocation2{};
         int condD1_hysteresisLocation{1};
-        bool condD1_reportOnLeave{true};
+
+        // condEventA3 fields
+
+        int condA3_offsetDb{3};
+        int condA3_hysteresisDb{1};
+
 
         const char *eventStr() const
         {
@@ -383,29 +385,25 @@ class ReportConfigEvent
                 {"eventType", eventType},
                 {"ttt", std::string(E_TTT_ms_to_string(ttt))},
                 {"timeToTriggerMs", timeToTriggerMs()},
+                {"reportOnLeave", reportOnLeave},
+                {"useAllowedCellList", useAllowedCellList},
                 {"maxReportCells", maxReportCells},
 
                 {"a2_thresholdDbm", a2_thresholdDbm},
                 {"a2_hysteresisDb", a2_hysteresisDb},
-                {"a2_reportOnLeave", a2_reportOnLeave},
 
                 {"a3_offsetDb", a3_offsetDb},
                 {"a3_hysteresisDb", a3_hysteresisDb},
-                {"a3_reportOnLeave", a3_reportOnLeave},
-                {"a3_useAllowedCellList", a3_useAllowedCellList},
 
                 {"a5_threshold1Dbm", a5_threshold1Dbm},
                 {"a5_threshold2Dbm", a5_threshold2Dbm},
                 {"a5_hysteresisDb", a5_hysteresisDb},
-                {"a5_reportOnLeave", a5_reportOnLeave},
-                {"a5_useAllowedCellList", a5_useAllowedCellList},
 
                 {"d1_distanceThreshFromReference1", d1_distanceThreshFromReference1},
                 {"d1_distanceThreshFromReference2", d1_distanceThreshFromReference2},
                 {"d1_referenceLocation1", locationToJson(d1_referenceLocation1)},
                 {"d1_referenceLocation2", locationToJson(d1_referenceLocation2)},
                 {"d1_hysteresisLocation", d1_hysteresisLocation},
-                {"d1_reportOnLeave", d1_reportOnLeave},
 
                 {"condT1_thresholdSecTS", condT1_thresholdSecTS},
                 {"condT1_durationSec", condT1_durationSec},
@@ -415,10 +413,36 @@ class ReportConfigEvent
                 {"condD1_referenceLocation1", locationToJson(condD1_referenceLocation1)},
                 {"condD1_referenceLocation2", locationToJson(condD1_referenceLocation2)},
                 {"condD1_hysteresisLocation", condD1_hysteresisLocation},
-                {"condD1_reportOnLeave", condD1_reportOnLeave},
+
+                {"condA3_offsetDb", condA3_offsetDb},
+                {"condA3_hysteresisDb", condA3_hysteresisDb},
             });
         }
 
+};
+
+struct MeasObject
+{
+    int measObjectId{};
+    int ssbFrequency{};     // SSB ARFCN (simplified — we use cellId matching instead)
+
+};
+
+
+/**
+ * @brief Struct to represent a Measurement Identity, which binds together:
+ * - measId: the identifier used in MeasurementReport messages
+ * - measObjectId: the measurement object (frequency) to which this measId applies
+ * - reportConfigId: the report configuration (event trigger) that uses this measId
+ *
+ */
+struct MeasIdentity
+{
+    int measId{};           // maps to the measId in MeasurementReport messages
+    int measObjectId{};     // maps to the measObjectId in UeMeasObject, 
+                            //  which defines the frequency to measure
+    int reportConfigId{};   // maps to the reportConfigId in UeReportConfig, 
+                            //  which defines the event trigger conditions for this measId
 };
 
 } // namespace nr::rrc::common

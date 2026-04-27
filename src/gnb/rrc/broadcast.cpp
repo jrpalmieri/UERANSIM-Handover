@@ -14,9 +14,11 @@
 #include <lib/asn/rrc.hpp>
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/encode.hpp>
+#include <lib/rrc/common/sat_calc.hpp>
 #include <utils/common.hpp>
 #include <utils/common_types.hpp>
 #include <utils/position_calcs.hpp>
+#include <utils/sat_time.hpp>
 
 #include <climits>
 #include <cstdint>
@@ -187,7 +189,8 @@ void GnbRrcTask::triggerSib19Broadcast()
 
     // Coherent time base for all TLE operations.
     const int64_t nowMs = utils::CurrentTimeMillis();
-    const libsgp4::DateTime now = sat_time::Now();
+    const int64_t satNowMs = m_base->satTime->CurrentSatTimeMillis();
+    const libsgp4::DateTime now = nr::rrc::common::UnixMillisToDateTime(satNowMs);
 
     static constexpr double TWO_PI = 2.0 * M_PI;
     static constexpr double GM     = 3.986004418e14;  // m³/s²
@@ -276,7 +279,7 @@ void GnbRrcTask::triggerSib19Broadcast()
                 {
                     GeoPosition ownGeo = EcefToGeo(p0);
                     ownGeo.isValid = true;
-                    m_base->setGnbPosition(ownGeo);
+                    m_base->setGnbPosition(ownGeo, satNowMs);
                 }
             }
             // orbital

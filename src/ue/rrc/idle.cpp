@@ -22,9 +22,12 @@ namespace nr::ue
 {
 
 /**
- * @brief Idle mode cell selection routine. This is triggered in the following cases:
- * - UE startup (after 1 second, or after 4 seconds if no PLMN is selected yet)
- * - RRC connection release
+ * @brief Idle mode cell selection routine. This is triggered by teh RRC cycle timer.
+ * Requirements:
+ * - RRC state is not RRC_CONNECTED
+ * - We are at least 1 second after startup and cell information MIB/SIB is available
+ * - We are at least 4 seconds after startup and a PLMN has been selected.
+ * - 
  * - Radio link failure
  * - Periodic cell selection retry if no suitable cell is found (every 2.5 seconds, starting immediately after startup)
  *  
@@ -41,6 +44,7 @@ void UeRrcTask::performCellSelection()
     if (currentTime - m_startedTime <= 4000LL && !m_base->shCtx.selectedPlmn.get().hasValue())
         return;
 
+    // save the last cell info we were camped on, to compare after selection and log if changed
     auto lastCell = m_base->shCtx.currentCell.get();
 
     bool shouldLogErrors = lastCell.cellId != 0 || (currentTime - m_lastTimePlmnSearchFailureLogged >= 30'000LL);
@@ -49,6 +53,7 @@ void UeRrcTask::performCellSelection()
     CellSelectionReport report;
 
     bool cellFound = false;
+    // if PLMN is selected, look for suitable cell first
     if (m_base->shCtx.selectedPlmn.get().hasValue())
     {
         cellFound = lookForSuitableCell(cellInfo, report);
@@ -74,6 +79,7 @@ void UeRrcTask::performCellSelection()
         }
     }
 
+    // if no suitable cell found (or outside of PLMN), look for acceptable cell (emergency services)
     if (!cellFound)
     {
         report = {};
@@ -104,6 +110,8 @@ void UeRrcTask::performCellSelection()
     }
 
     int selectedCell = cellInfo.cellId;
+
+    // update shared RRC-NAS context with selected cellId
     m_base->shCtx.currentCell.set(cellInfo);
 
     if (selectedCell != 0 && selectedCell != lastCell.cellId)
@@ -143,7 +151,7 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
     // vector of cellIds that are suitable candidates for selection, 
     //   i.e. they have the required SIB1 and MIB information, correct PLMNID, not barred or reserved, 
     //   and not in forbidden TAI list    
-    std::vector<int> candidates;
+    std::vector<std::pair<int, int>> candidates;
 
     for (auto &item : m_cellDesc)
     {
@@ -197,8 +205,24 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
             continue;
         }
 
-        // It seems suitable
-        candidates.push_back(item.first);
+        // signal strength threshold check
+        int dbm = MIN_RSRP;
+        {
+            // signal strength is from global cellDbMeas map
+            std::shared_lock lock(m_base->cellDbMeasMutex);
+            auto it = m_base->cellDbMeas.find(item.first);
+            if (it != m_base->cellDbMeas.end())
+                dbm = it->second;
+        }
+
+        if (dbm < cons::RLF_RSRP)
+        {
+            report.weakSignalCells++;
+            continue;
+        }
+
+        // Meets non-signal strength criteria
+        candidates.push_back(std::make_pair(item.first, dbm));
     }
 
     if (candidates.empty())
@@ -206,18 +230,15 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
 
 
     // sort the candidate list by signal strength (dbm) in descending order
-    // signal strength is from global celldbmeas map
     {
         std::shared_lock lock(m_base->cellDbMeasMutex);
 
-        std::sort(candidates.begin(), candidates.end(), [this](int a, int b) {
-            auto &cellA = m_base->cellDbMeas[a];
-            auto &cellB = m_base->cellDbMeas[b];
-            return cellB < cellA;
+        std::sort(candidates.begin(), candidates.end(), [this](std::pair<int, int> a, std::pair<int, int> b) {
+            return a.second < b.second;
         });
     }
 
-    int selectedId = candidates[0];
+    int selectedId = candidates[0].first;
     auto &selectedCell = m_cellDesc[selectedId];
 
     cellInfo = {};
@@ -229,9 +250,10 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
     return true;
 }
 
+
 bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionReport &report)
 {
-    std::vector<int> candidates;
+    std::vector<std::pair<int, int>> candidates;
 
     for (auto &item : m_cellDesc)
     {
@@ -278,9 +300,25 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
             report.forbiddenTaiCells++;
             continue;
         }
+        
+        // signal strength threshold check
+        int dbm = MIN_RSRP;
+        {
+            // signal strength is from global cellDbMeas map
+            std::shared_lock lock(m_base->cellDbMeasMutex);
+            auto it = m_base->cellDbMeas.find(item.first);
+            if (it != m_base->cellDbMeas.end())
+                dbm = it->second;
+        }
+
+        if (dbm < cons::RLF_RSRP)
+        {
+            report.weakSignalCells++;
+            continue;
+        }
 
         // It seems acceptable
-        candidates.push_back(item.first);
+        candidates.push_back(std::make_pair(item.first, dbm));
     }
 
     if (candidates.empty())
@@ -294,10 +332,8 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
     {
         std::shared_lock lock(m_base->cellDbMeasMutex);
 
-        std::sort(candidates.begin(), candidates.end(), [this](int a, int b) {
-            auto &cellA = m_base->cellDbMeas[a];
-            auto &cellB = m_base->cellDbMeas[b];
-            return cellB < cellA;
+        std::sort(candidates.begin(), candidates.end(), [this](std::pair<int, int> a, std::pair<int, int> b) {
+            return a.second < b.second;
         });
     }
 
@@ -305,9 +341,9 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
     if (selectedPlmn.hasValue())
     {
         // Using stable-sort here
-        std::stable_sort(candidates.begin(), candidates.end(), [this, &selectedPlmn](int a, int b) {
-            auto &cellA = m_cellDesc[a];
-            auto &cellB = m_cellDesc[b];
+        std::stable_sort(candidates.begin(), candidates.end(), [this, &selectedPlmn](std::pair<int, int> a, std::pair<int, int> b) {
+            auto &cellA = m_cellDesc[a.first];
+            auto &cellB = m_cellDesc[b.first];
 
             bool matchesA = cellA.sib1.hasSib1 && cellA.sib1.plmn == selectedPlmn;
             bool matchesB = cellB.sib1.hasSib1 && cellB.sib1.plmn == selectedPlmn;
@@ -316,7 +352,7 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
         });
     }
 
-    int selectedId = candidates[0];
+    int selectedId = candidates[0].first;
     auto &selectedCell = m_cellDesc[selectedId];
 
     cellInfo = {};

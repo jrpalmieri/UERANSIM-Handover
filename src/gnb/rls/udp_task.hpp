@@ -78,8 +78,8 @@ class RlsUdpTask : public NtsTask
                     const rls::RlsMessage &msg);
     void heartbeatCycle(int64_t time);
     int computeDbm(const GeoPosition &uePos);
-    void handleSatPositionUpdate(const rls::RlsMessage &msg);
-    void handleRsrpUpdate(const rls::RlsMessage &msg);
+//    void handleSatPositionUpdate(const rls::RlsMessage &msg);
+//    void handleRsrpUpdate(const rls::RlsMessage &msg);
 
   public:
     void initialize(NtsTask *ctlTask);

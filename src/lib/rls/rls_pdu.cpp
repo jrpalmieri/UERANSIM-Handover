@@ -89,13 +89,6 @@ void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream)
         for (auto pduId : m.pduIds)
             stream.appendOctet4(pduId);
     }
-    else if (msg.msgType == EMessageType::SATELLITE_POSITION_UPDATE)
-    {
-        auto &m = (const RlsSatellitePositionUpdate &)msg;
-        AppendString(stream, m.tleLine1);
-        AppendString(stream, m.tleLine2);
-        stream.appendOctet8(static_cast<uint64_t>(m.epochMs));
-    }
 }
 
 std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream)
@@ -162,25 +155,6 @@ std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream)
         res->pduIds.reserve(count);
         for (uint32_t i = 0; i < count; i++)
             res->pduIds.push_back(stream.read4UI());
-        return res;
-    }
-    // gNB RF data messages contain the RSRP measurement (dB) for a cell
-    else if (msgType == EMessageType::GNB_RF_DATA)
-    {
-        auto res = std::make_unique<RlsGnbRfData>(sti, senderId, senderId2);
-        res->rsrp = stream.read4I();
-        return res;
-    }
-    // satellite position update messages contain the TLE lines and epoch time of the TLE observation
-    else if (msgType == EMessageType::SATELLITE_POSITION_UPDATE)
-    {
-        auto res =
-            std::make_unique<RlsSatellitePositionUpdate>(
-                sti, senderId, senderId2);
-        res->tleLine1 = ReadString(stream);
-        res->tleLine2 = ReadString(stream);
-        res->epochMs =
-            static_cast<int64_t>(stream.read8UL());
         return res;
     }
 

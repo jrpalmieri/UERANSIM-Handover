@@ -143,7 +143,7 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
         for (int i = 0; i < list.count; i++)
         {
             auto *item = list.array[i];
-            UeMeasObject obj{};
+            nr::rrc::common::MeasObject obj{};
             obj.measObjectId = static_cast<int>(item->measObjectId);
             if (item->measObject.present == ASN_RRC_MeasObjectToAddMod__measObject_PR_measObjectNR)
             {
@@ -302,7 +302,7 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
         for (int i = 0; i < list.count; i++)
         {
             auto *item = list.array[i];
-            UeMeasId mid{};
+            nr::rrc::common::MeasIdentity mid{};
             mid.measId = static_cast<int>(item->measId);
             mid.measObjectId = static_cast<int>(item->measObjectId);
             mid.reportConfigId = static_cast<int>(item->reportConfigId);
@@ -335,7 +335,7 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
     // save the txId for Ack matching
     int txId = static_cast<int>(msg.rrc_TransactionIdentifier);
 
-    // RRCReconfiguration-IEs are under teh criticalExtensions IE
+    // RRCReconfiguration-IEs are under the criticalExtensions IE
     auto *ies = msg.criticalExtensions.choice.rrcReconfiguration;
     if (!ies)
     {

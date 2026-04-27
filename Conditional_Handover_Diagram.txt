@@ -1,0 +1,38 @@
+
+Conditional Handover Procedure
+(mediated through AMF)
+
+UE                         Source gNB                          AMF                  Target gNB
+ |                              |                               |                       |
+ |                     (handover criteria)                      |                       |
+ |                              |                               |                       |
+ |                              |                               |                       |
+ |                              |-- Handover Required --------> |                       |
+ |                              |                               |                       |
+ |                              |                               |                       |
+ |                              |                               | --Handover Request--> |
+ |                              |                               |                       |
+ |                              |                               | <-- Handover Ack----- |
+ |                              |                               |                       |
+ |                              |  <--RRC Handover Command----- |                       |
+ | <-- RRC Reconfiguration ---  |                               |                       |
+ |       (meas config)          |                               |                       |
+ |    (Reconfig with Sync)      |                               |                       |   
+ |                              |                               |                       |
+ |                              |                               |                       |
+ |                              |                               |                       |
+ |     (trigger event)          |                               |                       |
+ |                              |                               |                       |   
+ |  -------  RRC Reconfiguration Complete  -------------------------------------------> |        
+ |                              |                               |                       |
+ |                              |                               |                       |  
+ |                              |                               |  <--Handover Notify-- |
+ |                              |                               |                       |
+ |                              |                               |                       |
+ |                              | <---- UE Context Release----- |                       |
+ |                              |                               |                       |
+
+
+
+
+

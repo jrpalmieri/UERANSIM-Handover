@@ -270,11 +270,11 @@ struct RrcUeContext
         long reportConfigId{};
         nr::rrc::common::HandoverEventType eventKind{};
         std::string eventType{};
-        int choProfileId{};
+        long choProfileId{};
     };
 
     // list of measurement identities currently configured for this UE, along with their associated object and report config IDs and event types
-    std::vector<MeasIdentityMappings> usedMeasIdentities{};
+    //std::vector<MeasIdentityMappings> usedMeasIdentities{};
 
     // list of measuObjectIds currently configured for this UE, to avoid conflicting reuse
     std::vector<long> usedMeasObjectIds{};
@@ -285,7 +285,15 @@ struct RrcUeContext
     // stores pointers to sent MeasConfig messages along with the measIds used in that config, for potential future reference (e.g. handovers)
     std::vector<std::tuple<ASN_RRC_MeasConfig*, std::vector<long>>> sentMeasConfigs{};
 
+    // Map of ReportConfigEvents by their reportConfigId, for easy reference during measurement evaluation and handover condition checking
+    std::map<long, nr::rrc::common::ReportConfigEvent> reportConfigEvents{};
 
+    // Map of MeasObjectIds to their associated measurement object information, for easy reference during handover condition checking
+    std::map<long, nr::rrc::common::MeasObject> measObjects{};
+
+    // Map of Meas identities by their measId, 
+    std::map<long, MeasIdentityMappings> measIdentities;
+    
     // UE position (populated from RLS heartbeat data via UPLINK_RRC path)
     GeoPosition uePosition{};
 
@@ -302,23 +310,12 @@ struct RrcUeContext
     std::vector<int> choPreparationCandidatePcis{};
     std::unordered_map<int, int> choPreparationCandidateScores{};
     std::vector<long> choPreparationMeasIds{};
-    std::unordered_set<int> usedCondReconfigIds{};
-    std::optional<int> choPreparationCandidateProfileId{};
+    std::unordered_set<long> usedCondReconfigIds{};
+    std::optional<long> choPreparationCandidateProfileId{};
     int choPreparationTriggerTimerSec{};
     int choPreparationDistanceThreshold{};
     ASN_RRC_MeasConfig* choPreparationMeasConfig{};
     
-
-    [[nodiscard]] const MeasIdentityMappings *findSentMeasIdentity(long measId) const
-    {
-        for (const auto &entry : usedMeasIdentities)
-        {
-            if (entry.measId == measId)
-                return &entry;
-        }
-        return nullptr;
-    }
-
     explicit RrcUeContext(const int cRnti) : cRnti(cRnti)
     {
     }
@@ -469,15 +466,6 @@ struct GnbAmfConfig
     uint16_t port{};
 };
 
-struct SatelliteLinkConfig
-{
-    double frequencyHz{10.7e9};  // carrier frequency in Hz
-    double txPowerDbm{43.0};     // radiated power in dBm
-    double txGainDbi{35.0};      // transmit antenna gain in dBi
-    double ueRxGainDbi{25.0};    // UE receive antenna gain in dBi
-    
-};
-
 enum class ESib19EphemerisMode : uint8_t
 {
     PosVel = 0,
@@ -546,17 +534,8 @@ struct GnbRfLinkConfig
     double txPowerDbm{43.0};
     double txGainDbi{35.0};
     double ueRxGainDbi{25.0};
-
-    [[nodiscard]] SatelliteLinkConfig toSatelliteLinkConfig() const
-    {
-        SatelliteLinkConfig cfg{};
-        cfg.frequencyHz = carrFrequencyHz;
-        cfg.txPowerDbm = txPowerDbm;
-        cfg.txGainDbi = txGainDbi;
-        cfg.ueRxGainDbi = ueRxGainDbi;
-        return cfg;
-    }
 };
+
 
 struct GnbNeighborConfig
 {
@@ -629,6 +608,16 @@ struct GnbHandoverConfig
     GnbXnConfig xn{};
 };
 
+struct ScoredNeighbor
+{
+    const GnbNeighborConfig * neighbor;
+    int score;
+
+    ScoredNeighbor(const GnbNeighborConfig * neighbor, int score) : neighbor(neighbor), score(score)
+    {
+    }
+};
+
 struct NtnConfig
 {
     struct TimeWarpConfig
@@ -642,6 +631,7 @@ struct NtnConfig
         EStartCondition startCondition{EStartCondition::Moving};
         double tickScaling{1.0};
         std::optional<int64_t> startEpochMillis{};
+        std::string startEpochText{};
     };
 
     bool ntnEnabled{false};
@@ -740,10 +730,25 @@ struct TaskBase
     mutable std::mutex gnbPositionMutex{};
     GeoPosition gnbPosition{};
 
+    // set lat/long/alt and timestamp together
+    void setGnbPosition(const GeoPosition &position, int64_t timestampMs)
+    {
+        std::lock_guard<std::mutex> lock(gnbPositionMutex);
+        gnbPosition.latitude = position.latitude;
+        gnbPosition.longitude = position.longitude;
+        gnbPosition.altitude = position.altitude;
+        gnbPosition.timestampMs = timestampMs;
+        gnbPosition.isValid = true;
+    }
+
+    // set lat/long/alt without updating timestamp
     void setGnbPosition(const GeoPosition &position)
     {
         std::lock_guard<std::mutex> lock(gnbPositionMutex);
-        gnbPosition = position;
+        gnbPosition.latitude = position.latitude;
+        gnbPosition.longitude = position.longitude;
+        gnbPosition.altitude = position.altitude;
+        gnbPosition.isValid = true;
     }
 
     [[nodiscard]] GeoPosition getGnbPosition() const

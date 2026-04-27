@@ -7,7 +7,7 @@
 //
 
 #include "udp_task.hpp"
-#include "sat_pos_sim.hpp"
+#include "pos_sim.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -97,15 +97,6 @@ void RlsUdpTask::receiveRlsPdu(
 {
 
 
-    // DEPRECATED - RSRP updates from the gNB are received through the command interface, not the UE-GNB UDP interface, so this message type is no longer used.
-    //      However, we keep the handling code here for now in case we want to re-enable RSRP updates through the UDP interface in the future.
-    // RF data messages are handled internally and not forwarded to the control task
-    if (msg->msgType == rls::EMessageType::GNB_RF_DATA)
-    {
-        handleRsrpUpdate(*msg);
-        return;
-    }
-
     // UEs provide heartbeat messages to on-net GNBs with their STI and simulated position.
     //   The gNB responds with a simulated RSRP value. The gNB also tracks the UE's address 
     //   and last seen time.
@@ -116,11 +107,11 @@ void RlsUdpTask::receiveRlsPdu(
     {
         auto &hb = static_cast<const rls::RlsHeartBeat &>(*msg);
         int dbm = computeDbm(hb.simPos);
-        if (dbm < MIN_ALLOWED_DBM)
-        {
-            // if the simulated signal strength is too low, then ignore this message
-            return;
-        }
+        // clamp the dbm values to allowed RSRP range
+        //  note - values below cons::RLF_RSRP are considered radio link failure.  
+        //      ACKs should still be sent. The UE will manage how to treat them.
+        dbm = std::max(dbm, cons::MIN_RSRP);
+        dbm = std::min(dbm, cons::MAX_RSRP);
 
         int ueId = 0;
         bool isNewUe = false;
@@ -302,80 +293,29 @@ void RlsUdpTask::send(int ueId, const rls::RlsMessage &msg)
 int RlsUdpTask::computeDbm(const GeoPosition &uePos)
 {
     auto *cfg = m_base->config;
-    auto rfLink = cfg->rfLink.toSatelliteLinkConfig();
 
     // if configured for "fixed" mode, just return the fixed RSRP value
     if (cfg->rfLink.updateMode == EGnbRsrpMode::Fixed)
         return m_base->fixedRsrp;
 
-    // if we are in NTN mode, use the satellite position to calculate the path loss.
+    // get current gnb position
+    GeoPosition gnbPos;
+    {
+        std::lock_guard<std::mutex> lock(m_base->gnbPositionMutex);
+        gnbPos = m_base->gnbPosition;
+    }
+
+    // if we are in NTN mode, use the satellite model to calculate the path loss.
     if (cfg->ntn.ntnEnabled)
     {
-        // pull the current TLE from the TLE store
-        int ownPci = cons::getPciFromNci(cfg->nci);
-        auto ownTle = m_base->satTleStore->find(ownPci);
-        if (ownTle.has_value())
-        {
-            try
-            {
-                // calculate the satellite position in ECEF coordinates using the SGP4 algorithm and the TLE
-                libsgp4::Tle tle(ownTle->line1, ownTle->line2);
-                libsgp4::SGP4 sgp4(tle);
-                libsgp4::Eci eci = sgp4.FindPosition(sat_time::Now());
-                libsgp4::CoordGeodetic geo = eci.ToGeodetic();
-                EcefPosition satEcef = GeoToEcef(GeoPosition{
-                    geo.latitude  * (180.0 / M_PI),
-                    geo.longitude * (180.0 / M_PI),
-                    geo.altitude  * 1000.0
-                });
-                // calculate the RSRP
-                return SatelliteSimulatedDbm(satEcef, uePos, rfLink);
-            }
-            catch (const std::exception &)
-            {
-                // propagation failed – fall through to terrestrial
-            }
-        }
-        // No TLE loaded yet or propagation failed – fall back to terrestrial
+        return SatelliteSimulatedDbm(gnbPos, uePos, cfg->rfLink);
     }
 
-
-    // Terrestrial mode (or satellite fallback)
+    // Terrestrial mode path loss
     return TerrestrialSimulatedDbm(
-        cfg->geoLocation, uePos, rfLink);
+        gnbPos, uePos, cfg->rfLink);
 }
 
 
-
-
-void RlsUdpTask::handleRsrpUpdate(
-    const rls::RlsMessage &msg)
-{
-    auto &rfData = static_cast<const rls::RlsGnbRfData &>(msg);
-    int clampedRsrp = std::max(cons::MIN_RSRP,
-                               std::min(rfData.rsrp, cons::MAX_RSRP));
-
-    if (clampedRsrp != rfData.rsrp)
-    {
-        m_logger->warn(
-            "Received GNB_RF_DATA rsrp=%d outside supported range, clamped to %d",
-            rfData.rsrp, clampedRsrp);
-    }
-
-    m_base->fixedRsrp = clampedRsrp;
-
-    if (m_base->config->rfLink.updateMode == EGnbRsrpMode::Fixed)
-    {
-        m_logger->debug(
-            "Updated fixed RSRP to %d dBm from GNB_RF_DATA",
-            m_base->fixedRsrp);
-    }
-    else
-    {
-        m_logger->debug(
-            "Stored GNB_RF_DATA rsrp=%d dBm but rfLink.updateMode=Calculated keeps path loss active",
-            m_base->fixedRsrp);
-    }
-}
 
 } // namespace nr::gnb

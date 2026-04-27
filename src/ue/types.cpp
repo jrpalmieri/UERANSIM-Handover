@@ -287,17 +287,6 @@ Json ToJson(const CellMeasurement &v)
     });
 }
 
-Json ToJson(const EMeasSourceType &v)
-{
-    switch (v)
-    {
-    case EMeasSourceType::NONE: return "none";
-    case EMeasSourceType::UDP:  return "udp";
-    case EMeasSourceType::UNIX_SOCK: return "unix";
-    case EMeasSourceType::FILE: return "file";
-    default: return "?";
-    }
-}
 
 bool ActiveCellInfo::hasValue() const
 {

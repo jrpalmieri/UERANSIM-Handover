@@ -52,9 +52,9 @@ gnbSearchList:
 # HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT.
 rls:
   LOOP_COUNTER: 200
-  RECEIVE_TIMEOUT: 300
-  TIMER_PERIOD_ACK_SEND: 300
-  TIMER_PERIOD_ACK_CONTROL: 500
+  RECEIVE_TIMEOUT: 500
+  TIMER_PERIOD_ACK_SEND: 1000
+  TIMER_PERIOD_ACK_CONTROL: 1500
 
 # UAC Access Identities Configuration
 uacAic:
@@ -104,32 +104,14 @@ ciphering:
 integrityMaxRate:
   uplink: 'full'
   downlink: 'full'
-  
-# Handover Simulation Configuration (optional)  
-# If enableHandoverSim is true, the UE will connect to a handover simulator server 
-#  to receive information associated with handover connection simulations (e.g., Rf measurements).
-# If enabled, the configs below are no longer optional; they must be provided for the simulation to
-#   operate correctly.
-enableHandoverSim: false
-
-# IP address of the handover simulator server to connect to for receiving 
-#   simulation information
-handoverServer:
-  ip: '127.0.0.1'
-  transport: 'UDP'
-  port: 7300
-
-# Measurement Source Configuration (optional)
-# If not specified, the UE will use its internal RLS-simulated measurements by default
-measSource:
-  # Type of measurement source: NONE, UDP, UNIX_SOCKET, or FILE
-  type: 'UDP'
-  # For UDP measurement source: specify the local port to listen on for measurement messages
-  udpPort: 7200
+ 
 
 # UE position - used in RSRP calculations and CHO distance-based conditions.
 # Specified in WGS-84 geographic coordinates (latitude, longitude, altitude).
 position:
+  # latitude: 40.000     # degrees North
+  # longitude: -75.000    # degrees East
+  # altitude: 0.0      # meters above WGS-84 ellipsoid
   latitude: 45.000     # degrees North
   longitude: 90.000    # degrees East
   altitude: 0.0      # meters above WGS-84 ellipsoid
@@ -174,7 +156,7 @@ ntn:
 
   # minimum elevation angle (degrees) for the satellite to be considered 
   #   "visible" to the UE - used for CHO conditions
-  elevationMinDeg: 20
+  elevationMinDeg: 30
 
   # controls how SIB19 is configured/sent
   # sib19:

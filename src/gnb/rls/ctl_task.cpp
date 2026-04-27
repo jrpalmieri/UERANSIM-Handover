@@ -17,6 +17,7 @@ static constexpr const int MAX_PDU_TTL = 3000;
 static constexpr const int TIMER_ID_ACK_CONTROL = 1;
 static constexpr const int TIMER_ID_ACK_SEND = 2;
 
+
 namespace nr::gnb
 {
 
@@ -85,6 +86,7 @@ void RlsControlTask::onLoop()
             setTimer(TIMER_ID_ACK_SEND, m_timerPeriodAckSend);
             onAckSendTimerExpired();
         }
+
         break;
     }
     default:
@@ -261,5 +263,7 @@ void RlsControlTask::onAckSendTimerExpired()
         m_udpTask->send(item.first, msg);
     }
 }
+
+
 
 } // namespace nr::gnb

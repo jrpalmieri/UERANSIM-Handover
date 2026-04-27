@@ -13,6 +13,9 @@
 #include <lib/rrc/encode.hpp>
 #include <utils/common.hpp>
 #include <utils/position_calcs.hpp>
+#include <lib/rrc/common/sat_calc.hpp>
+#include <gnb/sat_tle_store.hpp>
+#include <utils/sat_time.hpp>
 
 #include <asn/rrc/ASN_RRC_DLInformationTransfer-IEs.h>
 #include <asn/rrc/ASN_RRC_DLInformationTransfer.h>
@@ -24,6 +27,10 @@ static constexpr const int TIMER_PERIOD_SI_BROADCAST = 10'000;
 static constexpr const int TIMER_ID_SIB19_BROADCAST = 2;
 static constexpr const int TIMER_ID_SAT_CACHE_CALC = 3;
 static constexpr const int TIMER_PERIOD_SAT_CACHE_CALC = 15'000;
+
+static constexpr const int TIMER_ID_UPDATE_LOC = 4;
+static constexpr const int TIMER_PERIOD_UPDATE_LOC = 1000;  //ms
+
 
 namespace nr::gnb
 {
@@ -38,9 +45,9 @@ void GnbRrcTask::onStart()
 {
     setTimer(TIMER_ID_SI_BROADCAST, TIMER_PERIOD_SI_BROADCAST);
 
-    auto gnbPosition = m_base->getGnbPosition();
-    if (gnbPosition.isValid)
-        setTrueGeoPosition(gnbPosition);
+    //auto gnbPosition = m_base->getGnbPosition();
+    // if (gnbPosition.isValid)
+    //     setTrueGeoPosition(gnbPosition);
 
     if (m_config->ntn.ownTle.has_value())
     {
@@ -48,12 +55,29 @@ void GnbRrcTask::onStart()
         m_logger->info("Loaded own TLE from config (pci=%d)", m_config->ntn.ownTle->pci);
     }
 
-    if (m_config->ntn.ntnEnabled && m_config->ntn.sib19.sib19On)
-    {
-        setTimer(TIMER_ID_SIB19_BROADCAST, m_config->ntn.sib19.sib19TimingMs);
+    if (m_config->ntn.ntnEnabled) {
+
+        m_logger->info("NTN enabled: recalculating location from TLE and satTime");
+        onUpdateLocationTimerExpired();
+        auto gnbGeo = m_base->getGnbPosition();
+        m_logger->info("NTN enabled: initial gNB location set to lat=%.6f, lon=%.6f, alt=%.1f",
+             gnbGeo.latitude, gnbGeo.longitude, gnbGeo.altitude);
+
+        m_logger->info("NTN enabled: starting timers for location update (%dms) and satellite cache calculation (%dms)",
+             TIMER_PERIOD_UPDATE_LOC, TIMER_PERIOD_SAT_CACHE_CALC);
+
+        setTimer(TIMER_ID_UPDATE_LOC, TIMER_PERIOD_UPDATE_LOC);
         setTimer(TIMER_ID_SAT_CACHE_CALC, TIMER_PERIOD_SAT_CACHE_CALC);
+
+        if (m_config->ntn.sib19.sib19On)
+        {
+            m_logger->info("NTN enabled: SIB19 enabled with timing %dms", m_config->ntn.sib19.sib19TimingMs);
+            setTimer(TIMER_ID_SIB19_BROADCAST, m_config->ntn.sib19.sib19TimingMs);
+        }
     }
 }
+
+
 
 void GnbRrcTask::onQuit()
 {
@@ -150,6 +174,11 @@ void GnbRrcTask::onLoop()
             setTimer(TIMER_ID_SAT_CACHE_CALC, TIMER_PERIOD_SAT_CACHE_CALC);
             roughNeighborhoodSats();
         }
+        else if (w.timerId == TIMER_ID_UPDATE_LOC)
+        {
+            setTimer(TIMER_ID_UPDATE_LOC, TIMER_PERIOD_UPDATE_LOC);
+            onUpdateLocationTimerExpired();
+        }
         break;
     }
     default:
@@ -158,49 +187,49 @@ void GnbRrcTask::onLoop()
     }
 }
 
-void GnbRrcTask::setTruePositionVelocity(const PositionVelocity &value)
-{
-    m_truePositionVelocity = value;
+// void GnbRrcTask::setTruePositionVelocity(const PositionVelocity &value)
+// {
+//     m_truePositionVelocity = value;
 
-    if (!value.isValid)
-        return;
+//     if (!value.isValid)
+//         return;
 
-    auto geo = EcefToGeo(EcefPosition{value.x, value.y, value.z});
-    geo.isValid = true;
-    m_base->setGnbPosition(geo);
-}
+//     auto geo = EcefToGeo(EcefPosition{value.x, value.y, value.z});
+//     geo.isValid = true;
+//     m_base->setGnbPosition(geo);
+// }
 
-void GnbRrcTask::setTrueGeoPosition(const GeoPosition &value)
-{
-    if (!std::isfinite(value.latitude) || !std::isfinite(value.longitude) || !std::isfinite(value.altitude))
-        return;
-    if (value.latitude < -90.0 || value.latitude > 90.0)
-        return;
-    if (value.longitude < -180.0 || value.longitude > 180.0)
-        return;
+// void GnbRrcTask::setTrueGeoPosition(const GeoPosition &value)
+// {
+//     if (!std::isfinite(value.latitude) || !std::isfinite(value.longitude) || !std::isfinite(value.altitude))
+//         return;
+//     if (value.latitude < -90.0 || value.latitude > 90.0)
+//         return;
+//     if (value.longitude < -180.0 || value.longitude > 180.0)
+//         return;
 
-    GeoPosition normalized = value;
-    normalized.isValid = true;
-    m_base->setGnbPosition(normalized);
+//     GeoPosition normalized = value;
+//     normalized.isValid = true;
+//     m_base->setGnbPosition(normalized);
 
-    EcefPosition ecef = GeoToEcef(normalized);
+//     EcefPosition ecef = GeoToEcef(normalized);
 
-    PositionVelocity pv{};
-    pv.isValid = true;
-    pv.x = ecef.x;
-    pv.y = ecef.y;
-    pv.z = ecef.z;
-    pv.vx = 0.0;
-    pv.vy = 0.0;
-    pv.vz = 0.0;
-    pv.epochMs = static_cast<int64_t>(utils::CurrentTimeMillis());
-    m_truePositionVelocity = pv;
-}
+//     PositionVelocity pv{};
+//     pv.isValid = true;
+//     pv.x = ecef.x;
+//     pv.y = ecef.y;
+//     pv.z = ecef.z;
+//     pv.vx = 0.0;
+//     pv.vy = 0.0;
+//     pv.vz = 0.0;
+//     pv.epochMs = static_cast<int64_t>(utils::CurrentTimeMillis());
+//     m_truePositionVelocity = pv;
+// }
 
-PositionVelocity GnbRrcTask::getTruePositionVelocity() const
-{
-    return m_truePositionVelocity;
-}
+// PositionVelocity GnbRrcTask::getTruePositionVelocity() const
+// {
+//     return m_truePositionVelocity;
+// }
 
 GeoPosition GnbRrcTask::getTrueGeoPosition() const
 {
@@ -210,6 +239,42 @@ GeoPosition GnbRrcTask::getTrueGeoPosition() const
 void GnbRrcTask::upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value)
 {
     m_satellitePvByPci[value.pci] = value;
+}
+
+void GnbRrcTask::onUpdateLocationTimerExpired()
+{
+
+    m_logger->debug("Update Location Timer Expired - Updating gNB location by propagating TLE to current time");
+
+    if (!m_config->ntn.ntnEnabled)
+    {
+        m_logger->warn("NTN disabled; cannot update location");
+        return;
+    }
+
+    // pull the current TLE from the TLE store
+    int ownPci = cons::getPciFromNci(m_config->nci);
+    auto ownTle = m_base->satTleStore->find(ownPci);
+    if (!ownTle.has_value()){
+        m_logger->warn("Own TLE not found for PCI %d; cannot update location", ownPci);
+        return;
+    }
+
+    GeoPosition gnbGeo;
+    auto satNow = m_base->satTime->CurrentSatTimeMillis();
+    libsgp4::DateTime now = nr::rrc::common::UnixMillisToDateTime(satNow);
+    
+    // get the current geodetic coordinates of the gNB by propagating its TLE to the current time
+    if (!nr::rrc::common::PropagateTleToGeo(ownTle->line1, ownTle->line2, now, gnbGeo))
+    {
+        m_logger->warn("Failed to propagate own TLE to geodetic coordinates; cannot update location");
+        return;
+    }
+
+    // write location update to global state
+    m_base->setGnbPosition(gnbGeo, satNow);
+    m_logger->info("Updated gNB location (satTime=%llu): lat=%.6f, lon=%.6f, alt=%.1f", satNow, gnbGeo.latitude, gnbGeo.longitude, gnbGeo.altitude);   
+
 }
 
 } // namespace nr::gnb

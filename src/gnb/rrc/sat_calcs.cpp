@@ -15,6 +15,7 @@
 #include <utils/common.hpp>
 #include <utils/common_types.hpp>
 #include <utils/position_calcs.hpp>
+#include <utils/sat_time.hpp>
 
 namespace nr::gnb
 {
@@ -77,7 +78,9 @@ void GnbRrcTask::roughNeighborhoodSats()
     }
 
     // Snapshot current time once so all propagations are coherent.
-    libsgp4::DateTime now = sat_time::Now();
+    //libsgp4::DateTime now = sat_time::Now();
+    const int64_t satNowMs = m_base->satTime->CurrentSatTimeMillis();
+    const libsgp4::DateTime now = nr::rrc::common::UnixMillisToDateTime(satNowMs);
 
     // Propagate own TLE → gNB ECEF position + nadir
     nr::rrc::common::SatEcefState gnbState{};

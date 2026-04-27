@@ -92,6 +92,7 @@ void UeRlsTask::onLoop()
         case NmUeRlsToRls::RADIO_LINK_FAILURE: {
             auto m = std::make_unique<NmUeRlsToRrc>(NmUeRlsToRrc::RADIO_LINK_FAILURE);
             m->rlfCause = w.rlfCause;
+            m->cellId = w.cellId;
             m_base->rrcTask->push(std::move(m));
             break;
         }

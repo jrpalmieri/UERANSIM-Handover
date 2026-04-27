@@ -34,7 +34,7 @@ EcefPosition GeoToEcef(const GeoPosition &geo)
     double x = (n + geo.altitude) * cosLat * cosLon;
     double y = (n + geo.altitude) * cosLat * sinLon;
     double z = (n * (1.0 - WGS84_E2) + geo.altitude) * sinLat;
-    return {x, y, z};
+    return {x, y, z, geo.timestampMs};
 }
 
 GeoPosition EcefToGeo(const EcefPosition &ecef)
@@ -50,7 +50,7 @@ GeoPosition EcefToGeo(const EcefPosition &ecef)
     {
         double latPole = z >= 0.0 ? (M_PI / 2.0) : (-M_PI / 2.0);
         double altPole = std::fabs(z) - WGS84_B;
-        return {latPole * RAD2DEG, lon * RAD2DEG, altPole};
+        return {latPole * RAD2DEG, lon * RAD2DEG, altPole, ecef.timestampMs};
     }
 
     double theta = std::atan2(z * WGS84_A, p * WGS84_B);
@@ -71,7 +71,7 @@ GeoPosition EcefToGeo(const EcefPosition &ecef)
     double n = WGS84_A / std::sqrt(1.0 - WGS84_E2 * sinLat * sinLat);
     double alt = p / std::cos(lat) - n;
 
-    return {lat * RAD2DEG, lon * RAD2DEG, alt};
+    return {lat * RAD2DEG, lon * RAD2DEG, alt, ecef.timestampMs};
 }
 
 double EcefDistance(const EcefPosition &a, const EcefPosition &b)
@@ -149,6 +149,7 @@ EcefPosition ExtrapolateEcefPosition(const EcefPosition &position,
     out.x = position.x + velocity.x * dtSec;
     out.y = position.y + velocity.y * dtSec;
     out.z = position.z + velocity.z * dtSec;
+    out.timestampMs = position.timestampMs + int64_t(dtSec*1000);
     return out;
 }
 

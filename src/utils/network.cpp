@@ -93,6 +93,11 @@ int InetAddress::getIpVersion() const
     return 0;
 }
 
+std::string InetAddress::getIpAddrString() const
+{
+    return std::string{reinterpret_cast<const char *>(&storage), static_cast<size_t>(len)};
+}
+
 InetAddress::InetAddress(const OctetString &address, uint16_t port) : InetAddress(OctetStringToIpString(address), port)
 {
 }

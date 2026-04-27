@@ -69,9 +69,10 @@ class RlsUdpTask : public NtsTask
   private:
     void sendRlsPdu(const InetAddress &addr, const rls::RlsMessage &msg);
     void receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::RlsMessage> &&msg);
-    void onSignalChangeOrLost(int cellId);
+    //void onSignalChangeOrLost(int cellId);
     void heartbeatCycle(uint64_t time);
     void updateMeasurements(const int dbm, const int cellId);
+    void onHeartbeatFailure(int cellId);
 
   public:
     void initialize(NtsTask *ctlTask);

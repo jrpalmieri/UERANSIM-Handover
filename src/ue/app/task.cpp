@@ -56,6 +56,7 @@ void UeAppTask::onLoop()
         switch (w.present)
         {
         case NmUeTunToApp::DATA_PDU_DELIVERY: {
+            m_logger->debug("Received uplink data from TUN for PDU Session %d, size=%zu", w.psi, w.data.length());
             auto m = std::make_unique<NmUeAppToNas>(NmUeAppToNas::UPLINK_DATA_DELIVERY);
             m->psi = w.psi;
             m->data = std::move(w.data);
@@ -81,6 +82,7 @@ void UeAppTask::onLoop()
             auto *tunTask = m_tunTasks[w.psi];
             if (tunTask)
             {
+                m_logger->debug("Received downlink data from NAS for PDU Session %d, size=%zu", w.psi, w.data.length());
                 auto m = std::make_unique<NmAppToTun>(NmAppToTun::DATA_PDU_DELIVERY);
                 m->psi = w.psi;
                 m->data = std::move(w.data);

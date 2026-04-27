@@ -28,8 +28,6 @@
 #include <asn/rrc/ASN_RRC_UL-DCCH-Message.h>
 #include <asn/rrc/ASN_RRC_UL-DCCH-MessageType.h>
 
-#include <ue/meas/meas_provider.hpp>
-
 const int MIN_RSRP = cons::MIN_RSRP; // minimum RSRP value (in dBm) to use when no measurement is available
 const int MAX_RSRP = cons::MAX_RSRP; // maximum RSRP value (in dBm) to use when no measurement is available
 
@@ -134,6 +132,8 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
         now = utils::CurrentTimeMillis();
     }
 
+    now = now / 1000; // convert to seconds
+
     m_logger->debug("evaluateMeasurements: servingCell=%d servingRsrp=%d dBm, allMeas.size=%zu sat-time=%lld",
          servingCellId, servingRsrp, allMeas.size(), now);
 
@@ -226,9 +226,9 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
         }
         case nr::rrc::common::HandoverEventType::CondT1:
         {
-            eventSatisfied = rc.evaluateCondT1(now / 1000); // convert ms to sec for this check
+            eventSatisfied = rc.evaluateCondT1(now);
             m_logger->debug("[MeasId=%d] Evaluating CondT1: now_time=%llds, threshold=%llds, satisfied=%s",
-                            measId, now / 1000, rc.condT1_thresholdSecTS, eventSatisfied ? "true" : "false");
+                            measId, now, rc.condT1_thresholdSecTS, eventSatisfied ? "true" : "false");
             break;
         }
         case nr::rrc::common::HandoverEventType::CondA3:
@@ -291,6 +291,10 @@ void UeRrcTask::measurementReporting(int servingCellId, int servingRsrp)
     {
         // current state of this MeasId
         auto &state = m_measConfig.measIdStates[measId];
+
+        if (!state.isReportable)
+            continue; // skip non-reportable MeasIds (e.g. conditional events)
+
         // ptr to the report config for this MeasId
         auto rc = m_measConfig.reportConfigs[mid.reportConfigId];
 
@@ -454,9 +458,10 @@ void UeRrcTask::applyMeasConfig(const UeMeasConfig &cfg)
                    cfg.measObjectsToRemove.size(), cfg.reportConfigsToRemove.size(), cfg.measIdsToRemove.size(),
                    cfg.measObjects.size(), cfg.reportConfigs.size(), cfg.measIds.size());
 
-    // 3GPP delta signaling remove lists.
+    // 3GPP delta signaling removals
     for (int measId : cfg.measIdsToRemove)
     {
+        // remove MeasIds and their state. Track which ones were actually removed for logging.
         if (m_measConfig.measIds.erase(measId) > 0)
             removedMeasIds.push_back(measId);
         m_measConfig.measIdStates.erase(measId);
@@ -464,17 +469,20 @@ void UeRrcTask::applyMeasConfig(const UeMeasConfig &cfg)
 
     for (int reportConfigId : cfg.reportConfigsToRemove)
     {
+        // remove ReportConfigs. Track which ones were actually removed for logging.
         if (m_measConfig.reportConfigs.erase(reportConfigId) > 0)
             removedReportConfigs.push_back(reportConfigId);
     }
 
     for (int measObjectId : cfg.measObjectsToRemove)
     {
+        // remove MeasObjects. Track which ones were actually removed for logging.
         if (m_measConfig.measObjects.erase(measObjectId) > 0)
             removedMeasObjects.push_back(measObjectId);
     }
 
-    // Drop measIds that reference removed/non-existent objects or reports.
+    // Check remaining measIds to see if any reference removed/non-existent objects or reports.
+    //   if so, drop those too
     for (auto it = m_measConfig.measIds.begin(); it != m_measConfig.measIds.end();)
     {
         const auto &mid = it->second;
@@ -492,6 +500,10 @@ void UeRrcTask::applyMeasConfig(const UeMeasConfig &cfg)
             ++it;
         }
     }
+
+    m_logger->info("MeasConfig delta applied: removed objects=[%s] reports=[%s] measIds=[%s] danglingMeasIds=[%s]",
+                formatIdList(removedMeasObjects).c_str(), formatIdList(removedReportConfigs).c_str(),
+                formatIdList(removedMeasIds).c_str(), formatIdList(removedDanglingMeasIds).c_str());
 
     // Merge incoming config into current config
     for (auto &[id, obj] : cfg.measObjects)
@@ -523,11 +535,20 @@ void UeRrcTask::applyMeasConfig(const UeMeasConfig &cfg)
         m_measConfig.measIds[id] = mid;
         // Reset state for new/updated measIds
         m_measConfig.measIdStates[id] = {};
+        // set isReported based on report config type (e.g. conditional events are not reportable)
+        if (m_measConfig.reportConfigs.count(mid.reportConfigId) > 0)
+        {
+            auto &rc = m_measConfig.reportConfigs[mid.reportConfigId];
+            m_measConfig.measIdStates[id].isReportable = (rc.eventKind != nr::rrc::common::HandoverEventType::CondD1 &&
+                                                          rc.eventKind != nr::rrc::common::HandoverEventType::CondT1 &&
+                                                          rc.eventKind != nr::rrc::common::HandoverEventType::CondA3);
+        }
+        else
+        {
+            m_measConfig.measIdStates[id].isReportable = false;
+        }
     }
 
-    m_logger->info("MeasConfig delta applied: removed objects=[%s] reports=[%s] measIds=[%s] danglingMeasIds=[%s]",
-                   formatIdList(removedMeasObjects).c_str(), formatIdList(removedReportConfigs).c_str(),
-                   formatIdList(removedMeasIds).c_str(), formatIdList(removedDanglingMeasIds).c_str());
     m_logger->info("MeasConfig delta applied: added objects=[%s] modified objects=[%s] added reports=[%s] "
                    "modified reports=[%s]",
                    formatIdList(addedMeasObjects).c_str(), formatIdList(modifiedMeasObjects).c_str(),

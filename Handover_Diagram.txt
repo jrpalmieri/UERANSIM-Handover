@@ -1,0 +1,42 @@
+
+Classic Handover Procedure
+(mediated through AMF)
+
+UE                         Source gNB                          AMF                  Target gNB
+ |                              |                               |                       |
+ | <-- RRC Reconfiguration ---  |                               |                       |
+ |       (meas config)          |                               |                       |
+ |                              |                               |                       |
+ |                              |                               |                       |
+ |     (trigger event)          |                               |                       |
+ |                              |                               |                       |
+ |                              |                               |                       |
+ | --Measurement Report-------> |                               |                       |
+ |                              |                               |                       |
+ |                       (handover decision)                    |                       |
+ |                              |                               |                       |
+ |                              |-- Handover Required --------> |                       |
+ |                              |                               |                       |
+ |                              |                               |                       |
+ |                              |                               | --Handover Request--> |
+ |                              |                               |                       |
+ |                              |                               | <-- Handover Ack----- |
+ |                              |                               |                       |
+ |                              |  <--RRC Handover Command----- |                       |
+ |                              |                               |                       |
+ |  <--RRC Reconfiguration --   |                               |                       |
+ |    (Reconfig with Sync)      |                               |                       |   
+ |                              |                               |                       |   
+ |                              |                               |                       |   
+ |  -------  RRC Reconfiguration Complete  -------------------------------------------> |        
+ |                              |                               |                       |
+ |                              |                               |                       |  
+ |                              |                               |  <--Handover Notify-- |
+ |                              |                               |                       |
+ |                              |                               |                       |
+ |                              | <---- UE Context Release----- |                       |
+ |                              |                               |                       |
+
+
+
+

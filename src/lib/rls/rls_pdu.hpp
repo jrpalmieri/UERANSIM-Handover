@@ -31,10 +31,6 @@ enum class EMessageType : uint8_t
     HEARTBEAT_ACK = 5,
     PDU_TRANSMISSION = 6,
     PDU_TRANSMISSION_ACK = 7,
-    GNB_RF_DATA = 21,   // added for advanced measurement framework
-                        //   with external measurement sources;
-                        //   not used in legacy RLS-simulated measurements
-    SATELLITE_POSITION_UPDATE = 22,  // TLE-based satellite position
 };
 
 enum class EPduType : uint8_t
@@ -100,31 +96,6 @@ struct RlsPduTransmissionAck : RlsMessage
     }
 };
 
-struct RlsGnbRfData : RlsMessage
-{
-    int rsrp{0};
-
-    explicit RlsGnbRfData(uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
-        : RlsMessage(EMessageType::GNB_RF_DATA, sti, senderId, senderId2)
-    {
-    }
-};
-
-/// Satellite position update conveying a TLE and epoch timestamp
-struct RlsSatellitePositionUpdate : RlsMessage
-{
-    std::string tleLine1{};
-    std::string tleLine2{};
-    int64_t epochMs{};  // Unix epoch millis of the TLE observation
-
-    explicit RlsSatellitePositionUpdate(
-          uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
-        : RlsMessage(
-              EMessageType::SATELLITE_POSITION_UPDATE,
-              sti, senderId, senderId2)
-    {
-    }
-};
 
 void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream);
 std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream);

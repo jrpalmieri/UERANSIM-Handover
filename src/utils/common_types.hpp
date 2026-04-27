@@ -191,12 +191,17 @@ struct GeoPosition
     double latitude{};   // degrees, WGS-84
     double longitude{};  // degrees, WGS-84
     double altitude{};   // meters above ellipsoid
+    int64_t timestampMs{}; // timestamp of the position, in unix milliseconds
     bool isValid{false}; // whether the position is valid (e.g., obtained from measurement)
 
     GeoPosition() = default;
 
     GeoPosition(double lat, double lon, double alt)
-        : latitude(lat), longitude(lon), altitude(alt)
+        : latitude(lat), longitude(lon), altitude(alt), timestampMs(0), isValid(true)
+    {
+    }
+    GeoPosition(double lat, double lon, double alt, int64_t timestampMs)
+        : latitude(lat), longitude(lon), altitude(alt), timestampMs(timestampMs), isValid(true)
     {
     }
 };
@@ -212,11 +217,16 @@ struct EcefPosition
     double x{};
     double y{};
     double z{};
+    int64_t timestampMs{};
 
     EcefPosition() = default;
 
     EcefPosition(double x, double y, double z)
         : x(x), y(y), z(z)
+    {
+    }
+    EcefPosition(double x, double y, double z, int64_t timestampMs)
+        : x(x), y(y), z(z), timestampMs(timestampMs)
     {
     }
     EcefPosition(const GeoPosition &geo) : EcefPosition(GeoToEcef(geo))

@@ -12,10 +12,56 @@
 namespace nr::rrc::common
 {
 
+
+int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
+{
+    const libsgp4::DateTime unixEpoch(1970, 1, 1, 0, 0, 0);
+    auto delta = dateTime - unixEpoch;
+    return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
+}
+
+libsgp4::DateTime UnixMillisToDateTime(int64_t unixMillis)
+{
+    // Note libsgp4 does unix epoch conversion internally, but require microseconds as the input value
+    return libsgp4::DateTime(unixMillis * 1000);
+}
+
+/**
+ * @brief Propagates TLE data to ECEF coordinates based on provided time
+ * 
+ * @param line1 TLE line 1
+ * @param line2 TLE line 2
+ * @param dt Time to propagate to
+ * @param out Output ECEF position
+ * @return true if successful, false otherwise
+ */
 bool PropagateTleToEcef(const std::string &line1,
                         const std::string &line2,
                         const libsgp4::DateTime &dt,
                         SatEcefState &out)
+{
+    GeoPosition geo{};
+    if (!PropagateTleToGeo(line1, line2, dt, geo))
+        return false;
+
+    out.pos = GeoToEcef(geo);
+    out.nadir = ComputeNadir(out.pos);
+    return true;
+}
+
+/**
+ * @brief Propagates TLE data to geodetic coordinates based on provided time
+ * 
+ * @param line1 TLE line 1
+ * @param line2 TLE line 2
+ * @param dt Time to propagate to
+ * @param out Output geodetic position
+ * @return true if successful, false otherwise
+ */
+bool PropagateTleToGeo(const std::string &line1,
+                        const std::string &line2,
+                        const libsgp4::DateTime &dt,
+                        GeoPosition &out)
 {
     try
     {
@@ -28,8 +74,7 @@ bool PropagateTleToEcef(const std::string &line1,
         const double lonDeg = geo.longitude * (180.0 / M_PI);
         const double altM = geo.altitude * 1000.0;
 
-        out.pos = GeoToEcef(GeoPosition{latDeg, lonDeg, altM});
-        out.nadir = ComputeNadir(out.pos);
+        out = GeoPosition{latDeg, lonDeg, altM};
         return true;
     }
     catch (...)

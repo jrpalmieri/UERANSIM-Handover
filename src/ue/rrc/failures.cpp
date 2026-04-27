@@ -15,16 +15,22 @@
 namespace nr::ue
 {
 
-void UeRrcTask::declareRadioLinkFailure(rls::ERlfCause cause)
-{
-    handleRadioLinkFailure(cause);
-}
+    // moved to cells.cpp since it is more related to cell management
+// void UeRrcTask::declareRadioLinkFailure(rls::ERlfCause cause)
+// {
+//     handleRadioLinkFailure(cause);
+// }
 
-void UeRrcTask::handleRadioLinkFailure(rls::ERlfCause cause)
-{
-    cancelAllChoCandidates();
-    m_state = ERrcState::RRC_IDLE;
-    m_base->nasTask->push(std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::RADIO_LINK_FAILURE));
-}
+// void UeRrcTask::handleRadioLinkFailure(rls::ERlfCause cause)
+// {
+
+//     cancelAllChoCandidates();
+//     m_state = ERrcState::RRC_IDLE;
+
+//     m_logger->info("Radio Link Failure detected, cause: {%s}", rls::RlfCauseToString(cause).c_str());
+//     m_logger->info("Radio link state changed to RRC_IDLE");
+
+//     m_base->nasTask->push(std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::RADIO_LINK_FAILURE));
+//}
 
 } // namespace nr::ue

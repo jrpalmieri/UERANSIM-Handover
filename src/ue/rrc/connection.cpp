@@ -80,7 +80,7 @@ void UeRrcTask::startConnectionEstablishment(OctetString &&nasPdu)
     m_initialNasPdu = std::move(nasPdu);
 
     /* Send the message */
-    m_logger->debug("Sending RRC Setup Request");
+    m_logger->debug("Sending RRC Setup Request to cellId=%d", activeCell);
 
     auto *rrcSetupRequest =
         ConstructSetupRequest(m_initialId, static_cast<ASN_RRC_EstablishmentCause_t>(m_establishmentCause));
@@ -128,7 +128,7 @@ void UeRrcTask::receiveRrcSetup(int cellId, const ASN_RRC_RRCSetup &msg)
     sendRrcMessage(pdu);
     asn::Free(asn_DEF_ASN_RRC_UL_DCCH_Message, pdu);
 
-    m_logger->info("RRC connection established");
+    m_logger->info("RRC connection established to cellId=%d", cellId);
     switchState(ERrcState::RRC_CONNECTED);
     m_base->nasTask->push(std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::RRC_CONNECTION_SETUP));
 }
@@ -138,14 +138,15 @@ void UeRrcTask::receiveRrcReject(int cellId, const ASN_RRC_RRCReject &msg)
     if (!isActiveCell(cellId))
         return;
 
-    m_logger->err("RRC Reject received");
+    m_logger->err("RRC Reject received for cellId=%d", cellId);
 
     handleEstablishmentFailure();
 }
 
 void UeRrcTask::receiveRrcRelease(const ASN_RRC_RRCRelease &msg)
 {
-    m_logger->debug("RRC Release received");
+    int activeCell = m_base->shCtx.currentCell.get<int>([](auto &item) { return item.cellId; });
+    m_logger->debug("RRC Release received for cellId=%d", activeCell);
     cancelAllChoCandidates();
     m_state = ERrcState::RRC_IDLE;
     m_base->nasTask->push(std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::RRC_CONNECTION_RELEASE));

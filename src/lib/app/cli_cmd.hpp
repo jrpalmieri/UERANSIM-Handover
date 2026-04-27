@@ -28,12 +28,14 @@ struct SatTimeCliControl
         TickScale,
         StartEpoch,
         PauseAtWallclock,
+        RunAtWallclock,
     };
 
     EAction action{EAction::Status};
     double tickScale{};
     std::string startEpoch{};
     int64_t pauseAtWallclock{};
+    int64_t runAtWallclock{};
 };
 
 struct GnbCliCommand

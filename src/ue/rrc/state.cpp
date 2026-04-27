@@ -32,7 +32,7 @@ void UeRrcTask::triggerCycle()
  * - Evaluating CHO candidates and triggering CHO if needed
  * - Performing cell selection if in IDLE or INACTIVE state
  * 
- * This is called periodically by a timer, and also triggered by certain events such as cell signal change.
+ * This is called periodically by a timer, and also triggered by certain events.
  */
 void UeRrcTask::performCycle()
 {

@@ -1,3 +1,9 @@
+-- ASN1START
+-- TAG-SIB19-START
+ASN-RRC-SIB19-r17 DEFINITIONS AUTOMATIC TAGS ::=
+
+BEGIN
+
 SIB19-r17 ::= SEQUENCE {
     ntn-Config-r17                           NTN-Config-r17                                  OPTIONAL,       -- Need R
     t-Service-r17                            INTEGER (0..549755813887)                       OPTIONAL,       -- Need R
@@ -19,6 +25,8 @@ NTN-NeighCellConfig-r17 ::=              SEQUENCE {
     physCellId-r17                           PhysCellId                                      OPTIONAL        -- Need R
 }
 
+ARFCN-ValueNR ::=               INTEGER (0..maxNARFCN)
+PhysCellId ::=                      INTEGER (0..1007)
 
 NTN-Config-r17 ::=             SEQUENCE {
     epochTime-r17                  EpochTime-r17                                                            OPTIONAL,  -- Need R
@@ -45,13 +53,39 @@ TA-Info-r17 ::=                 SEQUENCE  {
     ta-CommonDriftVariant-r17      INTEGER(0..28949)                                                        OPTIONAL   -- Need R
 }
 
-ReferenceLocation := Ellipsoid-Point
-
-Ellipsoid-Point ::= SEQUENCE {
-    latitudeSign        ENUMERATED {north, south}, -- 1 bit
-    degreesLatitude     INTEGER (0..8388607),-- 23 bit field
-    degreesLongitude    INTEGER (-8388608..8388607)-- 24 bit field
+EphemerisInfo-r17 ::=          CHOICE {
+    positionVelocity-r17           PositionVelocity-r17,
+    orbital-r17                    Orbital-r17
 }
+
+PositionVelocity-r17 ::=       SEQUENCE {
+    positionX-r17                  PositionStateVector-r17,
+    positionY-r17                  PositionStateVector-r17,
+    positionZ-r17                  PositionStateVector-r17,
+    velocityVX-r17                 VelocityStateVector-r17,
+    velocityVY-r17                 VelocityStateVector-r17,
+    velocityVZ-r17                 VelocityStateVector-r17
+}
+
+Orbital-r17 ::=                SEQUENCE {
+    semiMajorAxis-r17              INTEGER (0..8589934591),
+    eccentricity-r17               INTEGER (0..1048575),
+    periapsis-r17                  INTEGER (0..268435455),
+    longitude-r17                  INTEGER (0..268435455),
+    inclination-r17                INTEGER (-67108864..67108863),
+    meanAnomaly-r17                INTEGER (0..268435455)
+}
+
+PositionStateVector-r17 ::= INTEGER (-33554432..33554431)
+
+VelocityStateVector-r17 ::= INTEGER (-131072..131071)
+
+ReferenceLocation-r17 ::= OCTET STRING
+
+END
+
+-- TAG-SIB19-STOP
+-- ASN1STOP
 
 
 SIB19 field descriptions

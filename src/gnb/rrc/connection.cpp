@@ -47,13 +47,13 @@ void GnbRrcTask::receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest 
     if (ue)
     {
         // TODO: handle this more properly
-        m_logger->err("UE[%d] Discarding RRC Setup Request, UE context already exists", ueId);
+        m_logger->err("UE[%d] RRC SetupRequest received. UE context already exists.  Discarding.", ueId);
         return;
     }
 
     if (msg.rrcSetupRequest.ue_Identity.present == ASN_RRC_InitialUE_Identity_PR_NOTHING)
     {
-        m_logger->err("UE[%d] Bad constructed RRC message ignored", ueId);
+        m_logger->err("UE[%d] RRC SetupRequest received. Identity not present. Discarding.", ueId);
         return;
     }
 
@@ -62,12 +62,13 @@ void GnbRrcTask::receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest 
     ue = createUe(ueId, newCrnti);
     if (!ue)
     {
-        m_logger->err("UE[%d] Failed to create UE context", ueId);
+        m_logger->err("UE[%d] RRC SetupRequest received. Failed to create UE RRC context. Discarding.", ueId);
         return;
     }
+
     ue->ueId = ueId;
     ue->rrcState = UE_RRC_CONNECTION_STATE::RRC_CONNECTION_PENDING;
-    m_logger->info("UE[%d] RRC Context Created, cRNTI=%d", ueId, newCrnti);
+    m_logger->info("UE[%d] RRC SetupRequest received. UE context created, cRNTI=%d", ueId, newCrnti);
 
 
     if (msg.rrcSetupRequest.ue_Identity.present == ASN_RRC_InitialUE_Identity_PR_ng_5G_S_TMSI_Part1)
@@ -115,11 +116,11 @@ void GnbRrcTask::receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplet
 
     if (!ue)
     {
-        m_logger->err("UE[%d] context not found for RRC Setup Complete", ueId);
+        m_logger->err("UE[%d] RRC Setup Complete received. UE context not found.", ueId);
         return;
     }
 
-    m_logger->debug("UE[%d] received RRC Setup Complete, cRnti=%d", ue->ueId, ue->cRnti);
+    m_logger->debug("UE[%d] RRC Setup Complete received, cRnti=%d", ue->ueId, ue->cRnti);
 
     ue->rrcState = UE_RRC_CONNECTION_STATE::RRC_CONNECTED;
     
@@ -154,6 +155,8 @@ void GnbRrcTask::receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplet
     w->pdu = asn::GetOctetString(setupComplete->dedicatedNAS_Message);
     w->rrcEstablishmentCause = ue->establishmentCause;
     w->sTmsi = ue->sTmsi;
+
+    m_logger->debug("UE[%d] sending Initial NAS Delivery to NGAP task, cRNTI=%d, sTmsi=%d", ueId, ue->cRnti, ue->sTmsi.has_value() ? static_cast<int>(ue->sTmsi->tmsi) : -1);
 
     m_base->ngapTask->push(std::move(w));
 

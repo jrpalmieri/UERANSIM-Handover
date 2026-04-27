@@ -29,6 +29,7 @@
 #include <utils/options.hpp>
 #include <utils/yaml_utils.hpp>
 #include <yaml-cpp/yaml.h>
+#include <lib/rrc/common/sat_calc.hpp>
 
 static app::CliServer *g_cliServer = nullptr;
 static nr::gnb::GnbConfig *g_refConfig = nullptr;
@@ -71,12 +72,8 @@ static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch, cons
     return libsgp4::DateTime(static_cast<unsigned int>(fullYear), dayOfYear);
 }
 
-static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
-{
-    const libsgp4::DateTime unixEpoch(1970, 1, 1, 0, 0, 0);
-    auto delta = dateTime - unixEpoch;
-    return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
-}
+
+
 
 static std::string ResolveGnbNodeNameTemplateToken(const std::string &token, const nr::gnb::GnbConfig &config)
 {
@@ -191,19 +188,19 @@ static std::string ReadHandoverEventType(const YAML::Node &node)
         "Field handover.events[].eventType has invalid value, expected A2, A3, A5, D1, condA3, condD1 or condT1");
 }
 
-static std::string ReadDistanceType(const YAML::Node &node)
-{
-    auto value = node.as<std::string>();
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+// static std::string ReadDistanceType(const YAML::Node &node)
+// {
+//     auto value = node.as<std::string>();
+//     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+//         return static_cast<char>(std::tolower(ch));
+//     });
 
-    if (value == "fixed" || value == "nadir")
-        return value;
+//     if (value == "fixed" || value == "nadir")
+//         return value;
 
-    throw std::runtime_error(
-        "Field handover.*.distanceType has invalid value, expected 'fixed' or 'nadir'");
-}
+//     throw std::runtime_error(
+//         "Field handover.*.distanceType has invalid value, expected 'fixed' or 'nadir'");
+// }
 
 static nr::rrc::common::E_TTT_ms ReadTtt(const YAML::Node &node)
 {
@@ -502,15 +499,15 @@ static void ReadHandoverConfigSection(
 }
 
 
-static void ValidateHandoverTargetCellId(
-    bool targetCellCalculated,
-    const std::optional<int64_t> &targetCellId,
-    const std::vector<nr::gnb::GnbNeighborConfig> &neighbors,
-    const std::string &pathForErrors)
-{
-    if (targetCellCalculated || !targetCellId.has_value())
-        return;
-}
+// static void ValidateHandoverTargetCellId(
+//     bool targetCellCalculated,
+//     const std::optional<int64_t> &targetCellId,
+//     const std::vector<nr::gnb::GnbNeighborConfig> &neighbors,
+//     const std::string &pathForErrors)
+// {
+//     if (targetCellCalculated || !targetCellId.has_value())
+//         return;
+// }
 
 static nr::gnb::GnbConfig *ReadConfigYaml()
 {
@@ -655,7 +652,8 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
                     throw std::runtime_error("ntn.timeWarp.startEpoch cannot be empty");
 
                 auto startEpochDt = ParseTleEpochDateTime(startEpochText, "ntn.timeWarp.startEpoch");
-                result->ntn.timeWarp.startEpochMillis = DateTimeToUnixMillis(startEpochDt);
+                result->ntn.timeWarp.startEpochMillis = nr::rrc::common::DateTimeToUnixMillis(startEpochDt);
+                result->ntn.timeWarp.startEpochText = std::move(startEpochText);
             }
         }
 

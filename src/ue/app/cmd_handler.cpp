@@ -145,6 +145,8 @@ static Json ToJsonSatTimeStatus(const utils::SatTime::Status &status)
 
     if (status.scheduledPauseWallclockMillis.has_value())
         json.put("pause-at-wallclock-ms", *status.scheduledPauseWallclockMillis);
+    if (status.scheduledRunWallclockMillis.has_value())
+        json.put("run-at-wallclock-ms", *status.scheduledRunWallclockMillis);
 
     return json;
 }
@@ -195,6 +197,8 @@ static std::string FormatSatTimeAction(const app::SatTimeCliControl &satTime)
         return "sat-time start-epoch=" + satTime.startEpoch;
     case app::SatTimeCliControl::EAction::PauseAtWallclock:
         return "sat-time pause-at-wallclock=" + std::to_string(satTime.pauseAtWallclock);
+    case app::SatTimeCliControl::EAction::RunAtWallclock:
+        return "sat-time run-at-wallclock=" + std::to_string(satTime.runAtWallclock);
     }
     return "sat-time";
 }
@@ -279,6 +283,14 @@ void UeCmdHandler::ensureCliLogger()
 
 void UeCmdHandler::logCommandReceived(const NmUeCliCommand &msg)
 {
+
+    // suppress logging of specific command types
+    if (msg.cmd && msg.cmd->present == app::UeCliCommand::UI_STATUS)
+    {
+        m_suppressCurrentCommandLogs = true;
+        return;
+    }
+
     ensureCliLogger();
     m_currentCommand = ToAuditCommand(*msg.cmd);
     m_currentSource = FormatSource(msg.address);
@@ -288,6 +300,15 @@ void UeCmdHandler::logCommandReceived(const NmUeCliCommand &msg)
 
 void UeCmdHandler::logResponse(bool isError, const std::string &output)
 {
+
+    // suupressed the command from logging, also suppress the response log
+    if (m_suppressCurrentCommandLogs)
+    {
+        m_suppressCurrentCommandLogs = false;
+        return;
+    }
+
+
     ensureCliLogger();
     auto responseText = output.empty() ? std::string{"<empty>"} : EscapeForLog(output);
     auto responseType = isError ? "error" : "result";
@@ -432,8 +453,13 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
         geo.longitude = msg.cmd->geoLon;
         geo.altitude = msg.cmd->geoAlt;
 
-        m_base->UeLocation = geo;
-        sendResult(msg.address, "Updated true UE WGS84 position");
+        // update position without changing timestamp
+        m_base->UeLocation.latitude = geo.latitude;
+        m_base->UeLocation.longitude = geo.longitude;
+        m_base->UeLocation.altitude = geo.altitude;
+        m_base->UeLocation.isValid = geo.isValid;
+
+        sendResult(msg.address, "Updated UE WGS84 position");
         break;
     }
     case app::UeCliCommand::GET_LOC_WGS84: {
@@ -520,6 +546,9 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
             }
             case app::SatTimeCliControl::EAction::PauseAtWallclock:
                 m_base->satTime->SchedulePauseAtWallclockMillis(msg.cmd->satTime.pauseAtWallclock);
+                break;
+            case app::SatTimeCliControl::EAction::RunAtWallclock:
+                m_base->satTime->ScheduleRunAtWallclockMillis(msg.cmd->satTime.runAtWallclock);
                 break;
             }
         }

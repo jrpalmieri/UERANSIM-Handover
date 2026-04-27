@@ -25,14 +25,14 @@ ignoreStreamIds: true
 
 # RF link configuration.
 rfLink:
-  updateMode: Fixed
-  rsrpDbValue: -50
-  # updateMode: Calculated
+  #updateMode: Fixed
+  #rsrpDbValue: -50
+  updateMode: Calculated
   # typical values for a LEO satellite gNB
-  # carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
-  # txPowerDbm: 43.0          # Radiated (transmit) power (dBm)
-  # txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
-  # ueRxGainDbi: 25.0         # UE Receive antenna gain (dBi)
+  carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
+  txPowerDbm: 43.0          # Radiated (transmit) power (dBm)
+  txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
+  ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
   # typical values for a terrestrial gNB (macro)
   # carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
   # txPowerDbm: 15.0          # Radiated (transmit) power (dBm)
@@ -48,9 +48,9 @@ rfLink:
 # (HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT).
 rls:
   LOOP_COUNTER: 200
-  RECEIVE_TIMEOUT: 300
-  TIMER_PERIOD_ACK_SEND: 300
-  TIMER_PERIOD_ACK_CONTROL: 500
+  RECEIVE_TIMEOUT: 500
+  TIMER_PERIOD_ACK_SEND: 1000
+  TIMER_PERIOD_ACK_CONTROL: 1500
 
 # Neighbor cells for handover
 neighborList:
@@ -69,8 +69,8 @@ neighborList:
 # Used as the static terrestrial position or as fallback
 # when no TLE has been received in satellite mode
 position:
-  latitude: 45.1000     # degrees North
-  longitude: 90.1000   # degrees East
+  latitude: 45.0000     # degrees North
+  longitude: 90.0000   # degrees East
   altitude: 550000.0    # meters above ellipsoid (LEO orbit)
 #  altitude: 800.0      # meters above ellipsoid (typical for terrestrial gNB)
 

@@ -154,6 +154,9 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
     
     // send message to AMF - INITIAL_UE msg
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_InitialUEMessage>(ies);
+
+    m_logger->debug("UE[%d] Initial NGAP message to AMF sent, SCTP stream=%d", ueId, amfCtx->nextStream);
+
     sendNgapUeAssociated(ueId, pdu);
 }
 

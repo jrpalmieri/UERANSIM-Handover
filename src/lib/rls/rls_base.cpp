@@ -10,6 +10,18 @@
 
 namespace rls
 {
-
+std::string RlfCauseToString(ERlfCause cause)
+{
+	switch (cause)
+	{
+	case ERlfCause::PDU_ID_EXISTS:
+		return "PDU ID already exists";
+	case ERlfCause::PDU_ID_FULL:
+		return "PDU ID full, cannot accept new PDUs";
+	case ERlfCause::SIGNAL_LOST_TO_CONNECTED_CELL:
+		return "Signal lost to the connected cell";
+	}
+	return "Unknown";
+}
 }
 

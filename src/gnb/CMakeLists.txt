@@ -5,6 +5,8 @@ add_library(gnb ${HDR_FILES} ${SRC_FILES})
 
 target_compile_options(gnb PRIVATE -Wall -Wextra -pedantic -Wno-unused-parameter)
 
+target_include_directories(gnb PUBLIC ${CMAKE_SOURCE_DIR}/src/asn/rrc)
+
 target_link_libraries(gnb asn-ngap)
 target_link_libraries(gnb asn-rrc)
 target_link_libraries(gnb common-lib)

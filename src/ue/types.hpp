@@ -101,47 +101,7 @@ struct IntegrityMaxDataRateConfig
     bool downlinkFull{};
 };
 
-/**
- * @brief Enum to identify the source of measurements for the UE in the UERANSIM
- *  simulation environment.  Because there are no RF layers, these need to be simulated.
- *  Options:
- * - NONE: use internally simulated values only, no external meas source
- * - UDP: receive measurements as JSON over a UDP socket
- * - UNIX_SOCK: receive measurements as JSON over a Unix datagram socket
- * - FILE: periodically read measurements from a JSON file
- * 
- */
-enum class EMeasSourceType
-{
-    NONE,       // Use internal RLS-simulated dBm values only
-    UDP,        // Receive JSON measurements over UDP
-    UNIX_SOCK,  // Receive JSON measurements over a Unix datagram socket
-    FILE,       // Periodically read a JSON file
-};
 
-struct MeasSourceConfig
-{
-    EMeasSourceType type{EMeasSourceType::NONE};  // Identify source type in use
-
-    // UDP
-    std::string udpAddress{"127.0.0.1"};  // UE IP Address
-    uint16_t    udpPort{7200};  // UE's UDP Receive Port
-
-    // UNIX_SOCK
-    std::string unixSocketPath{};  // path to Unix datagram socket to receive measurements
-
-    // FILE
-    std::string filePath{};  // path to JSON file to read measurements from
-    int         filePollIntervalMs{1000};
-};
-
-
-struct HandoverServerConfig
-{
-    std::string address{"127.0.0.1"};
-    std::string transport{"UDP"};
-    uint16_t port{7200};
-};
 
 struct UeRlsConfig
 {
@@ -224,16 +184,7 @@ struct UeConfig
         bool cls15{};
     } uacAcc;
 
-    // Advanced handover measurement framework with external measurement sources
-    //  (default is False to use legacy RLS-simulated measurements)
-    bool useHandoverMeasFramework{false};
-    
-    HandoverServerConfig handoverServerConfig{}; 
-    
-    // If useHandoverMeasFramework is True, then the following measSourceConfig specifies the 
-    //  source of measurements for the UE
-    MeasSourceConfig measSourceConfig{};
-    
+   
     // UE position from config (for D1 handover events)
     std::optional<GeoPosition> initialPosition{};
 
@@ -278,6 +229,7 @@ struct CellSelectionReport
     int reservedCells{};
     int barredCells{};
     int forbiddenTaiCells{};
+    int weakSignalCells{};
 };
 
 /**
@@ -336,28 +288,6 @@ struct ActiveCellInfo
     [[nodiscard]] bool hasValue() const;
 };
 
-struct UeMeasObject
-{
-    int measObjectId{};
-    int ssbFrequency{};     // SSB ARFCN (simplified — we use cellId matching instead)
-};
-
-/**
- * @brief Struct to represent a Measurement Identity, which binds together:
- * - measId: the identifier used in MeasurementReport messages
- * - measObjectId: the measurement object (frequency) to which this measId applies
- * - reportConfigId: the report configuration (event trigger) that uses this measId
- *
- */
-struct UeMeasId
-{
-    int measId{};           // maps to the measId in MeasurementReport messages
-    int measObjectId{};     // maps to the measObjectId in UeMeasObject, 
-                            //  which defines the frequency to measure
-    int reportConfigId{};   // maps to the reportConfigId in UeReportConfig, 
-                            //  which defines the event trigger conditions for this measId
-};
-
 
 /**
  * @brief Struct to track the state of a specific measurement Id event trigger,
@@ -369,6 +299,10 @@ struct UeMeasId
  */
 struct MeasIdState
 {
+    // indicates whether this MeasId should be included in Measurement Reports
+    //  e.g., conditional events are not included. basic events are included.
+    bool isReportable;
+
     // Time (ms) when the entering condition was first satisfied,
     // or 0 if not currently satisfied.
     int64_t enteringTimestamp{};
@@ -403,9 +337,9 @@ struct UeMeasConfig
     std::vector<int> reportConfigsToRemove;
     std::vector<int> measIdsToRemove;
 
-    std::unordered_map<int, UeMeasObject>    measObjects;   // key = measObjectId
+    std::unordered_map<int, nr::rrc::common::MeasObject>    measObjects;   // key = measObjectId
     std::unordered_map<int, nr::rrc::common::ReportConfigEvent>  reportConfigs; // key = reportConfigId
-    std::unordered_map<int, UeMeasId>        measIds;       // key = measId
+    std::unordered_map<int, nr::rrc::common::MeasIdentity>        measIds;       // key = measId
 
     // Per-measId runtime state
     std::unordered_map<int, MeasIdState>     measIdStates;  // key = measId
@@ -935,7 +869,6 @@ Json ToJson(const EPsState &v);
 Json ToJson(const EServiceReqCause &v);
 Json ToJson(const ERrcState &v);
 Json ToJson(const CellMeasurement &v);
-Json ToJson(const EMeasSourceType &v);
 
 
 } // namespace nr::ue

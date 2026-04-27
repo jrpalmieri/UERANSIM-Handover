@@ -294,6 +294,24 @@ static bool ParseSatTimeArg(const std::string &arg, app::SatTimeCliControl &cont
         control.action = app::SatTimeCliControl::EAction::PauseAtWallclock;
         return true;
     }
+    if (StartsWith(arg, "run-at-wallclock="))
+    {
+        auto valueText = arg.substr(std::string("run-at-wallclock=").size());
+        if (valueText.empty())
+            return false;
+
+        try
+        {
+            control.runAtWallclock = std::stoll(valueText);
+        }
+        catch (...)
+        {
+            return false;
+        }
+
+        control.action = app::SatTimeCliControl::EAction::RunAtWallclock;
+        return true;
+    }
 
     return false;
 }
@@ -316,7 +334,7 @@ static OrderedMap<std::string, CmdEntry> g_gnbCmdEntries = {
     std::make_pair("get-loc-pv", CmdEntry{"Get true gNB location as ECEF position/velocity JSON", "", DefaultDesc, false}),
     std::make_pair("sat-loc-pv", CmdEntry{"Upsert one satellite SIB19 position/velocity entry from JSON payload", "<json-payload>", DefaultDesc, true}),
     std::make_pair("sat-tle", CmdEntry{"Upsert TLE orbital elements for one or more satellite gNBs from JSON payload", "<json-payload>", DefaultDesc, true}),
-    std::make_pair("sat-time", CmdEntry{"Control satellite time: pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>", "[pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>]", DefaultDesc, false}),
+    std::make_pair("sat-time", CmdEntry{"Control satellite time: pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>|run-at-wallclock=<unix-ms>", "[pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>|run-at-wallclock=<unix-ms>]", DefaultDesc, false}),
     std::make_pair("neighbors", CmdEntry{"Update gNB neighbor list from JSON payload", "<json-payload>", DefaultDesc, true}),
     std::make_pair("set-rsrp", CmdEntry{"Set global fixed RSRP value (dBm)", "<rsrp>", DefaultDesc, true}),
     std::make_pair("version", CmdEntry{"Show gNB version information", "", DefaultDesc, false}),
@@ -345,8 +363,8 @@ static OrderedMap<std::string, CmdEntry> g_ueCmdEntries = {
     {"deregister",
      {"Perform a de-registration by the UE", "<normal|disable-5g|switch-off|remove-sim>", DefaultDesc, true}},
     {"sat-time", {"Control satellite time: pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|"
-                    "pause-at-wallclock=<unix-ms>",
-                    "[pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>]",
+                    "pause-at-wallclock=<unix-ms>|run-at-wallclock=<unix-ms>",
+                    "[pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|pause-at-wallclock=<unix-ms>|run-at-wallclock=<unix-ms>]",
                     DefaultDesc,
                     false}},
     {"version", {"Show UE version information", "", DefaultDesc, false}},
@@ -508,7 +526,7 @@ static std::unique_ptr<GnbCliCommand> GnbCliParseImpl(const std::string &subCmd,
         if (!ParseSatTimeArg(options.getPositional(0), cmd->satTime))
         {
             CMD_ERR("Invalid sat-time argument. Expected pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|"
-                    "pause-at-wallclock=<unix-ms>")
+                    "pause-at-wallclock=<unix-ms>|run-at-wallclock=<unix-ms>")
         }
 
         return cmd;
@@ -591,7 +609,7 @@ static std::unique_ptr<UeCliCommand> UeCliParseImpl(const std::string &subCmd, c
         if (!ParseSatTimeArg(options.getPositional(0), cmd->satTime))
         {
             CMD_ERR("Invalid sat-time argument. Expected pause|run|tickscale=<v>|start-epoch=<YYDDD.DDD>|"
-                    "pause-at-wallclock=<unix-ms>")
+                    "pause-at-wallclock=<unix-ms>|run-at-wallclock=<unix-ms>")
         }
 
         return cmd;

@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <gnb/types.hpp>
 #include <gnb/nts.hpp>
 #include <lib/rrc/common/asn_fwd.hpp>
 #include <utils/logger.hpp>
@@ -46,7 +47,7 @@ class GnbRrcTask : public NtsTask
     bool m_intraFreqReselectAllowed = true;
 
     // gnb location as PV in ECEF coordinates
-    PositionVelocity m_truePositionVelocity{};
+    //PositionVelocity m_truePositionVelocity{};
 
     std::unordered_map<int, SatellitePositionVelocityEntry> m_satellitePvByPci{};
 
@@ -133,6 +134,7 @@ class GnbRrcTask : public NtsTask
     void onBroadcastTimerExpired();
     void triggerSysInfoBroadcast();
     void triggerSib19Broadcast();
+    void onUpdateLocationTimerExpired();
 
     /* Service Access Point - sap.cpp */
 
@@ -156,7 +158,7 @@ class GnbRrcTask : public NtsTask
     void sendHandoverCommand(int ueId, int targetPci, int newCrnti, int t304Ms);
     void handleHandoverComplete(int ueId);
     void sendMeasConfig(int ueId, bool forceResend = false);
-    void evaluateHandoverDecision(int ueId, const std::string &eventType);
+    void evaluateHandoverDecision(int ueId, int measId);
     void processConditionalHandover(int ueId,
                     const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
                     int choProfileIdx);
@@ -167,13 +169,18 @@ class GnbRrcTask : public NtsTask
     void calculateTriggerConditions(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
                     int ownPci,
                     RrcUeContext *ue);
+    std::vector<ScoredNeighbor> prioritizeNeighbors(
+      const std::vector<GnbNeighborConfig> &neighborList,
+      int servingPci,
+      const EcefPosition &ueEcef,
+      int tExitSec);
     void clearChoPendingState(RrcUeContext *ue);
     std::vector<long> createMeasConfig(
       ASN_RRC_MeasConfig *&mc,
       RrcUeContext *ue,
       std::vector<nr::rrc::common::ReportConfigEvent> selectedEvents,
       const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
-      int choProfileId
+      long choProfileId
       ); 
 
 };

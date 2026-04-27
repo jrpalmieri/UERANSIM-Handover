@@ -29,4 +29,7 @@ enum class ERlfCause
     SIGNAL_LOST_TO_CONNECTED_CELL
 };
 
+
+std::string RlfCauseToString(ERlfCause cause);
+
 } // namespace rls

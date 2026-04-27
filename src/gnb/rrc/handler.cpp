@@ -75,8 +75,7 @@ void GnbRrcTask::receiveUplinkInformationTransfer(int ueId, const ASN_RRC_ULInfo
 
 void GnbRrcTask::releaseConnection(int ueId)
 {
-    m_logger->info("Releasing RRC connection UE[%d] ", ueId);
-
+ 
     // Send RRC Release message
     auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
     pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
@@ -86,6 +85,8 @@ void GnbRrcTask::releaseConnection(int ueId)
     rrcRelease->rrc_TransactionIdentifier = getNextTid(ueId);
     rrcRelease->criticalExtensions.present = ASN_RRC_RRCRelease__criticalExtensions_PR_rrcRelease;
     rrcRelease->criticalExtensions.choice.rrcRelease = asn::New<ASN_RRC_RRCRelease_IEs>();
+
+    m_logger->info("UE[%d] Sending RRC Release message to UE", ueId);
 
     sendRrcMessage(ueId, pdu);
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);

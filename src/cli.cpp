@@ -7,10 +7,13 @@
 //
 
 #include <algorithm>
+#include <fstream>
 #include <iostream>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -27,6 +30,9 @@ static struct Options
     bool dumpNodes{};
     std::string nodeName{};
     std::string directCmd{};
+    bool massDeregister{};
+    std::string massDeregCause{};
+    std::string massDeregFile{};
 } g_options{};
 
 static std::set<int> FindProcesses()
@@ -133,20 +139,45 @@ static std::vector<std::string> DumpNames()
 
 static void ReadOptions(int argc, char **argv)
 {
-    opt::OptionsDescription desc{"UERANSIM",  cons::Tag, "Command Line Interface",
-                                 cons::Owner, "nr-cli",  {"<node-name> [option...]", "--dump"},
-                                 {},          true,      false};
+    opt::OptionsDescription desc{
+        "UERANSIM",
+        cons::Tag,
+        "Command Line Interface",
+        cons::Owner,
+        "nr-cli",
+        {"<node-name> [option...]", "--dump", "--mass-dereg <cause> [--nodes <file>]"},
+        {},
+        true,
+        false};
 
-    opt::OptionItem itemDump = {'d', "dump", "List all UE and gNBs in the environment", std::nullopt};
-    opt::OptionItem itemExec = {'e', "exec", "Execute the given command directly without an interactive shell",
-                                "command"};
+    opt::OptionItem itemDump      = {'d', "dump",      "List all UE and gNBs in the environment",                          std::nullopt};
+    opt::OptionItem itemExec      = {'e', "exec",      "Execute the given command directly without an interactive shell",   "command"};
+    opt::OptionItem itemMassDereg = {std::nullopt, "mass-dereg", "Deregister all (or listed) UEs in parallel",              "cause"};
+    opt::OptionItem itemNodes     = {std::nullopt, "nodes",      "File with one UE node name per line (default: all UEs)",  "file"};
 
     desc.items.push_back(itemDump);
     desc.items.push_back(itemExec);
+    desc.items.push_back(itemMassDereg);
+    desc.items.push_back(itemNodes);
 
     opt::OptionsResult opt{argc, argv, desc, false, nullptr};
 
     g_options.dumpNodes = opt.hasFlag(itemDump);
+
+    if (opt.hasFlag(itemMassDereg))
+    {
+        g_options.massDeregister = true;
+        g_options.massDeregCause = opt.getOption(itemMassDereg);
+        g_options.massDeregFile  = opt.getOption(itemNodes);
+
+        static const std::vector<std::string> validCauses = {"normal", "disable-5g", "switch-off", "remove-sim"};
+        if (std::find(validCauses.begin(), validCauses.end(), g_options.massDeregCause) == validCauses.end())
+        {
+            opt.showError("Invalid cause '" + g_options.massDeregCause +
+                          "'. Expected: normal | disable-5g | switch-off | remove-sim");
+        }
+        return;
+    }
 
     if (!g_options.dumpNodes)
     {
@@ -155,7 +186,7 @@ static void ReadOptions(int argc, char **argv)
             opt.showError("Node name is expected");
             return;
         }
-        if (opt.positionalCount() > 1)
+        if (opt.positionalCount() > 1 && !opt.hasFlag(itemExec))
         {
             opt.showError("Only one node name is expected");
             return;
@@ -174,6 +205,9 @@ static void ReadOptions(int argc, char **argv)
         }
 
         g_options.directCmd = opt.getOption(itemExec);
+        // append any extra positionals (e.g. "deregister normal") to the command
+        for (int i = 1; i < opt.positionalCount(); i++)
+            g_options.directCmd += " " + opt.getPositional(i);
         if (opt.hasFlag(itemExec) && g_options.directCmd.size() < 3)
         {
             opt.showError("Command is too short");
@@ -252,9 +286,121 @@ static bool HandleMessage(const app::CliMessage &msg, bool isOneShot)
     }
 }
 
+// Returns true on success, false on failure. Thread-safe: each call owns its own CliServer.
+static bool SendOneCommand(const std::string &nodeName, const std::string &cmd)
+{
+    int skippedDueToVersion{};
+    uint16_t port{};
+    try
+    {
+        port = DiscoverNode(nodeName, skippedDueToVersion);
+    }
+    catch (const std::runtime_error &)
+    {
+        return false;
+    }
+
+    if (port == 0)
+        return false;
+
+    app::CliServer server{};
+    server.sendMessage(app::CliMessage::Command(InetAddress{cons::CMD_SERVER_IP, port}, cmd, nodeName));
+
+    while (true)
+    {
+        auto msg = server.receiveMessage();
+        if (msg.type == app::CliMessage::Type::RESULT || msg.type == app::CliMessage::Type::ERROR)
+            return msg.type == app::CliMessage::Type::RESULT;
+    }
+}
+
+static std::vector<std::string> ReadNodeFile(const std::string &path)
+{
+    std::vector<std::string> nodes{};
+    std::ifstream f{path};
+    if (!f.is_open())
+    {
+        std::cerr << "ERROR: Cannot open node file: " << path << std::endl;
+        exit(1);
+    }
+    std::string line{};
+    while (std::getline(f, line))
+    {
+        // strip trailing whitespace / CR
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
+            line.pop_back();
+        if (!line.empty())
+            nodes.push_back(line);
+    }
+    return nodes;
+}
+
+static void MassDeregister(const std::string &cause, const std::string &nodesFile)
+{
+    std::vector<std::string> targets{};
+
+    if (nodesFile.empty())
+    {
+        // discover all running UEs (filter to UE node names only)
+        for (auto &n : DumpNames())
+        {
+            if (n.rfind("imsi-", 0) == 0 || n.rfind("imei-", 0) == 0 || n.rfind("imeisv-", 0) == 0)
+                targets.push_back(n);
+        }
+        if (targets.empty())
+        {
+            std::cerr << "ERROR: No running UE nodes found" << std::endl;
+            exit(1);
+        }
+    }
+    else
+    {
+        targets = ReadNodeFile(nodesFile);
+    }
+
+    std::cout << "Deregistering " << targets.size() << " UE(s) with cause '" << cause << "'..." << std::endl;
+
+    std::vector<std::thread> threads{};
+    std::mutex printMtx{};
+    int successCount{};
+    int failCount{};
+    std::mutex counterMtx{};
+
+    const std::string cmd = "deregister " + cause;
+
+    for (auto &node : targets)
+    {
+        threads.emplace_back([&, node]() {
+            bool ok = SendOneCommand(node, cmd);
+            {
+                std::lock_guard<std::mutex> lk(printMtx);
+                if (ok)
+                    std::cout << "[OK]   " << node << std::endl;
+                else
+                    std::cout << "[FAIL] " << node << std::endl;
+            }
+            {
+                std::lock_guard<std::mutex> lk(counterMtx);
+                if (ok) successCount++; else failCount++;
+            }
+        });
+    }
+
+    for (auto &t : threads)
+        t.join();
+
+    std::cout << "\nDone: " << successCount << " succeeded, " << failCount << " failed." << std::endl;
+}
+
 int main(int argc, char **argv)
 {
     ReadOptions(argc, argv);
+
+    if (g_options.massDeregister)
+    {
+        MassDeregister(g_options.massDeregCause, g_options.massDeregFile);
+        return 0;
+    }
 
     // NOTE: This does not guarantee showing the exact realtime status.
     if (g_options.dumpNodes)

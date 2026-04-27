@@ -30,7 +30,7 @@ ignoreStreamIds: true
 # RF link configuration.
 rfLink:
   updateMode: Fixed
-  rsrpDbValue: -60
+  rsrpDbValue: -80
   # updateMode: Calculated
   # typical values for a LEO satellite gNB
   # carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
@@ -52,9 +52,9 @@ rfLink:
 # (HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT).
 rls:
   LOOP_COUNTER: 200
-  RECEIVE_TIMEOUT: 300
-  TIMER_PERIOD_ACK_SEND: 300
-  TIMER_PERIOD_ACK_CONTROL: 500
+  RECEIVE_TIMEOUT: 500
+  TIMER_PERIOD_ACK_SEND: 1000
+  TIMER_PERIOD_ACK_CONTROL: 1500
 
 # Neighbor cells for handover
 neighborList:
@@ -75,8 +75,8 @@ neighborList:
 position:
   latitude: 45.0000     # degrees North
   longitude: 90.0000   # degrees East
-  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
-#  altitude: 800.0      # meters above ellipsoid (typical for terrestrial gNB)
+#  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
+  altitude: 100.0      # meters above ellipsoid (typical for terrestrial gNB)
 
 # Xn interface configuration (used for handover signaling with neighbor cells that support Xn handover)
 xn:
@@ -96,11 +96,11 @@ xn:
 #   per CHO profile.
 
 handover:
-  events:
-    - eventType: A3
-      a3OffsetDb: 3
-      a3hysteresisDb: 1
-      ttt: ms100
+  # events:
+  #   - eventType: A3
+  #     a3OffsetDb: 3
+  #     a3hysteresisDb: 1
+  #     ttt: ms100
 
   choEnabled: false
   choDefaultProfileId: 1  # default profile ID to use for CHO candidates if not overridden

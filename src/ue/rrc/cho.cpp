@@ -623,6 +623,13 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
                         cand.candidateId, cand.targetPci, conditionGroupStr(cand.measIds, m_measConfig).c_str(),
                         cand.executed ? "yes" : "no");
 
+        if (cand.executed)
+        {
+            m_logger->debug("CHO candidate %d already executed or cancelled; skipping",
+                            cand.candidateId);
+            continue;
+        }
+        
         // check each condition for satisfaction
         std::size_t total_satisfied = 0;
         for (int measId : cand.measIds)

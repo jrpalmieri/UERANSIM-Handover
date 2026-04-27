@@ -575,13 +575,16 @@ def _expected_ntn_dbm(
 def _uma_path_loss_db(distance_m: float, frequency_hz: float) -> float:
     distance_m = max(distance_m, 1.0)
     freq_ghz = frequency_hz / 1e9
-    # Matches src/gnb/rls/sat_pos_sim.cpp UrbanMacroPathLossDb.
-    return 22.0 * math.log10(distance_m) + 28.0 + 20.0 * math.log10(freq_ghz)
+    # Matches src/gnb/rls/pos_sim.cpp UrbanMacroPathLossDb.
+    if distance_m <= 1600.0:
+        return 28.0 + (22.0 * math.log10(distance_m)) + (20.0 * math.log10(freq_ghz))
+    else:
+        return 28.0 + (40.0 * math.log10(distance_m)) + (20.0 * math.log10(freq_ghz)) - 9.0 * math.log10(1600.0**2)
 
 
 def _fspl_db(distance_m: float, frequency_hz: float) -> float:
     distance_m = max(distance_m, 1.0)
-    # Matches src/gnb/rls/sat_pos_sim.cpp FreeSpacePathLossDb.
+    # Matches src/gnb/rls/pos_sim.cpp FreeSpacePathLossDb.
     return 20.0 * math.log10(distance_m) + 20.0 * math.log10(frequency_hz) - 147.55
 
 

@@ -122,6 +122,8 @@ static Json ToJsonSatTimeStatus(const utils::SatTime::Status &status)
 
     if (status.scheduledPauseWallclockMillis.has_value())
         json.put("pause-at-wallclock-ms", *status.scheduledPauseWallclockMillis);
+    if (status.scheduledRunWallclockMillis.has_value())
+        json.put("run-at-wallclock-ms", *status.scheduledRunWallclockMillis);
 
     return json;
 }
@@ -132,6 +134,7 @@ static Json ToJsonLocWgs84(const GeoPosition &position)
         {"latitude", std::to_string(position.latitude)},
         {"longitude", std::to_string(position.longitude)},
         {"altitude", std::to_string(position.altitude)},
+        {"timestampMs", std::to_string(position.timestampMs)},
     });
 }
 
@@ -145,7 +148,7 @@ static Json ToJsonLocPvFromGeo(const GeoPosition &position)
         {"vx", std::to_string(0.0)},
         {"vy", std::to_string(0.0)},
         {"vz", std::to_string(0.0)},
-        {"epochMs", static_cast<int64_t>(utils::CurrentTimeMillis())},
+        {"epochMs", position.timestampMs},
     });
 }
 
@@ -222,6 +225,8 @@ static std::string FormatSatTimeAction(const app::SatTimeCliControl &satTime)
         return "sat-time start-epoch=" + satTime.startEpoch;
     case app::SatTimeCliControl::EAction::PauseAtWallclock:
         return "sat-time pause-at-wallclock=" + std::to_string(satTime.pauseAtWallclock);
+    case app::SatTimeCliControl::EAction::RunAtWallclock:
+        return "sat-time run-at-wallclock=" + std::to_string(satTime.runAtWallclock);
     }
 
     return "sat-time";
@@ -246,6 +251,8 @@ static std::string ToAuditCommand(const app::GnbCliCommand &cmd)
         return "ue-list";
     case app::GnbCliCommand::UE_COUNT:
         return "ue-count";
+    case app::GnbCliCommand::SET_RSRP:
+        return "set-rsrp " + std::to_string(cmd.rsrpValue);
     case app::GnbCliCommand::UE_RELEASE_REQ:
         return "ue-release " + std::to_string(cmd.ueId);
     case app::GnbCliCommand::SET_LOC_WGS84:
@@ -701,16 +708,19 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
     case app::GnbCliCommand::SET_RSRP: {
         // Set the global fixed RSRP value (dBm)
         int value = msg.cmd->rsrpValue;
-        // Clamp to allowed range if needed (reuse constants if available)
-        constexpr int MIN_RSRP = -140;
-        constexpr int MAX_RSRP = -40;
-        if (value < MIN_RSRP || value > MAX_RSRP) {
-            sendError(msg.address, "RSRP value out of range (must be between -140 and -40 dBm)");
-            break;
+        std::string errMsg = "";
+        // Clamp to allowed RSRP range
+        if (value < cons::MIN_RSRP) {
+            errMsg = "RSRP value out of range (must be between no lower than " + std::to_string(cons::MIN_RSRP) + " dBm. ";
+            value = cons::MIN_RSRP;
+        }
+        if (value > cons::MAX_RSRP) {
+            errMsg = "RSRP value out of range (must be no higher than " + std::to_string(cons::MAX_RSRP) + " dBm. ";
+            value = cons::MAX_RSRP;
         }
         m_base->fixedRsrp = value;
         m_base->config->rfLink.updateMode = EGnbRsrpMode::Fixed;
-        sendResult(msg.address, "Updated fixed RSRP to " + std::to_string(value) + " dBm");
+        sendResult(msg.address, errMsg + "Updated fixed RSRP to " + std::to_string(value) + " dBm");
     
         break;
     }
@@ -720,24 +730,27 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         geo.latitude = msg.cmd->geoLat;
         geo.longitude = msg.cmd->geoLon;
         geo.altitude = msg.cmd->geoAlt;
-
-        m_base->rrcTask->setTrueGeoPosition(geo);
-        sendResult(msg.address, "Updated true gNB WGS84 position");
+        // update gNB position without updating timestamp
+        m_base->setGnbPosition(geo);
+        sendResult(msg.address, "Updated current gNB WGS84 position");
         break;
     }
     case app::GnbCliCommand::SET_LOC_PV: {
-        PositionVelocity position{};
-        position.isValid = true;
+        EcefPosition position{};
         position.x = msg.cmd->locX;
         position.y = msg.cmd->locY;
         position.z = msg.cmd->locZ;
-        position.vx = msg.cmd->velX;
-        position.vy = msg.cmd->velY;
-        position.vz = msg.cmd->velZ;
-        position.epochMs = msg.cmd->epochMs;
 
-        m_base->rrcTask->setTruePositionVelocity(position);
-        sendResult(msg.address, "Updated true gNB position/velocity for SIB19 generation");
+        // convert to lat/long/alt
+        GeoPosition geo = EcefToGeo(position);
+        if (!geo.isValid)
+        {
+            sendError(msg.address, "Invalid ECEF position. Cannot convert to WGS84.");
+            break;
+        }
+        // update gNB position without updating timestamp
+        m_base->setGnbPosition(geo);
+        sendResult(msg.address, "Updated current gNB WGS84 position based on provided PV (ECEF) coordinates");
         break;
     }
     case app::GnbCliCommand::GET_LOC_WGS84: {
@@ -752,22 +765,16 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         break;
     }
     case app::GnbCliCommand::GET_LOC_PV: {
-        auto truePv = m_base->rrcTask->getTruePositionVelocity();
-        if (!truePv.isValid)
+        auto gnbPosition = m_base->getGnbPosition();
+        if (!gnbPosition.isValid)
         {
-            auto gnbPosition = m_base->getGnbPosition();
-            if (!gnbPosition.isValid)
-            {
-                sendError(msg.address, "gNB location is not set");
-                break;
-            }
-
-            sendResult(msg.address, ToJsonLocPvFromGeo(gnbPosition).dumpYaml());
+            sendError(msg.address, "gNB location is not set");
             break;
         }
 
-        sendResult(msg.address, ToJsonLocPv(truePv).dumpYaml());
+        sendResult(msg.address, ToJsonLocPvFromGeo(gnbPosition).dumpYaml());
         break;
+    
     }
     case app::GnbCliCommand::SAT_LOC_PV: {
         SatLocPvRequest request{};
@@ -852,6 +859,9 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
             }
             case app::SatTimeCliControl::EAction::PauseAtWallclock:
                 m_base->satTime->SchedulePauseAtWallclockMillis(msg.cmd->satTime.pauseAtWallclock);
+                break;
+            case app::SatTimeCliControl::EAction::RunAtWallclock:
+                m_base->satTime->ScheduleRunAtWallclockMillis(msg.cmd->satTime.runAtWallclock);
                 break;
             }
         }
