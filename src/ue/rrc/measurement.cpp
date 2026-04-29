@@ -15,7 +15,7 @@
 #include <ue/rls/task.hpp>
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
-#include <utils/sat_time.hpp>
+#include <lib/sat/sat_time.hpp>
 
 #include <asn/rrc/ASN_RRC_MeasurementReport.h>
 #include <asn/rrc/ASN_RRC_MeasurementReport-IEs.h>

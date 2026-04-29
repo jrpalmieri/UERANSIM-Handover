@@ -42,6 +42,8 @@ static std::string ToString(ESib19EphemerisMode mode)
         return "pos-vel";
     case ESib19EphemerisMode::Orbital:
         return "orbital";
+    case ESib19EphemerisMode::Tle:
+        return "tle";
     }
     return "pos-vel";
 }

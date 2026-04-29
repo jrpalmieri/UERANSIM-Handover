@@ -1,8 +1,12 @@
 #include "pos_sim.hpp"
-#include <utils/position_calcs.hpp>
+#include <lib/sat/sat_calc.hpp>
 
 #include <cmath>
 #include <algorithm>
+
+using nr::sat::EcefPosition;
+using nr::sat::EcefToGeo;
+using nr::sat::GeoToEcef;
 
 namespace nr::gnb
 {

@@ -44,11 +44,11 @@
 #include <unordered_set>
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/encode.hpp>
-#include <lib/rrc/common/sat_calc.hpp>
+#include <lib/sat/sat_calc.hpp>
 #include <lib/rrc/common/asn_converters.hpp>
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
-#include <utils/sat_time.hpp>
+#include <lib/sat/sat_time.hpp>
 
 #include <asn/rrc/ASN_RRC_ConditionalReconfiguration.h>
 #include <asn/rrc/ASN_RRC_CondReconfigToAddMod.h>
@@ -77,6 +77,10 @@ static constexpr int MAX_COND_RRC_RECONFIG_BYTES = 16384;
 
 namespace nr::ue
 {
+
+using nr::sat::EcefPosition;
+using nr::sat::ExtrapolateEcefPosition;
+using nr::sat::ComputeNadir;
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -107,143 +111,158 @@ int selectBestTerrestrial(const std::unordered_set<int> &nonSatPcis, const std::
     return bestPci;
 }
 
-std::vector<nr::rrc::common::PciScore> UeRrcTask::selectBestSatellite(
+/**
+ * @brief Selects the best satellite based on priority scores.
+ * Only used if multiple candidate target gnbs are satellites.
+ * 
+ * @param servingCellId 
+ * @param satPcis 
+ * @return std::vector<nr::sat::SatPriorityScore> 
+ */
+std::vector<nr::sat::SatPriorityScore> UeRrcTask::selectBestSatellite(
     int servingCellId,
     const std::unordered_set<int> &satPcis)
 {
-    std::vector<nr::rrc::common::PciScore> empty{};
-    if (satPcis.empty())
-        return empty;
 
+    std::vector<nr::sat::SatPriorityScore> priorities{};
+
+    // sanity check
+    if (satPcis.empty())
+        return priorities;
+
+    // get current sat time
     const int64_t satNowMs = m_base->satTime != nullptr ? m_base->satTime->CurrentSatTimeMillis()
                                                          : utils::CurrentTimeMillis();
 
-    std::vector<int> satPciList{};
-    satPciList.reserve(satPcis.size());
-    for (int pci : satPcis)
-        satPciList.push_back(pci);
-
+    // failsafe to determine PCI
     int servingPci = servingCellId;
     auto servingIt = m_cellDesc.find(servingCellId);
     if (servingIt != m_cellDesc.end() && servingIt->second.sib1.hasSib1)
         servingPci = cons::getPciFromNci(servingIt->second.sib1.nci);
 
-    auto stateResolver = [&](int pci, int offsetSec, nr::rrc::common::SatEcefState &state) -> bool {
-        const int64_t targetSatMs = satNowMs + static_cast<int64_t>(offsetSec) * 1000LL;
+    // dummy routing until actual propagators are built:
+    for (auto it = satPcis.begin(); it != satPcis.end(); ++it)
+    {
+        int pci = *it;
+        priorities.emplace_back(pci, 0); // dummy score of 0 for now
+    }
 
-        const UeCellDesc *descForPci = nullptr;
-        std::optional<Sib19Info::PciEntry> entryForPci{};
+    return priorities;
 
-        for (const auto &[cellId, desc] : m_cellDesc)
-        {
-            if (!desc.sib19.hasSib19)
-                continue;
+    // auto stateResolver = [&](int pci, int offsetSec, nr::sat::SatEcefState &state) -> bool {
+    //     const int64_t targetSatMs = satNowMs + static_cast<int64_t>(offsetSec) * 1000LL;
 
-            bool matches = false;
-            if (cellId == pci)
-                matches = true;
-            else if (desc.sib1.hasSib1 && cons::getPciFromNci(desc.sib1.nci) == pci)
-                matches = true;
-            if (desc.sib19.entriesByPci.count(pci) != 0)
-                matches = true;
+    //     const UeCellDesc *descForPci = nullptr;
+    //     std::optional<Sib19Info::PciEntry> entryForPci{};
 
-            if (!matches)
-                continue;
+    //     for (const auto &[cellId, desc] : m_cellDesc)
+    //     {
+    //         if (!desc.sib19.hasSib19)
+    //             continue;
 
-            descForPci = &desc;
-            auto itEntry = desc.sib19.entriesByPci.find(pci);
-            if (itEntry != desc.sib19.entriesByPci.end())
-                entryForPci = itEntry->second;
-            break;
-        }
+    //         bool matches = false;
+    //         if (cellId == pci)
+    //             matches = true;
+    //         else if (desc.sib1.hasSib1 && cons::getPciFromNci(desc.sib1.nci) == pci)
+    //             matches = true;
+    //         if (desc.sib19.entriesByPci.count(pci) != 0)
+    //             matches = true;
 
-        if (descForPci == nullptr)
-            return false;
+    //         if (!matches)
+    //             continue;
 
-        const Sib19Info &sib19 = descForPci->sib19;
-        if (!isSib19EphemerisValid(sib19, satNowMs))
-            return false;
+    //         descForPci = &desc;
+    //         auto itEntry = desc.sib19.entriesByPci.find(pci);
+    //         if (itEntry != desc.sib19.entriesByPci.end())
+    //             entryForPci = itEntry->second;
+    //         break;
+    //     }
 
-        const NtnConfig &ntnCfg = entryForPci.has_value() ? entryForPci->ntnConfig : sib19.ntnConfig;
-        const int64_t epochMs = static_cast<int64_t>(ntnCfg.epochTime) * 10LL;
+    //     if (descForPci == nullptr)
+    //         return false;
 
-        if (ntnCfg.ephemerisInfo.type == EEphemerisType::POSITION_VELOCITY)
-        {
-            const auto &pv = ntnCfg.ephemerisInfo.posVel;
-            const double dtSec = static_cast<double>(targetSatMs - epochMs) / 1000.0;
-            state.pos = ExtrapolateEcefPosition(EcefPosition{pv.positionX, pv.positionY, pv.positionZ},
-                                                EcefPosition{pv.velocityVX, pv.velocityVY, pv.velocityVZ},
-                                                dtSec);
-        }
-        else if (ntnCfg.ephemerisInfo.type == EEphemerisType::ORBITAL_PARAMETERS)
-        {
-            const auto &orb = ntnCfg.ephemerisInfo.orbital;
-            nr::rrc::common::KeplerianElementsRaw raw{};
-            raw.semiMajorAxis = orb.semiMajorAxis;
-            raw.eccentricity = orb.eccentricity;
-            raw.periapsis = orb.periapsis;
-            raw.longitude = orb.longitude;
-            raw.inclination = orb.inclination;
-            raw.meanAnomaly = orb.meanAnomaly;
-            state.pos = nr::rrc::common::PropagateKeplerianToEcef(raw, epochMs, targetSatMs);
-        }
-        else
-        {
-            return false;
-        }
+    //     const Sib19Info &sib19 = descForPci->sib19;
+    //     if (!isSib19EphemerisValid(sib19, satNowMs))
+    //         return false;
 
-        state.nadir = ComputeNadir(state.pos);
-        return true;
-    };
+    //     const NtnConfig &ntnCfg = entryForPci.has_value() ? entryForPci->ntnConfig : sib19.ntnConfig;
+    //     const int64_t epochMs = static_cast<int64_t>(ntnCfg.epochTime) * 10LL;
 
-    auto endpointResolver = [&](int pci, nr::rrc::common::NeighborEndpoint &endpoint) -> bool {
-        if (m_base == nullptr || m_base->g_allCellMeasurements == nullptr)
-            return false;
+    //     if (ntnCfg.ephemerisInfo.type == EEphemerisType::POSITION_VELOCITY)
+    //     {
+    //         const auto &pv = ntnCfg.ephemerisInfo.posVel;
+    //         const double dtSec = static_cast<double>(targetSatMs - epochMs) / 1000.0;
+    //         state.pos = ExtrapolateEcefPosition(EcefPosition{pv.positionX, pv.positionY, pv.positionZ},
+    //                                             EcefPosition{pv.velocityVX, pv.velocityVY, pv.velocityVZ},
+    //                                             dtSec);
+    //     }
+    //     else if (ntnCfg.ephemerisInfo.type == EEphemerisType::ORBITAL_PARAMETERS)
+    //     {
+    //         const auto &orb = ntnCfg.ephemerisInfo.orbital;
+    //         nr::sat::KeplerianElementsRaw raw{};
+    //         raw.semiMajorAxis = orb.semiMajorAxis;
+    //         raw.eccentricity = orb.eccentricity;
+    //         raw.periapsis = orb.periapsis;
+    //         raw.longitude = orb.longitude;
+    //         raw.inclination = orb.inclination;
+    //         raw.meanAnomaly = orb.meanAnomaly;
+    //         state.pos = nr::sat::PropagateKeplerianToEcef(raw, epochMs, targetSatMs);
+    //     }
+    //     else
+    //     {
+    //         return false;
+    //     }
 
-        int resolvedCellId = -1;
-        if (m_cellDesc.count(pci) != 0)
-        {
-            resolvedCellId = pci;
-        }
-        else
-        {
-            for (const auto &[cellId, desc] : m_cellDesc)
-            {
-                if (desc.sib1.hasSib1 && cons::getPciFromNci(desc.sib1.nci) == pci)
-                {
-                    resolvedCellId = cellId;
-                    break;
-                }
-            }
-        }
+    //     state.nadir = ComputeNadir(state.pos);
+    //     return true;
+    // };
 
-        std::shared_lock lock(m_base->g_allCellMeasurements->cellMeasurementsMutex);
-        for (const auto &cm : m_base->g_allCellMeasurements->cellMeasurements)
-        {
-            if (cm.cellId != pci && cm.cellId != resolvedCellId)
-                continue;
-            if (cm.ip.empty())
-                continue;
+    // auto endpointResolver = [&](int pci, nr::sat::NeighborEndpoint &endpoint) -> bool {
+    //     if (m_base == nullptr || m_base->g_allCellMeasurements == nullptr)
+    //         return false;
 
-            endpoint.ipAddress = cm.ip;
-            endpoint.port = cons::RadioLinkPort;
-            return true;
-        }
-        return false;
-    };
+    //     int resolvedCellId = -1;
+    //     if (m_cellDesc.count(pci) != 0)
+    //     {
+    //         resolvedCellId = pci;
+    //     }
+    //     else
+    //     {
+    //         for (const auto &[cellId, desc] : m_cellDesc)
+    //         {
+    //             if (desc.sib1.hasSib1 && cons::getPciFromNci(desc.sib1.nci) == pci)
+    //             {
+    //                 resolvedCellId = cellId;
+    //                 break;
+    //             }
+    //         }
+    //     }
 
-    static constexpr int MAX_LOOKAHEAD_SEC = 7200;
-    static constexpr int UE_ELEVATION_MIN_DEG = 5;
+    //     std::shared_lock lock(m_base->g_allCellMeasurements->cellMeasurementsMutex);
+    //     for (const auto &cm : m_base->g_allCellMeasurements->cellMeasurements)
+    //     {
+    //         if (cm.cellId != pci && cm.cellId != resolvedCellId)
+    //             continue;
+    //         if (cm.ip.empty())
+    //             continue;
 
-    const EcefPosition ueEcef = EcefPosition{m_base->UeLocation};
-    return nr::rrc::common::PrioritizeTargetSats(servingPci,
-                                                 satPciList,
-                                                 ueEcef,
-                                                 0,
-                                                 UE_ELEVATION_MIN_DEG,
-                                                 MAX_LOOKAHEAD_SEC,
-                                                 stateResolver,
-                                                 endpointResolver);
+    //         endpoint.ipAddress = cm.ip;
+    //         endpoint.port = cons::RadioLinkPort;
+    //         return true;
+    //     }
+    //     return false;
+    // };
+
+    // static constexpr int MAX_LOOKAHEAD_SEC = 7200;
+    // static constexpr int UE_ELEVATION_MIN_DEG = 5;
+
+    // const EcefPosition ueEcef = EcefPosition{m_base->UeLocation};
+    // return nr::sat::PrioritizeTargetSats(servingPci,
+    //                                              satPciList,
+    //                                              ueEcef,
+    //                                              0,
+    //                                              UE_ELEVATION_MIN_DEG,
+    //                                              MAX_LOOKAHEAD_SEC);
 
 
 
@@ -711,7 +730,7 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
     int bestSatPci = -1;
     const auto prioritizedSat = selectBestSatellite(servingCellId, satPcis);
     if (!prioritizedSat.empty())
-        bestSatPci = prioritizedSat.front().first;
+        bestSatPci = prioritizedSat.front().pci;
 
     // for non-SATs, we can apply the normal RSRP-based tie-breaking logic (highest RSRP wins)
     int bestNonSatPci = selectBestTerrestrial(nonSatPcis, allMeas);

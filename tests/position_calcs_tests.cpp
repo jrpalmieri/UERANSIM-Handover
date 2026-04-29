@@ -1,9 +1,11 @@
-#include <utils/position_calcs.hpp>
+#include <lib/sat/sat_calc.hpp>
 
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+
+using namespace nr::sat;
 
 namespace
 {

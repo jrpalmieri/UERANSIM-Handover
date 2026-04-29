@@ -13,15 +13,17 @@
 #include "ngap/task.hpp"
 #include "rls/task.hpp"
 #include "rrc/task.hpp"
+
+#include <lib/sat/sat_time.hpp>
+#include <lib/sat/sat_state.hpp>
 #include "sat_time.hpp"
-#include "sat_tle_store.hpp"
+
 #include "sctp/task.hpp"
 #include "xn/task.hpp"
 
 #include <lib/app/cli_base.hpp>
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
-#include <utils/sat_time.hpp>
 
 namespace nr::gnb
 {
@@ -45,21 +47,27 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     m_logger->info("Initial gNB location from config: lat=%.6f, lon=%.6f, alt=%.1f", config->geoLocation.latitude, config->geoLocation.longitude, config->geoLocation.altitude);
 
     // create storage object for Two-Line Elements
-    base->satTleStore = new SatTleStore();
+    base->satStates = new nr::sat::SatStates();
+    // load from config if present
+    if (config->ntn.ownTle.has_value()){
+        base->satStates->upsert(config->ntn.ownTle.value());
+        m_logger->info("Loaded own TLE from config (pci=%d)", config->ntn.ownTle->pci);
+
+    }
 
     // initialize the sat clock
     int64_t startEpochMillis = config->ntn.timeWarp.startEpochMillis.value_or(utils::CurrentTimeMillis());
     
-    auto startCondition = utils::SatTime::EStartCondition::Moving;
+    auto startCondition = nr::sat::SatTime::EStartCondition::Moving;
     if (config->ntn.timeWarp.startCondition == nr::gnb::NtnConfig::TimeWarpConfig::EStartCondition::Paused)
-        startCondition = utils::SatTime::EStartCondition::Paused;
+        startCondition = nr::sat::SatTime::EStartCondition::Paused;
 
-    base->satTime = new utils::SatTime(startEpochMillis, startCondition, config->ntn.timeWarp.tickScaling);
+    base->satTime = new nr::sat::SatTime(startEpochMillis, startCondition, config->ntn.timeWarp.tickScaling);
     sat_time::SetSatTimeSource(base->satTime);
 
     m_logger->info("Initialized satellite clock: startEpoch=%llums (%s), startCondition=%s, tickScaling=%.3f", startEpochMillis,
                    config->ntn.timeWarp.startEpochText.c_str(),
-                   startCondition == utils::SatTime::EStartCondition::Moving ? "Moving" : "Paused",
+                   startCondition == nr::sat::SatTime::EStartCondition::Moving ? "Moving" : "Paused",
                    config->ntn.timeWarp.tickScaling);
 
     // initialize the neighbor list
@@ -107,7 +115,7 @@ GNodeB::~GNodeB()
 
     sat_time::SetSatTimeSource(nullptr);
     delete taskBase->satTime;
-    delete taskBase->satTleStore;
+    delete taskBase->satStates;
 
     delete taskBase->logBase;
 

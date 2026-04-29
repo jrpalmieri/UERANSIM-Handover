@@ -7,8 +7,8 @@ build: FORCE
 	mkdir -p build
 	rm -fr build/*
 	
-	# cmake -DCMAKE_BUILD_TYPE=Debug -G "CodeBlocks - Unix Makefiles" . -B build
-	cmake -DCMAKE_BUILD_TYPE=Release -G "CodeBlocks - Unix Makefiles" . -B build
+	# cmake -DCMAKE_BUILD_TYPE=Debug -G "Unix Makefiles" . -B build
+	cmake -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" . -B build
 	# cmake --build build --target all -j4
 	cmake --build build --target all -j4
 	
@@ -23,7 +23,7 @@ build-static: FORCE
 	mkdir -p build
 	rm -fr build/*
 	
-	cmake -DCMAKE_BUILD_TYPE=Release -DSTATIC_BUILD=ON -G "CodeBlocks - Unix Makefiles" . -B build
+	cmake -DCMAKE_BUILD_TYPE=Release -DSTATIC_BUILD=ON -G "Unix Makefiles" . -B build
 	cmake --build build --target all -j4
 	
 	cp tools/nr-binder build/
@@ -33,7 +33,7 @@ build-static: FORCE
 # debug build
 debug: FORCE
 
-	cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -G "CodeBlocks - Unix Makefiles" . -B build
+	cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -G "Unix Makefiles" . -B build
 
 	cmake --build build --target all -j4
 	cp tools/nr-binder build/
@@ -44,7 +44,7 @@ debug: FORCE
 # Incremental build: only changed files and affected targets are rebuilt.
 fast: FORCE
 	@if [ ! -f build/CMakeCache.txt ]; then \
-		cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -G "CodeBlocks - Unix Makefiles" . -B build; \
+		cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -G "Unix Makefiles" . -B build; \
 	fi
 	cmake --build build --target all -j4
 	@if [ -f tools/nr-binder ]; then cp tools/nr-binder build/; fi
@@ -55,7 +55,7 @@ fast: FORCE
 # Incremental debug build: only changed files and affected targets are rebuilt.
 fast-debug: FORCE
 	@if [ ! -f build/CMakeCache.txt ]; then \
-		cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -G "CodeBlocks - Unix Makefiles" . -B build; \
+		cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -G "Unix Makefiles" . -B build; \
 	fi
 	cmake --build build --target all -j4
 	@if [ -f tools/nr-binder ]; then cp tools/nr-binder build/; fi

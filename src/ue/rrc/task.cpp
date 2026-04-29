@@ -47,7 +47,7 @@ void UeRrcTask::onStart()
     if (m_base->config->initialPosition.has_value())
     {
         auto &pos = *m_base->config->initialPosition;
-        EcefPosition ecef = GeoToEcef(pos);
+        nr::sat::EcefPosition ecef = nr::sat::GeoToEcef(pos);
         m_logger->info("UE position configured: lat=%.6f lon=%.6f alt=%.1fm "
                        "ECEF=(%.1f, %.1f, %.1f)",
                        pos.latitude, pos.longitude, pos.altitude,

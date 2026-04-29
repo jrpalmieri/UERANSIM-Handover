@@ -165,7 +165,7 @@ class UeRrcTask : public NtsTask
     void handleChoConfiguration(const OctetString &pdu);
     void parseConditionalReconfiguration(const ASN_RRC_ConditionalReconfiguration *condReconfig);
     bool evaluateChoCandidates(int servingCellId, const std::map<int, int> &allMeas);
-    std::vector<nr::rrc::common::PciScore> selectBestSatellite(
+    std::vector<nr::sat::SatPriorityScore> selectBestSatellite(
       int servingCellId,
       const std::unordered_set<int> &satPcis);
     void executeChoCandidate(ChoCandidate &candidate);

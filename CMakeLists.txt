@@ -78,11 +78,14 @@ endif()
 if(BUILD_UNIT_TESTS)
     add_executable(sat_time_tests tests/sat_time_tests.cpp)
     target_compile_options(sat_time_tests PRIVATE -Wall -Wextra -pedantic)
-    target_link_libraries(sat_time_tests utils)
+    target_link_libraries(sat_time_tests common-lib)
 
-    add_executable(position_calcs_tests tests/position_calcs_tests.cpp)
-    target_compile_options(position_calcs_tests PRIVATE -Wall -Wextra -pedantic)
-    target_link_libraries(position_calcs_tests utils)
+    add_executable(sat_lib_tests tests/sat_lib_tests.cpp)
+    target_compile_options(sat_lib_tests PRIVATE -Wall -Wextra -pedantic)
+    target_link_libraries(sat_lib_tests common-lib)
+    target_compile_definitions(sat_lib_tests PRIVATE
+        TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data"
+    )
 
     add_executable(rrc_reference_location_tests tests/rrc_reference_location_tests.cpp)
     target_compile_options(rrc_reference_location_tests PRIVATE -Wall -Wextra -pedantic)

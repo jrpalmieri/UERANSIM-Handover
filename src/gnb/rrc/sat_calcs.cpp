@@ -7,15 +7,23 @@
 #include <algorithm>
 #include <cmath>
 
-#include <libsgp4/DateTime.h>
+//#include <libsgp4/DateTime.h>
 
-#include <gnb/sat_tle_store.hpp>
-#include <gnb/sat_time.hpp>
-#include <lib/rrc/common/sat_calc.hpp>
+#include <lib/sat/sat_state.hpp>
+#include <lib/sat/sat_time.hpp>
+#include <lib/sat/sat_calc.hpp>
 #include <utils/common.hpp>
 #include <utils/common_types.hpp>
-#include <utils/position_calcs.hpp>
-#include <utils/sat_time.hpp>
+
+using nr::sat::SatEcefState;
+using nr::sat::EcefPosition;
+using nr::sat::SatTleEntry;
+using nr::sat::EcefDistance;
+using nr::sat::GeoToEcef;
+using nr::sat::EcefToGeo;
+using nr::sat::ComputeNadir;
+using nr::sat::ElevationAngleDeg;
+
 
 namespace nr::gnb
 {
@@ -26,24 +34,104 @@ static constexpr size_t SAT_NEIGHBORHOOD_MAX = 50;
 // Maximum number of satellites to keep in the SIB19 nadir-proximity cache.
 static constexpr size_t SAT_SIB19_MAX = 7;
 
-// ---------------------------------------------------------------------------
-// Public: upsert TLE entries by PCI.
-// ---------------------------------------------------------------------------
-void GnbRrcTask::upsertSatTles(const std::vector<SatTleEntry> &entries)
+static constexpr int MAX_LOOKAHEAD_SEC = 7200; // 2-hour horizon
+
+
+/**
+ * @brief Determines trigger values for dynamic handover events (e.g. Event D1) based on the satellite's 
+ * propagation and UE's position.  Allows for proactive handover decisions based on satellite location predictions.
+ *  * 
+ * @param dynTriggerParams 
+ * @param ownPci 
+ * @param ue 
+ */
+void GnbRrcTask::satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, const int ownPci, RrcUeContext *ue)
 {
-    int64_t now = static_cast<int64_t>(utils::CurrentTimeMillis());
-    std::vector<SatTleEntry> stamped;
-    stamped.reserve(entries.size());
-    for (const auto &entry : entries)
+
+    // min elevation angel to trigger handover, in degrees (set in config)
+    const int theta  = m_config->ntn.elevationMinDeg;
+
+    auto ownTleOpt   = m_base->satStates->getTle(ownPci);
+
+    if (!ownTleOpt.has_value() || !ue->uePosition.isValid)
     {
-        SatTleEntry stored = entry;
-        stored.lastUpdatedMs = now;
-        stamped.push_back(std::move(stored));
+        m_logger->warn("UE[%d] Dynamic trigger: own TLE or UE position unavailable, "
+                        "using defaults (t=%ds d=%dm)",
+                        ue->ueId, dynTriggerParams.condT1_thresholdSec, dynTriggerParams.condD1_distanceThresholdFromReference1);
+        return;
     }
-    m_base->satTleStore->upsertAll(stamped);
-    m_logger->info("TLE store upserted %zu entries, total %zu satellites",
-                   entries.size(), m_base->satTleStore->size());
+    const SatTleEntry &ownTle = m_config->ntn.ownTle.value();
+    m_logger->debug("UE[%d]: Calculating Dynamic trigger conditions for NTN using TLE: %s / %s",
+                        ue->ueId, ownTle.line1.c_str(), ownTle.line2.c_str());
+
+    // convert ue position from lat/long/alt to ECEF for the calculation
+    EcefPosition ueEcef = GeoToEcef(ue->uePosition);
+
+    // get current sat time
+    const int64_t satNowMs = m_base->satTime->CurrentSatTimeMillis();
+    const int satNowSec = static_cast<int>(satNowMs / 1000);
+
+    // get the Ecef of the current gnb location
+    auto sgp4 = m_base->satStates->getSgp4(ownPci);
+    SatEcefState curState{};
+    curState.pos = sgp4->FindPositionEcef(satNowMs);
+    curState.nadir = ComputeNadir(curState.pos);
+
+    // compute current elevation angle to satellite from UE location
+    auto elevAngle = ElevationAngleDeg(ueEcef, curState.pos);
+    m_logger->debug("UE[%d]: Current elevation angle to satellite is %.2f deg (threshold is %d deg)",
+                    ue->ueId, elevAngle, theta);
+
+    EcefPosition nadirAtExitM{};
+    long tExit = 0;
+
+    // If already below the threshold right now, set triggers for right now
+    if (elevAngle < static_cast<double>(theta))
+    {
+        tExit = 0;
+        nadirAtExitM = curState.nadir;
+    }
+    else 
+    {
+        // find the exit time (t_exit) and the nadir distance at exit (nadirAtExitM) by propagating the 
+        //  TLE forward in time until the elevation drops below the threshold
+        tExit = nr::sat::FindExitTimeSec(*sgp4, ueEcef, satNowMs, 0, theta, MAX_LOOKAHEAD_SEC, nadirAtExitM);
+
+    }
+
+    // update the Dynamic triggers with the calculated values
+
+    dynTriggerParams.condT1_thresholdSec = satNowSec + tExit;
+    dynTriggerParams.condT1_durationSec = 100;
+
+    // d1 is comparing UE pos to nadir pos at exit, and if over threshold, that means the sat is beyond the elevation angle threshold
+    {
+        auto refGeo = EcefToGeo(nadirAtExitM);
+        dynTriggerParams.condD1_referenceLocation1 = {refGeo.latitude, refGeo.longitude};
+    }
+    dynTriggerParams.condD1_distanceThresholdFromReference1 = static_cast<int>(EcefDistance(ueEcef, nadirAtExitM));
+    // d2 we set to dummy vals that will always be true, since we just care about triggering the handover once the sat is beyond the elevation threshold
+    dynTriggerParams.condD1_referenceLocation2 = {ue->uePosition.latitude, ue->uePosition.longitude};
+    dynTriggerParams.condD1_distanceThresholdFromReference2 = 1;
+    dynTriggerParams.condD1_hysteresisLocation = 10;
+
+    dynTriggerParams.d1_distanceThresholdFromReference1 = dynTriggerParams.condD1_distanceThresholdFromReference1;
+    dynTriggerParams.d1_referenceLocation1 = dynTriggerParams.condD1_referenceLocation1;
+    dynTriggerParams.d1_distanceThresholdFromReference2 = dynTriggerParams.condD1_distanceThresholdFromReference2;
+    dynTriggerParams.d1_referenceLocation2 = dynTriggerParams.condD1_referenceLocation2;
+    dynTriggerParams.d1_hysteresisLocation = dynTriggerParams.condD1_hysteresisLocation;
+
+    m_logger->debug("UE[%d]: NTN trigger conditions calculated: t_thresh=%d sec (%d sec from sat-now), "
+                "d1_ref1=[%.4f,%.4f], d1_thresh1=%d m, d1_ref2=[%.4f,%.4f], d1_thresh2=%d m",
+                        ue->ueId, dynTriggerParams.condT1_thresholdSec, tExit,
+                        dynTriggerParams.condD1_referenceLocation1.latitudeDeg, dynTriggerParams.condD1_referenceLocation1.longitudeDeg, dynTriggerParams.condD1_distanceThresholdFromReference1,
+                        dynTriggerParams.condD1_referenceLocation2.latitudeDeg, dynTriggerParams.condD1_referenceLocation2.longitudeDeg, dynTriggerParams.condD1_distanceThresholdFromReference2);
+
+    return;
+
 }
+
+
 
 // ---------------------------------------------------------------------------
 // Private: compute the nearest satellite caches and refresh both
@@ -63,14 +151,17 @@ void GnbRrcTask::upsertSatTles(const std::vector<SatTleEntry> &entries)
 // ---------------------------------------------------------------------------
 void GnbRrcTask::roughNeighborhoodSats()
 {
-    std::vector<SatTleEntry> allEntries = m_base->satTleStore->getAll();
+
+    // check that there is sat data to process
+    std::vector<SatTleEntry> allEntries = m_base->satStates->getAllTles();
     if (allEntries.empty())
         return;
 
     // Determine this gNB's own PCI
     int ownPci = cons::getPciFromNci(m_config->nci);
 
-    auto ownTle = m_base->satTleStore->find(ownPci);
+    // check t we have our own TLE data to propagate
+    auto ownTle = m_base->satStates->getTle(ownPci);
     if (!ownTle.has_value())
     {
         m_logger->warn("roughNeighborhoodSats: own TLE not loaded (pci=%d), skipping", ownPci);
@@ -78,17 +169,12 @@ void GnbRrcTask::roughNeighborhoodSats()
     }
 
     // Snapshot current time once so all propagations are coherent.
-    //libsgp4::DateTime now = sat_time::Now();
     const int64_t satNowMs = m_base->satTime->CurrentSatTimeMillis();
-    const libsgp4::DateTime now = nr::rrc::common::UnixMillisToDateTime(satNowMs);
 
     // Propagate own TLE → gNB ECEF position + nadir
-    nr::rrc::common::SatEcefState gnbState{};
-    if (!nr::rrc::common::PropagateTleToEcef(ownTle->line1, ownTle->line2, now, gnbState))
-    {
-        m_logger->warn("roughNeighborhoodSats: failed to propagate own TLE (pci=%d), skipping", ownPci);
-        return;
-    }
+    SatEcefState gnbState{};
+    gnbState.pos = m_base->satStates->getSgp4(ownPci)->FindPositionEcef(satNowMs);
+    gnbState.nadir = ComputeNadir(gnbState.pos);
 
     // Compute per-satellite ECEF and nadir distances
     struct SatInfo
@@ -102,15 +188,13 @@ void GnbRrcTask::roughNeighborhoodSats()
 
     for (const auto &entry : allEntries)
     {
+        // skip ourselves
         if (entry.pci == ownPci)
             continue;
 
-        nr::rrc::common::SatEcefState state{};
-        if (!nr::rrc::common::PropagateTleToEcef(entry.line1, entry.line2, now, state))
-        {
-            m_logger->debug("roughNeighborhoodSats: skipping pci=%d (propagation failed)", entry.pci);
-            continue;
-        }
+        SatEcefState state{};
+        state.pos = m_base->satStates->getSgp4(entry.pci)->FindPositionEcef(satNowMs);
+        state.nadir = ComputeNadir(state.pos);
 
         SatInfo si{};
         si.pci       = entry.pci;

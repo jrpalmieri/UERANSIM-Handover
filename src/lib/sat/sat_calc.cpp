@@ -1,4 +1,5 @@
 #include "sat_calc.hpp"
+#include "sat_state.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -6,27 +7,16 @@
 #include <libsgp4/Eci.h>
 #include <libsgp4/SGP4.h>
 #include <libsgp4/Tle.h>
+#include <libsgp4/DateTime.h>
 
-#include <utils/position_calcs.hpp>
+#include <lib/sat/sgp4.hpp>
+#include <utils/common_types.hpp>
 
-namespace nr::rrc::common
+namespace nr::sat
 {
 
 
-int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
-{
-    const libsgp4::DateTime unixEpoch(1970, 1, 1, 0, 0, 0);
-    auto delta = dateTime - unixEpoch;
-    return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
-}
-
-libsgp4::DateTime UnixMillisToDateTime(int64_t unixMillis)
-{
-    // Note libsgp4 does unix epoch conversion internally, but require microseconds as the input value
-    return libsgp4::DateTime(unixMillis * 1000);
-}
-
-/**
+    /**
  * @brief Propagates TLE data to ECEF coordinates based on provided time
  * 
  * @param line1 TLE line 1
@@ -48,6 +38,26 @@ bool PropagateTleToEcef(const std::string &line1,
     out.nadir = ComputeNadir(out.pos);
     return true;
 }
+
+/**
+ * @brief Propagates TLE data to ECEF coordinates based on provided time
+ * 
+ * @param line1 TLE line 1
+ * @param line2 TLE line 2
+ * @param unixMillis Time to propagate to (in ms from unix Epoch)
+ * @param out Output ECEF position
+ * @return true if successful, false otherwise
+ */
+bool PropagateTleToEcef(const std::string &line1,
+                        const std::string &line2,
+                        const int64_t unixMillis,
+                        SatEcefState &out)
+{
+    const libsgp4::DateTime dt = UnixMillisToDateTime(unixMillis);
+
+    return PropagateTleToEcef(line1, line2, dt, out);
+}
+
 
 /**
  * @brief Propagates TLE data to geodetic coordinates based on provided time
@@ -83,16 +93,50 @@ bool PropagateTleToGeo(const std::string &line1,
     }
 }
 
-int FindExitTimeSec(const std::string &line1,
-                    const std::string &line2,
+/**
+ * @brief Propagates TLE data to geodetic coordinates based on provided time
+ * 
+ * @param line1 TLE line 1
+ * @param line2 TLE line 2
+ * @param unixMillis Time to propagate to (in ms from unix Epoch)
+ * @param out Output geodetic position
+ * @return true if successful, false otherwise
+ */
+bool PropagateTleToGeo(const std::string &line1,
+                        const std::string &line2,
+                        const int64_t unixMillis,
+                        GeoPosition &out)
+{
+    const libsgp4::DateTime dt = UnixMillisToDateTime(unixMillis);
+    return PropagateTleToGeo(line1, line2, dt, out);
+}
+
+
+/**
+ * @brief Find the exit time (in seconds from the given epoch) when the satellite 
+ * will drop below the specified elevation angle from the observer's perspective.
+ * Also returns the nadir point (ECEF) at the exit time.
+ * 
+ * @param[in] sgp4 - Propagation object for determinng satellite position at given times
+ * @param[in] observer - Observer's ECEF position
+ * @param[in] unixMillis - Base epoch time in milliseconds
+ * @param[in] startSec  - start offset in seconds from the epoch to begin the search
+ * @param[in] thetaDeg - elevation angle threshold in degrees
+ * @param[in] maxLookaheadSec - max offset in seconds to end search (if not found earlier)
+ * @param[out] nadirAtExitM - return parameter for the nadir point (in ECEF) at the exit time
+ * @return the exit time in seconds from the base epoch time
+ */
+int FindExitTimeSec(const Propagator &sgp4,
                     const EcefPosition &observer,
-                    const libsgp4::DateTime &epoch,
+                    const int64_t unixMillis,
                     int startSec,
                     int thetaDeg,
                     int maxLookaheadSec,
                     EcefPosition &nadirAtExitM)
 {
     static constexpr int STEP_SEC = 10;
+
+    //libsgp4::DateTime epoch = UnixMillisToDateTime(unixMillis);
 
     nadirAtExitM = EcefPosition{0, 0, 0};
     int tLow = startSec;
@@ -102,8 +146,7 @@ int FindExitTimeSec(const std::string &line1,
     for (int t = startSec + STEP_SEC; t <= startSec + maxLookaheadSec; t += STEP_SEC)
     {
         SatEcefState state{};
-        if (!PropagateTleToEcef(line1, line2, epoch.AddSeconds(t), state))
-            continue;
+        state.pos = sgp4.FindPositionEcef(unixMillis + t * 1000);
 
         if (ElevationAngleDeg(observer, state.pos) < static_cast<double>(thetaDeg))
         {
@@ -118,30 +161,30 @@ int FindExitTimeSec(const std::string &line1,
     {
         const int tEnd = startSec + maxLookaheadSec;
         SatEcefState state{};
-        if (PropagateTleToEcef(line1, line2, epoch.AddSeconds(tEnd), state))
-            nadirAtExitM = state.nadir;
+        state.pos = sgp4.FindPositionEcef(unixMillis + tEnd * 1000);
+        state.nadir = ComputeNadir(state.pos);
+        nadirAtExitM = state.nadir;
+
         return tEnd;
     }
 
+    // binary search to find a more precise exit time between tLow and tHigh
     while (tHigh - tLow > 1)
     {
         const int tMid = (tLow + tHigh) / 2;
         SatEcefState state{};
-        if (!PropagateTleToEcef(line1, line2, epoch.AddSeconds(tMid), state))
-        {
-            tLow = tMid;
-            continue;
-        }
-
+        state.pos = sgp4.FindPositionEcef(unixMillis + tMid * 1000);
         if (ElevationAngleDeg(observer, state.pos) >= static_cast<double>(thetaDeg))
             tLow = tMid;
         else
             tHigh = tMid;
     }
 
+    // return nadir position at exit time
     SatEcefState exitState{};
-    if (PropagateTleToEcef(line1, line2, epoch.AddSeconds(tHigh), exitState))
-        nadirAtExitM = exitState.nadir;
+    exitState.pos = sgp4.FindPositionEcef(unixMillis + tHigh * 1000);
+    exitState.nadir = ComputeNadir(exitState.pos);
+    nadirAtExitM = exitState.nadir;
 
     return tHigh;
 }
@@ -217,9 +260,6 @@ EcefPosition PropagateKeplerianToEcef(const KeplerianElementsRaw &orb,
     return ecef;
 }
 
-namespace
-{
-
 /**
  * @brief Finds the exit time for a satellite based on its state and an observer's position.
  * Caller provides a resolver function to obtain the satellite's ECEF state at a given time offset, allowing
@@ -234,150 +274,68 @@ namespace
  * @param nadirAtExitM - output parameter to receive the satellite's nadir position at the exit time (or at max lookahead if no exit occurs)
  * @return int - time value representing when the satellite exits the elevation threshold, or max lookahead if it never exits within that time
  */
-int FindExitTimeSecWithResolver(int pci,
-                                const EcefPosition &observerEcef,
-                                int startSec,
-                                int thetaDeg,
-                                int maxLookaheadSec,
-                                const SatStateResolver &stateResolver,
-                                EcefPosition &nadirAtExitM)
-{
-    // step units for the progagation search.  a smaller step will yield a more accurate exit time but require more state resolutions (and thus more CPU time).
-    //  10 seconds is a reasonable default that balances accuracy with performance.
-    static constexpr int STEP_SEC = 10;
+// int FindExitTimeSecWithResolver(int pci,
+//                                 const EcefPosition &observerEcef,
+//                                 int startSec,
+//                                 int thetaDeg,
+//                                 int maxLookaheadSec,
+//                                 const SatStateResolver &stateResolver,
+//                                 EcefPosition &nadirAtExitM)
+// {
+//     // step units for the progagation search.  a smaller step will yield a more accurate exit time but require more state resolutions (and thus more CPU time).
+//     //  10 seconds is a reasonable default that balances accuracy with performance.
+//     static constexpr int STEP_SEC = 10;
 
-    nadirAtExitM = EcefPosition{0, 0, 0};
-    int tLow = startSec;
-    int tHigh = startSec;
-    bool found = false;
+//     nadirAtExitM = EcefPosition{0, 0, 0};
+//     int tLow = startSec;
+//     int tHigh = startSec;
+//     bool found = false;
 
-    for (int t = startSec + STEP_SEC; t <= startSec + maxLookaheadSec; t += STEP_SEC)
-    {
-        SatEcefState state{};
-        if (!stateResolver(pci, t, state))
-            continue;
+//     for (int t = startSec + STEP_SEC; t <= startSec + maxLookaheadSec; t += STEP_SEC)
+//     {
+//         SatEcefState state{};
+//         if (!stateResolver(pci, t, state))
+//             continue;
 
-        if (ElevationAngleDeg(observerEcef, state.pos) < static_cast<double>(thetaDeg))
-        {
-            tLow = t - STEP_SEC;
-            tHigh = t;
-            found = true;
-            break;
-        }
-    }
+//         if (ElevationAngleDeg(observerEcef, state.pos) < static_cast<double>(thetaDeg))
+//         {
+//             tLow = t - STEP_SEC;
+//             tHigh = t;
+//             found = true;
+//             break;
+//         }
+//     }
 
-    if (!found)
-    {
-        const int tEnd = startSec + maxLookaheadSec;
-        SatEcefState endState{};
-        if (stateResolver(pci, tEnd, endState))
-            nadirAtExitM = endState.nadir;
-        return tEnd;
-    }
+//     if (!found)
+//     {
+//         const int tEnd = startSec + maxLookaheadSec;
+//         SatEcefState endState{};
+//         if (stateResolver(pci, tEnd, endState))
+//             nadirAtExitM = endState.nadir;
+//         return tEnd;
+//     }
 
-    while (tHigh - tLow > 1)
-    {
-        const int tMid = (tLow + tHigh) / 2;
-        SatEcefState state{};
-        if (!stateResolver(pci, tMid, state))
-        {
-            tLow = tMid;
-            continue;
-        }
+//     while (tHigh - tLow > 1)
+//     {
+//         const int tMid = (tLow + tHigh) / 2;
+//         SatEcefState state{};
+//         if (!stateResolver(pci, tMid, state))
+//         {
+//             tLow = tMid;
+//             continue;
+//         }
 
-        if (ElevationAngleDeg(observerEcef, state.pos) >= static_cast<double>(thetaDeg))
-            tLow = tMid;
-        else
-            tHigh = tMid;
-    }
+//         if (ElevationAngleDeg(observerEcef, state.pos) >= static_cast<double>(thetaDeg))
+//             tLow = tMid;
+//         else
+//             tHigh = tMid;
+//     }
 
-    SatEcefState exitState{};
-    if (stateResolver(pci, tHigh, exitState))
-        nadirAtExitM = exitState.nadir;
+//     SatEcefState exitState{};
+//     if (stateResolver(pci, tHigh, exitState))
+//         nadirAtExitM = exitState.nadir;
 
-    return tHigh;
-}
+//     return tHigh;
+// }
 
-} // namespace
-
-/**
- * @brief Prioritizes target satellites based on their transit times.
- * Caller provides a start time (tExitSec) that represents when the serving Sat will be going below
- * the elevation angle threshold relative to an observer (observerEcef), thus requiring a handover 
- * to a target satellite.  The available satellites to target is provided by candidatePcis.
- * 
- * Caller provides a state resolver function that can return the ECEF state of a target satellite at a 
- * given time offset, allowing flexibility in how satellite states are computed (e.g., from TLEs, 
- * Keplerian elements, or other sources).  Caller may also provide an endoiint resolver function
- * to check whether a signaling endpoint exists for a given satellite PCI, allowing satellites without
- * a signaling path to be filtered out.  If this resolver is not needed, caller can simply provide a 
- * dummy function that always returns true.
- * 
- * Returns a vector of (PCI, score) pairs, sorted by score with the best candidate first.
- * The score is the transit time in seconds (higher is better), which is a proxy for the highest reached
- * elevation angle.
- * Other scoring methods may also be used where constellations with different altitudes are involved, 
- * but transit time is a simple and effective method for constellations of similar altitudes. 
- * 
- * @param servingPci 
- * @param candidatePcis 
- * @param observerEcef 
- * @param tExitSec 
- * @param elevationMinDeg 
- * @param maxLookaheadSec 
- * @param stateResolver 
- * @param endpointResolver 
- * @return std::vector<PciScore> 
- */
-std::vector<PciScore> PrioritizeTargetSats(int servingPci,
-                                           const std::vector<int> &candidatePcis,
-                                           const EcefPosition &observerEcef,
-                                           int tExitSec,
-                                           int elevationMinDeg,
-                                           int maxLookaheadSec,
-                                           const SatStateResolver &stateResolver,
-                                           const EndpointResolver &endpointResolver)
-{
-    std::vector<PciScore> prioritized{};
-
-    const bool hasUePos = (observerEcef.x != 0.0 || observerEcef.y != 0.0 || observerEcef.z != 0.0);
-    if (!hasUePos)
-        return prioritized;
-
-    for (int pci : candidatePcis)
-    {
-        if (pci == servingPci)
-            continue;
-
-        NeighborEndpoint endpoint{};
-        if (!endpointResolver(pci, endpoint))
-            continue;
-
-        SatEcefState stateAtExit{};
-        if (!stateResolver(pci, tExitSec, stateAtExit))
-            continue;
-
-        if (ElevationAngleDeg(observerEcef, stateAtExit.pos) < static_cast<double>(elevationMinDeg))
-            continue;
-
-        EcefPosition nadirDummy{};
-        const int tNeighborExit = FindExitTimeSecWithResolver(pci,
-                                                              observerEcef,
-                                                              tExitSec,
-                                                              elevationMinDeg,
-                                                              maxLookaheadSec,
-                                                              stateResolver,
-                                                              nadirDummy);
-        const int transitSec = tNeighborExit - tExitSec;
-        prioritized.emplace_back(pci, transitSec);
-    }
-
-    std::sort(prioritized.begin(), prioritized.end(), [](const PciScore &a, const PciScore &b) {
-        if (a.second == b.second)
-            return a.first < b.first;
-        return a.second > b.second;
-    });
-
-    return prioritized;
-}
-} // namespace nr::rrc::common
+} // namespace nr::sat

@@ -11,14 +11,14 @@
 #include <atomic>
 
 #include <utils/common.hpp>
-#include <utils/sat_time.hpp>
+#include <lib/sat/sat_time.hpp>
 
 namespace nr::gnb::sat_time
 {
 
-static std::atomic<utils::SatTime *> g_satTime{nullptr};
+static std::atomic<nr::sat::SatTime *> g_satTime{nullptr};
 
-void SetSatTimeSource(utils::SatTime *satTime)
+void SetSatTimeSource(nr::sat::SatTime *satTime)
 {
     g_satTime.store(satTime, std::memory_order_relaxed);
 }

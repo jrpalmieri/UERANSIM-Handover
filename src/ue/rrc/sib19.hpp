@@ -26,9 +26,8 @@
 #include <string>
 #include <unordered_map>
 
-#include <lib/rrc/common/sat_calc.hpp>
+#include <lib/sat/sat_calc.hpp>
 #include <utils/json.hpp>
-#include <utils/position_calcs.hpp>
 
 namespace nr::ue
 {
@@ -45,6 +44,7 @@ enum class EEphemerisType
 {
     POSITION_VELOCITY,   ///< X,Y,Z + VX,VY,VZ state vectors
     ORBITAL_PARAMETERS,  ///< Keplerian elements
+    TLE,                 ///< Raw Two-Line Element set (name + line 1 + line 2)
 };
 
 /**
@@ -88,13 +88,29 @@ struct SatOrbitalParameters
 };
 
 /**
- * @brief EphemerisInfo-r17 CHOICE — either state vectors or Keplerian elements.
+ * @brief Raw Two-Line Element set carried in SIB19 TLE ephemeris mode.
+ *
+ * Fixed-size C-string buffers match the wire layout:
+ *   name  : 25 bytes (up to 24 printable chars + NUL)
+ *   line1 : 70 bytes (standard 69-char TLE line 1 + NUL)
+ *   line2 : 70 bytes (standard 69-char TLE line 2 + NUL)
+ */
+struct SatTleEphemeris
+{
+    char name[25]{};   ///< Satellite name (null-padded)
+    char line1[70]{};  ///< TLE line 1 (null-padded)
+    char line2[70]{};  ///< TLE line 2 (null-padded)
+};
+
+/**
+ * @brief EphemerisInfo-r17 CHOICE — state vectors, Keplerian elements, or raw TLE.
  */
 struct EphemerisInfo
 {
     EEphemerisType type{EEphemerisType::POSITION_VELOCITY};
     SatPositionVelocity posVel{};
     SatOrbitalParameters orbital{};
+    SatTleEphemeris tle{};
 };
 
 /* ------------------------------------------------------------------ */
@@ -274,6 +290,7 @@ struct Sib19Info
 Json ToJson(EEphemerisType v);
 Json ToJson(const SatPositionVelocity &v);
 Json ToJson(const SatOrbitalParameters &v);
+Json ToJson(const SatTleEphemeris &v);
 Json ToJson(const EphemerisInfo &v);
 Json ToJson(const TaInfo &v);
 Json ToJson(const NtnConfig &v);
@@ -303,7 +320,7 @@ inline void extrapolateSatelliteEcefPosition(const SatPositionVelocity &posVel,
                                              double dtSec,
                                              double &x, double &y, double &z)
 {
-    ExtrapolateEcefPosition(posVel.positionX,
+    nr::sat::ExtrapolateEcefPosition(posVel.positionX,
                             posVel.positionY,
                             posVel.positionZ,
                             posVel.velocityVX,
@@ -326,7 +343,7 @@ inline void extrapolateSatelliteEcefPosition(const SatPositionVelocity &posVel,
  */
 inline double solveKepler(double M, double e)
 {
-    return nr::rrc::common::SolveKepler(M, e);
+    return nr::sat::SolveKepler(M, e);
 }
 
 /**
@@ -352,7 +369,7 @@ inline void propagateKeplerian(const SatOrbitalParameters &orb,
                                 int64_t epochMs, int64_t tMs,
                                 double &x, double &y, double &z)
 {
-    const nr::rrc::common::KeplerianElementsRaw raw{
+    const nr::sat::KeplerianElementsRaw raw{
         orb.semiMajorAxis,
         orb.eccentricity,
         orb.periapsis,
@@ -360,7 +377,7 @@ inline void propagateKeplerian(const SatOrbitalParameters &orb,
         orb.inclination,
         orb.meanAnomaly,
     };
-    EcefPosition propagated = nr::rrc::common::PropagateKeplerianToEcef(raw, epochMs, tMs);
+    nr::sat::EcefPosition propagated = nr::sat::PropagateKeplerianToEcef(raw, epochMs, tMs);
     x = propagated.x;
     y = propagated.y;
     z = propagated.z;

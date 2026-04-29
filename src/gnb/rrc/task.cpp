@@ -12,10 +12,9 @@
 #include <gnb/rls/task.hpp>
 #include <lib/rrc/encode.hpp>
 #include <utils/common.hpp>
-#include <utils/position_calcs.hpp>
-#include <lib/rrc/common/sat_calc.hpp>
-#include <gnb/sat_tle_store.hpp>
-#include <utils/sat_time.hpp>
+#include <lib/sat/sat_calc.hpp>
+#include <lib/sat/sat_state.hpp>
+#include <lib/sat/sat_time.hpp>
 
 #include <asn/rrc/ASN_RRC_DLInformationTransfer-IEs.h>
 #include <asn/rrc/ASN_RRC_DLInformationTransfer.h>
@@ -44,16 +43,6 @@ GnbRrcTask::GnbRrcTask(TaskBase *base) : m_base{base}, m_ueCtx{}, m_tidCountersB
 void GnbRrcTask::onStart()
 {
     setTimer(TIMER_ID_SI_BROADCAST, TIMER_PERIOD_SI_BROADCAST);
-
-    //auto gnbPosition = m_base->getGnbPosition();
-    // if (gnbPosition.isValid)
-    //     setTrueGeoPosition(gnbPosition);
-
-    if (m_config->ntn.ownTle.has_value())
-    {
-        upsertSatTles({*m_config->ntn.ownTle});
-        m_logger->info("Loaded own TLE from config (pci=%d)", m_config->ntn.ownTle->pci);
-    }
 
     if (m_config->ntn.ntnEnabled) {
 
@@ -254,7 +243,7 @@ void GnbRrcTask::onUpdateLocationTimerExpired()
 
     // pull the current TLE from the TLE store
     int ownPci = cons::getPciFromNci(m_config->nci);
-    auto ownTle = m_base->satTleStore->find(ownPci);
+    auto ownTle = m_base->satStates->getTle(ownPci);
     if (!ownTle.has_value()){
         m_logger->warn("Own TLE not found for PCI %d; cannot update location", ownPci);
         return;
@@ -262,10 +251,10 @@ void GnbRrcTask::onUpdateLocationTimerExpired()
 
     GeoPosition gnbGeo;
     auto satNow = m_base->satTime->CurrentSatTimeMillis();
-    libsgp4::DateTime now = nr::rrc::common::UnixMillisToDateTime(satNow);
-    
+    libsgp4::DateTime now = nr::sat::UnixMillisToDateTime(satNow);
+
     // get the current geodetic coordinates of the gNB by propagating its TLE to the current time
-    if (!nr::rrc::common::PropagateTleToGeo(ownTle->line1, ownTle->line2, now, gnbGeo))
+    if (!nr::sat::PropagateTleToGeo(ownTle->line1, ownTle->line2, now, gnbGeo))
     {
         m_logger->warn("Failed to propagate own TLE to geodetic coordinates; cannot update location");
         return;

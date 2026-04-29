@@ -21,8 +21,11 @@
 #include <set>
 
 #include <gnb/nts.hpp>
-#include <gnb/sat_time.hpp>
-#include <gnb/sat_tle_store.hpp>
+
+#include <lib/sat/sat_time.hpp>
+#include <lib/sat/sat_state.hpp>
+#include <lib/sat/sat_calc.hpp>
+
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
 #include <utils/libc_error.hpp>
@@ -308,7 +311,7 @@ int RlsUdpTask::computeDbm(const GeoPosition &uePos)
     // if we are in NTN mode, use the satellite model to calculate the path loss.
     if (cfg->ntn.ntnEnabled)
     {
-        return SatelliteSimulatedDbm(gnbPos, uePos, cfg->rfLink);
+        return SatelliteSimulatedDbm(nr::sat::GeoToEcef(gnbPos), uePos, cfg->rfLink);
     }
 
     // Terrestrial mode path loss

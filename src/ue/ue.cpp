@@ -15,7 +15,8 @@
 
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
-#include <utils/sat_time.hpp>
+
+#include <lib/sat/sat_time.hpp>
 
 namespace nr::ue
 {
@@ -32,11 +33,11 @@ UserEquipment::UserEquipment(UeConfig *config, app::IUeController *ueController,
     base->cliCallbackTask = cliCallbackTask;
 
     int64_t startEpochMillis = config->ntn.timeWarp.startEpochMillis.value_or(utils::CurrentTimeMillis());
-    auto startCondition = utils::SatTime::EStartCondition::Moving;
+    auto startCondition = nr::sat::SatTime::EStartCondition::Moving;
     if (config->ntn.timeWarp.startCondition == nr::ue::UeConfig::NtnConfig::TimeWarpConfig::EStartCondition::Paused)
-        startCondition = utils::SatTime::EStartCondition::Paused;
+        startCondition = nr::sat::SatTime::EStartCondition::Paused;
 
-    base->satTime = new utils::SatTime(startEpochMillis, startCondition, config->ntn.timeWarp.tickScaling);
+    base->satTime = new nr::sat::SatTime(startEpochMillis, startCondition, config->ntn.timeWarp.tickScaling);
 
     base->nasTask = new NasTask(base);
     base->rrcTask = new UeRrcTask(base);
@@ -48,6 +49,9 @@ UserEquipment::UserEquipment(UeConfig *config, app::IUeController *ueController,
     // initialize UE Location from config if provided, otherwise default to (0, 0, 0)
     base->UeLocation = config->initialPosition.value_or(GeoPosition{});
     
+    // Satellite states store
+    base->satState = new nr::sat::SatStates();
+
     taskBase = base;
 }
 

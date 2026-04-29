@@ -2,6 +2,7 @@
 
 #include <gnb/types.hpp>
 #include <utils/common_types.hpp>
+#include <lib/sat/sat_calc.hpp>
 
 namespace nr::gnb
 {
@@ -10,7 +11,7 @@ namespace nr::gnb
 /// gnbEcef: current satellite ECEF position (meters).
 /// ueGeo:   UE position in lat/lon/alt.
 /// link:    satellite link budget parameters.
-int SatelliteSimulatedDbm(const EcefPosition &gnbEcef,
+int SatelliteSimulatedDbm(const nr::sat::EcefPosition &gnbEcef,
                           const GeoPosition &ueGeo,
                           const GnbRfLinkConfig &link);
 

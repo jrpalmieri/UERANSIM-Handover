@@ -30,9 +30,10 @@
 
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
 
-namespace utils
+namespace nr::sat
 {
 class SatTime;
+class SatStates;
 }
 
 namespace nr::gnb
@@ -50,7 +51,6 @@ struct NgapUeContext;
 struct RrcUeContext;
 
 class GnbNeighbors;    // fwd decl (neighbors.hpp)
-class SatTleStore;     // fwd decl (sat_tle_store.hpp)
 
 enum class EAmfState
 {
@@ -470,6 +470,7 @@ enum class ESib19EphemerisMode : uint8_t
 {
     PosVel = 0,
     Orbital = 1,
+    Tle = 2,
 };
 
 struct SIB19Config
@@ -505,14 +506,7 @@ struct SatellitePositionVelocityEntry
     int64_t lastUpdatedMs{};
 };
 
-// TLE entry for one satellite gNB.  Keyed by PCI and shared across subsystems.
-struct SatTleEntry
-{
-    int pci{};
-    std::string line1{};
-    std::string line2{};
-    int64_t lastUpdatedMs{};  // 0 = loaded from config, otherwise millisecond timestamp of last CLI upsert
-};
+
 
 enum class EGnbRsrpMode
 {
@@ -635,7 +629,7 @@ struct NtnConfig
     };
 
     bool ntnEnabled{false};
-    std::optional<SatTleEntry> ownTle{};  // set when ntn.tle is present in the config file
+    std::optional<nr::sat::SatTleEntry> ownTle{};  // set when ntn.tle is present in the config file
     TimeWarpConfig timeWarp{};
     SIB19Config sib19{};
     GnbHandoverConfig ntnHandover{};
@@ -720,8 +714,8 @@ struct TaskBase
     GnbRlsTask *rlsTask{};
     XnTask *xnTask{};
 
-    SatTleStore *satTleStore{};  // always non-null after GNodeB construction
-    utils::SatTime *satTime{};
+    nr::sat::SatStates *satStates{}; 
+    nr::sat::SatTime *satTime{};
 
     GnbNeighbors *neighbors{};
 

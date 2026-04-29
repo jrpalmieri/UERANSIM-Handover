@@ -15,6 +15,7 @@
 
 #include <gnb/types.hpp>
 #include <gnb/nts.hpp>
+#include <lib/sat/sat_calc.hpp>
 #include <lib/rrc/common/asn_fwd.hpp>
 #include <utils/logger.hpp>
 #include <utils/nts.hpp>
@@ -81,7 +82,7 @@ class GnbRrcTask : public NtsTask
     void setTruePositionVelocity(const PositionVelocity &value);
     PositionVelocity getTruePositionVelocity() const;
     void upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value);
-    void upsertSatTles(const std::vector<SatTleEntry> &entries);
+    void upsertSatTles(const std::vector<nr::sat::SatTleEntry> &entries);
 
   protected:
     void onStart() override;
@@ -128,6 +129,7 @@ class GnbRrcTask : public NtsTask
     /* Satellite TLE tracking and neighborhood cache - sat_calcs.cpp */
 
     void roughNeighborhoodSats();
+    void satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, const int ownPci, RrcUeContext *ue);
 
     /* System Information Broadcast related - broadcast.cpp */
 
@@ -155,7 +157,7 @@ class GnbRrcTask : public NtsTask
 
     void receiveRrcReconfigurationComplete(int ueId, int cRnti, const ASN_RRC_RRCReconfigurationComplete &msg);
     void receiveMeasurementReport(int ueId, int cRnti, const ASN_RRC_MeasurementReport &msg);
-    void sendHandoverCommand(int ueId, int targetPci, int newCrnti, int t304Ms);
+    void sendUeHandoverMessage(int ueId, int targetPci, int newCrnti, int t304Ms);
     void handleHandoverComplete(int ueId);
     void sendMeasConfig(int ueId, bool forceResend = false);
     void evaluateHandoverDecision(int ueId, int measId);
@@ -172,7 +174,7 @@ class GnbRrcTask : public NtsTask
     std::vector<ScoredNeighbor> prioritizeNeighbors(
       const std::vector<GnbNeighborConfig> &neighborList,
       int servingPci,
-      const EcefPosition &ueEcef,
+      const nr::sat::EcefPosition &ueEcef,
       int tExitSec);
     void clearChoPendingState(RrcUeContext *ue);
     std::vector<long> createMeasConfig(

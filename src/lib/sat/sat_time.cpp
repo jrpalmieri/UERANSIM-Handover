@@ -5,7 +5,7 @@
 
 #include <utils/common.hpp>
 
-namespace utils
+namespace nr::sat
 {
 
 SatTime::SatTime(int64_t startEpochMillis,
@@ -208,4 +208,4 @@ SatTime::Status SatTime::GetStatus()
     return status;
 }
 
-} // namespace utils
+} // namespace nr::sat

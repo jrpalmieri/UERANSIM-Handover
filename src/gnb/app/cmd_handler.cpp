@@ -15,7 +15,6 @@
 #include <stdexcept>
 #include <unordered_set>
 
-#include <libsgp4/DateTime.h>
 #include <gnb/app/task.hpp>
 #include <gnb/gnb.hpp>
 #include <gnb/gtp/task.hpp>
@@ -26,11 +25,21 @@
 #include <gnb/sctp/task.hpp>
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
-#include <utils/position_calcs.hpp>
+
+#include <lib/sat/sat_calc.hpp>
+#include <lib/sat/sat_state.hpp>
+#include <lib/sat/sat_time.hpp>
+
 #include <utils/printer.hpp>
-#include <utils/sat_time.hpp>
 #include <utils/yaml_utils.hpp>
 #include <yaml-cpp/yaml.h>
+
+using nr::sat::GeoToEcef;
+using nr::sat::EcefToGeo;
+using nr::sat::SatTleEntry;
+using nr::sat::EcefPosition;
+using nr::sat::DateTimeToUnixMillis;
+using nr::sat::ParseTleEpochDateTime;
 
 #define PAUSE_CONFIRM_TIMEOUT 3000
 #define PAUSE_POLLING 10
@@ -73,44 +82,8 @@ struct SatLocPvRequest
     int64_t epochMs{};
 };
 
-static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch, const std::string &fieldPath)
-{
-    if (tleEpoch.size() < 5)
-        throw std::runtime_error(fieldPath + " must be in TLE format YYDDD.DDD...");
 
-    if (!std::isdigit(static_cast<unsigned char>(tleEpoch[0])) ||
-        !std::isdigit(static_cast<unsigned char>(tleEpoch[1])))
-    {
-        throw std::runtime_error(fieldPath + " must start with a 2-digit year (YY)");
-    }
-
-    int year2 = (tleEpoch[0] - '0') * 10 + (tleEpoch[1] - '0');
-    int fullYear = year2 >= 57 ? (1900 + year2) : (2000 + year2);
-
-    double dayOfYear = 0.0;
-    try
-    {
-        dayOfYear = std::stod(tleEpoch.substr(2));
-    }
-    catch (const std::exception &)
-    {
-        throw std::runtime_error(fieldPath + " has invalid day-of-year value");
-    }
-
-    if (!(dayOfYear >= 1.0 && dayOfYear < 367.0))
-        throw std::runtime_error(fieldPath + " day-of-year must be in [1, 367)");
-
-    return libsgp4::DateTime(static_cast<unsigned int>(fullYear), dayOfYear);
-}
-
-static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
-{
-    const libsgp4::DateTime unixEpoch(1970, 1, 1, 0, 0, 0);
-    auto delta = dateTime - unixEpoch;
-    return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
-}
-
-static Json ToJsonSatTimeStatus(const utils::SatTime::Status &status)
+static Json ToJsonSatTimeStatus(const nr::sat::SatTime::Status &status)
 {
     Json json = Json::Obj({
         {"sat-time-ms", status.satTimeMillis},
@@ -367,6 +340,8 @@ static std::vector<SatTleEntry> ParseSatTleRequest(const std::string &jsonPayloa
         if (!node["line2"] || !node["line2"].IsScalar())
             throw std::runtime_error(path + ".line2 is required.");
 
+        if (node["name"] && node["name"].IsScalar())
+            entry.name = node["name"].as<std::string>();
         entry.line1 = node["line1"].as<std::string>();
         entry.line2 = node["line2"].as<std::string>();
 
@@ -821,7 +796,7 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
             break;
         }
 
-        m_base->rrcTask->upsertSatTles(entries);
+        m_base->satStates->upsertAll(entries);
 
         Json response = Json::Obj({
             {"result", "ok"},

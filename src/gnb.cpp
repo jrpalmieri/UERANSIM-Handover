@@ -29,7 +29,7 @@
 #include <utils/options.hpp>
 #include <utils/yaml_utils.hpp>
 #include <yaml-cpp/yaml.h>
-#include <lib/rrc/common/sat_calc.hpp>
+#include <lib/sat/sat_calc.hpp>
 
 static app::CliServer *g_cliServer = nullptr;
 static nr::gnb::GnbConfig *g_refConfig = nullptr;
@@ -144,9 +144,11 @@ static nr::gnb::ESib19EphemerisMode ReadSib19EphemerisMode(const YAML::Node &nod
         return nr::gnb::ESib19EphemerisMode::PosVel;
     if (mode == "orbital" || mode == "1")
         return nr::gnb::ESib19EphemerisMode::Orbital;
+    if (mode == "tle" || mode == "2")
+        return nr::gnb::ESib19EphemerisMode::Tle;
 
     throw std::runtime_error(
-        "Field " + fieldPath + " has invalid value, expected 'pos-vel' or 'orbital'");
+        "Field " + fieldPath + " has invalid value, expected 'pos-vel', 'orbital', or 'tle'");
 }
 
 static void ReadTargetCellSelector(
@@ -652,7 +654,7 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
                     throw std::runtime_error("ntn.timeWarp.startEpoch cannot be empty");
 
                 auto startEpochDt = ParseTleEpochDateTime(startEpochText, "ntn.timeWarp.startEpoch");
-                result->ntn.timeWarp.startEpochMillis = nr::rrc::common::DateTimeToUnixMillis(startEpochDt);
+                result->ntn.timeWarp.startEpochMillis = nr::sat::DateTimeToUnixMillis(startEpochDt);
                 result->ntn.timeWarp.startEpochText = std::move(startEpochText);
             }
         }
@@ -665,8 +667,10 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
             if (!yaml::HasField(tle, "line1") || !yaml::HasField(tle, "line2"))
                 throw std::runtime_error("Fields ntn.tle.line1 and ntn.tle.line2 are required");
 
-            nr::gnb::SatTleEntry entry{};
+            nr::sat::SatTleEntry entry{};
             entry.pci = cons::getPciFromNci(result->nci);
+            if (yaml::HasField(tle, "name"))
+                entry.name = tle["name"].as<std::string>();
             entry.line1 = tle["line1"].as<std::string>();
             entry.line2 = tle["line2"].as<std::string>();
             entry.lastUpdatedMs = 0; // 0 = loaded from config, not a CLI upsert

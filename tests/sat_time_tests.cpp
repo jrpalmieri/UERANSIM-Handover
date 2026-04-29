@@ -1,4 +1,4 @@
-#include <utils/sat_time.hpp>
+#include <lib/sat/sat_time.hpp>
 
 #include <cmath>
 #include <cstdint>
@@ -48,12 +48,12 @@ void assertNear(int64_t actual, int64_t expected, int64_t tolerance, const std::
 void testMovingClockAtScaleOne()
 {
     FakeClock clock{1000};
-    utils::SatTime satTime(5000,
-                           utils::SatTime::EStartCondition::Moving,
-                           1.0,
-                           [&clock]() {
-                               return clock.now();
-                           });
+    nr::sat::SatTime satTime(5000,
+                             nr::sat::SatTime::EStartCondition::Moving,
+                             1.0,
+                             [&clock]() {
+                                 return clock.now();
+                             });
 
     assertEq(satTime.CurrentSatTimeMillis(), 5000, "start epoch mismatch");
     clock.advance(250);
@@ -63,11 +63,11 @@ void testMovingClockAtScaleOne()
 void testPausedStartAndRun()
 {
     FakeClock clock{500};
-    utils::SatTime satTime(12345,
-                           utils::SatTime::EStartCondition::Paused,
-                           1.0,
-                           [&clock]() {
-                               return clock.now();
+    nr::sat::SatTime satTime(12345,
+                             nr::sat::SatTime::EStartCondition::Paused,
+                             1.0,
+                             [&clock]() {
+                                 return clock.now();
                            });
 
     clock.advance(1000);
@@ -81,12 +81,12 @@ void testPausedStartAndRun()
 void testScaleChangeKeepsContinuity()
 {
     FakeClock clock{0};
-    utils::SatTime satTime(0,
-                           utils::SatTime::EStartCondition::Moving,
-                           1.0,
-                           [&clock]() {
-                               return clock.now();
-                           });
+    nr::sat::SatTime satTime(0,
+                              nr::sat::SatTime::EStartCondition::Moving,
+                              1.0,
+                              [&clock]() {
+                                  return clock.now();
+                              });
 
     clock.advance(1000);
     assertEq(satTime.CurrentSatTimeMillis(), 1000, "pre-scale continuity mismatch");
@@ -99,12 +99,12 @@ void testScaleChangeKeepsContinuity()
 void testScheduledPause()
 {
     FakeClock clock{100};
-    utils::SatTime satTime(1000,
-                           utils::SatTime::EStartCondition::Moving,
-                           2.0,
-                           [&clock]() {
-                               return clock.now();
-                           });
+    nr::sat::SatTime satTime(1000,
+                              nr::sat::SatTime::EStartCondition::Moving,
+                              2.0,
+                              [&clock]() {
+                                  return clock.now();
+                              });
 
     satTime.SchedulePauseAtWallclockMillis(400);
 
@@ -120,12 +120,12 @@ void testScheduledPause()
 void testSetStartEpochResetsDomainClock()
 {
     FakeClock clock{0};
-    utils::SatTime satTime(10,
-                           utils::SatTime::EStartCondition::Moving,
-                           1.0,
-                           [&clock]() {
-                               return clock.now();
-                           });
+    nr::sat::SatTime satTime(10,
+                              nr::sat::SatTime::EStartCondition::Moving,
+                              1.0,
+                              [&clock]() {
+                                  return clock.now();
+                              });
 
     clock.advance(100);
     assertEq(satTime.CurrentSatTimeMillis(), 110, "pre-reset mismatch");

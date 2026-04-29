@@ -206,36 +206,8 @@ struct GeoPosition
     }
 };
 
-struct EcefPosition;
 
-/// Convert geodetic lat/lon/alt (WGS-84) to ECEF (meters)
-EcefPosition GeoToEcef(const GeoPosition &geo);
 
-/// Earth-Centered Earth-Fixed position in meters
-struct EcefPosition
-{
-    double x{};
-    double y{};
-    double z{};
-    int64_t timestampMs{};
-
-    EcefPosition() = default;
-
-    EcefPosition(double x, double y, double z)
-        : x(x), y(y), z(z)
-    {
-    }
-    EcefPosition(double x, double y, double z, int64_t timestampMs)
-        : x(x), y(y), z(z), timestampMs(timestampMs)
-    {
-    }
-    EcefPosition(const GeoPosition &geo) : EcefPosition(GeoToEcef(geo))
-    {
-    }
-};
-
-/// Compute Euclidean distance (meters) between two ECEF points
-double EcefDistance(const EcefPosition &a, const EcefPosition &b);
 
 struct UacAiBarringSet
 {

@@ -24,7 +24,7 @@
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
 #include <utils/printer.hpp>
-#include <utils/sat_time.hpp>
+#include <lib/sat/sat_time.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include <shared_mutex>
@@ -133,7 +133,7 @@ static int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime)
     return static_cast<int64_t>(std::llround(delta.TotalMilliseconds()));
 }
 
-static Json ToJsonSatTimeStatus(const utils::SatTime::Status &status)
+static Json ToJsonSatTimeStatus(const nr::sat::SatTime::Status &status)
 {
     Json json = Json::Obj({
         {"sat-time-ms", status.satTimeMillis},

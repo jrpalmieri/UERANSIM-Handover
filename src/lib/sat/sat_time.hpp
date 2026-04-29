@@ -9,7 +9,7 @@
 #include <mutex>
 #include <optional>
 
-namespace utils
+namespace nr::sat
 {
 
 class SatTime
@@ -66,4 +66,4 @@ class SatTime
     void applyScheduledRunIfDueLocked(int64_t wallclockMillis);
 };
 
-} // namespace utils
+} // namespace nr::sat

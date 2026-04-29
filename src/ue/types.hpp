@@ -13,7 +13,11 @@
 #include <array>
 #include <atomic>
 
+#include <lib/sat/sat_state.hpp>
+#include <lib/sat/sat_time.hpp>
+
 #include <ue/rrc/sib19.hpp>
+
 #include <deque>
 #include <memory>
 #include <queue>
@@ -33,7 +37,7 @@
 #include <utils/nts.hpp>
 #include <utils/octet_string.hpp>
 
-namespace utils
+namespace nr::sat
 {
 class SatTime;
 }
@@ -421,7 +425,8 @@ struct TaskBase
     NasTask *nasTask{};
     UeRrcTask *rrcTask{};
     UeRlsTask *rlsTask{};
-    utils::SatTime *satTime{};
+    nr::sat::SatTime *satTime{};
+    nr::sat::SatStates *satState{};
 
     // lat/long/alt position of the UE
     GeoPosition UeLocation{};

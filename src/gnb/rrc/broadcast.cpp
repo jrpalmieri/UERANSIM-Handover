@@ -9,16 +9,16 @@
 #include "task.hpp"
 
 #include <gnb/ngap/task.hpp>
-#include <gnb/sat_time.hpp>
-#include <gnb/sat_tle_store.hpp>
+
+#include <lib/sat/sat_time.hpp>
+#include <lib/sat/sat_state.hpp>
+#include <lib/sat/sat_calc.hpp>
+
 #include <lib/asn/rrc.hpp>
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/encode.hpp>
-#include <lib/rrc/common/sat_calc.hpp>
 #include <utils/common.hpp>
 #include <utils/common_types.hpp>
-#include <utils/position_calcs.hpp>
-#include <utils/sat_time.hpp>
 
 #include <climits>
 #include <cstdint>
@@ -42,15 +42,25 @@
 
 #include <algorithm>
 
+using nr::sat::EcefPosition;
+
 namespace nr::gnb
 {
 
 static constexpr uint8_t SIB19_PDU_VERSION = 2;
 static constexpr uint8_t SIB19_PDU_EPH_TYPE_POS_VEL = 0;
 static constexpr uint8_t SIB19_PDU_EPH_TYPE_ORBITAL  = 1;
+static constexpr uint8_t SIB19_PDU_EPH_TYPE_TLE      = 2;
 static constexpr size_t SIB19_HEADER_SIZE = 8;
-static constexpr size_t SIB19_ENTRY_SIZE = 96;
+static constexpr size_t SIB19_ENTRY_SIZE = 96;      // PosVel / Orbital entry size
+static constexpr size_t SIB19_TLE_ENTRY_SIZE = 216; // TLE entry size
 static constexpr uint32_t SIB19_MAX_ENTRIES = 256;
+
+// Offset of the first common field within a standard (PosVel/Orbital) entry.
+static constexpr size_t SIB19_STD_COMMON_OFF = 52;
+// Offset of the first common field within a TLE entry.
+// Layout: 4 (PCI) + 25 (name) + 70 (line1) + 70 (line2) + 3 (pad) = 172
+static constexpr size_t SIB19_TLE_COMMON_OFF = 172;
 
 template <typename T>
 static void WriteLe(std::vector<uint8_t> &buffer, size_t offset, const T &value)
@@ -171,7 +181,7 @@ void GnbRrcTask::triggerSib19Broadcast()
     const auto ephType = m_config->ntn.sib19.ephType;
 
     // Own TLE must be loaded — it is always included as the serving satellite.
-    auto ownTleOpt = m_base->satTleStore->find(ownPci);
+    auto ownTleOpt = m_base->satStates->getTle(ownPci);
     if (!ownTleOpt.has_value())
     {
         m_logger->debug("SIB19: own TLE not loaded (pci=%d), skipping broadcast", ownPci);
@@ -190,7 +200,7 @@ void GnbRrcTask::triggerSib19Broadcast()
     // Coherent time base for all TLE operations.
     const int64_t nowMs = utils::CurrentTimeMillis();
     const int64_t satNowMs = m_base->satTime->CurrentSatTimeMillis();
-    const libsgp4::DateTime now = nr::rrc::common::UnixMillisToDateTime(satNowMs);
+    //const libsgp4::DateTime now = nr::rrc::common::UnixMillisToDateTime(satNowMs);
 
     static constexpr double TWO_PI = 2.0 * M_PI;
     static constexpr double GM     = 3.986004418e14;  // m³/s²
@@ -204,38 +214,17 @@ void GnbRrcTask::triggerSib19Broadcast()
         return static_cast<int32_t>(std::round(norm / TWO_PI * static_cast<double>(1 << 28)));
     };
 
-    // -----------------------------------------------------------------------
-    // Build per-entry ephemeris data.  The union below holds whichever set of
-    // fields is populated based on ephType.
-    // -----------------------------------------------------------------------
-    struct EphEntry
-    {
-        int pci{};
-
-        // pos/vel (ephType == 0)
-        double x{}, y{}, z{};
-        double vx{}, vy{}, vz{};
-
-        // orbital (ephType == 1)
-        int64_t semiMajorAxis{};
-        int32_t eccentricity{};
-        int32_t periapsis{};
-        int32_t longitude{};
-        int32_t inclination{};
-        int32_t meanAnomaly{};
-    };
-
-    std::vector<EphEntry> entries;
+    std::vector<nr::sat::EphEntry> entries;
     entries.reserve(pcis.size());
 
     // Pre-compute t0+1 s only when needed for velocity (pos/vel path).
-    const libsgp4::DateTime nowPlus1 = now.AddSeconds(1.0);
+    const int64_t satNowPlus1 = satNowMs + 1000;
 
     // loop through each PCI, calculating ephemeris data based on the TLE and the configured ephType
     for (int pci : pcis)
     {
-        auto tleOpt = m_base->satTleStore->find(pci);
-        if (!tleOpt.has_value())
+        auto tle = m_base->satStates->getTle(pci);
+        if (!tle.has_value())
         {
             m_logger->debug("SIB19: TLE not found for pci=%d, skipping", pci);
             continue;
@@ -243,63 +232,41 @@ void GnbRrcTask::triggerSib19Broadcast()
 
         try
         {
-            libsgp4::Tle t(tleOpt->line1, tleOpt->line2);
-            EphEntry e{};
+            nr::sat::EphEntry e{};
             e.pci = pci;
 
-            // pos/vel
             if (ephType == ESib19EphemerisMode::PosVel)
             {
-                // --- pos/vel: SGP4 propagate to now + numerical velocity ---
-                libsgp4::SGP4 sgp4(t);
-
-                libsgp4::Eci eci0 = sgp4.FindPosition(now);
-                libsgp4::CoordGeodetic geo0 = eci0.ToGeodetic();
-                EcefPosition p0 = GeoToEcef(GeoPosition{
-                    geo0.latitude  * (180.0 / M_PI),
-                    geo0.longitude * (180.0 / M_PI),
-                    geo0.altitude  * 1000.0
-                });
-
-                libsgp4::Eci eci1 = sgp4.FindPosition(nowPlus1);
-                libsgp4::CoordGeodetic geo1 = eci1.ToGeodetic();
-                EcefPosition p1 = GeoToEcef(GeoPosition{
-                    geo1.latitude  * (180.0 / M_PI),
-                    geo1.longitude * (180.0 / M_PI),
-                    geo1.altitude  * 1000.0
-                });
+                // SGP4 propagate to now + numerical velocity
+                auto propagator = m_base->satStates->getSgp4(pci);
+                EcefPosition p0 = propagator->FindPositionEcef(satNowMs);
+                EcefPosition p1 = propagator->FindPositionEcef(satNowPlus1);
 
                 e.x = p0.x; e.y = p0.y; e.z = p0.z;
                 e.vx = p1.x - p0.x;  // dt = 1 s → difference is m/s
                 e.vy = p1.y - p0.y;
                 e.vz = p1.z - p0.z;
-
-                // Keep global gNB WGS84 state aligned with the serving satellite in NTN mode.
-                if (pci == ownPci)
-                {
-                    GeoPosition ownGeo = EcefToGeo(p0);
-                    ownGeo.isValid = true;
-                    m_base->setGnbPosition(ownGeo, satNowMs);
-                }
             }
-            // orbital
-            else
+            else if (ephType == ESib19EphemerisMode::Orbital)
             {
-                // --- orbital: extract Keplerian elements from TLE ---
-                double n_rad_s = t.MeanMotion() * TWO_PI / 86400.0;
-                double a = std::cbrt(GM / (n_rad_s * n_rad_s));
+                // Extract Keplerian elements from SGP4 state
+                auto propagator = m_base->satStates->getSgp4(pci);
+                auto k = propagator->GetKeplerianElements(satNowMs);
 
-                // Propagate mean anomaly from TLE epoch to broadcast time
-                double dtSec = (now - t.Epoch()).TotalSeconds();
-                double M_now = std::fmod(t.MeanAnomaly(false) + n_rad_s * dtSec, TWO_PI);
-                if (M_now < 0.0) M_now += TWO_PI;
-
-                e.semiMajorAxis = static_cast<int64_t>(std::round(a));
-                e.eccentricity  = static_cast<int32_t>(std::round(t.Eccentricity() * (1 << 20)));
-                e.periapsis     = encAngle(t.ArgumentPerigee(false));
-                e.longitude     = encAngle(t.RightAscendingNode(false));
-                e.inclination   = encAngle(t.Inclination(false));
-                e.meanAnomaly   = encAngle(M_now);
+                e.semiMajorAxis = k.semiMajorAxis;
+                e.eccentricity  = k.eccentricity;
+                e.periapsis     = k.periapsis;
+                e.longitude     = k.longitude;
+                e.inclination   = k.inclination;
+                e.meanAnomaly   = k.meanAnomaly;
+            }
+            else  // ESib19EphemerisMode::Tle
+            {
+                // Copy raw TLE strings directly — no propagation needed
+                const auto &t = tle.value();
+                std::strncpy(e.tleName,  t.name.c_str(),  sizeof(e.tleName)  - 1);
+                std::strncpy(e.tleLine1, t.line1.c_str(), sizeof(e.tleLine1) - 1);
+                std::strncpy(e.tleLine2, t.line2.c_str(), sizeof(e.tleLine2) - 1);
             }
 
             entries.push_back(e);
@@ -317,11 +284,18 @@ void GnbRrcTask::triggerSib19Broadcast()
     }
 
     // -----------------------------------------------------------------------
-    // Serialise payload: version=2, ephType from config, one 96-byte entry each.
-    // Entry layout: 4 (PCI) + 48 (ephemeris) + 44 (common fields).
+    // Serialise payload: version=2, ephType from config.
+    //
+    // PosVel / Orbital entry (96 bytes): 4 (PCI) + 48 (ephemeris) + 44 (common)
+    // TLE entry          (216 bytes): 4 (PCI) + 25 (name) + 70 (line1) +
+    //                                 70 (line2) + 3 (pad) + 44 (common)
     // -----------------------------------------------------------------------
+    const bool isTle = (ephType == ESib19EphemerisMode::Tle);
+    const size_t entrySize = isTle ? SIB19_TLE_ENTRY_SIZE : SIB19_ENTRY_SIZE;
+    const size_t commonOff = isTle ? SIB19_TLE_COMMON_OFF : SIB19_STD_COMMON_OFF;
+
     uint32_t entryCount = static_cast<uint32_t>(entries.size());
-    std::vector<uint8_t> payload(SIB19_HEADER_SIZE + entryCount * SIB19_ENTRY_SIZE, 0);
+    std::vector<uint8_t> payload(SIB19_HEADER_SIZE + entryCount * entrySize, 0);
     payload[0] = SIB19_PDU_VERSION;
     payload[1] = static_cast<uint8_t>(ephType);
     WriteLe(payload, 4, entryCount);
@@ -337,7 +311,7 @@ void GnbRrcTask::triggerSib19Broadcast()
     for (uint32_t i = 0; i < entryCount; i++)
     {
         const auto &e = entries[i];
-        const size_t base = SIB19_HEADER_SIZE + static_cast<size_t>(i) * SIB19_ENTRY_SIZE;
+        const size_t base = SIB19_HEADER_SIZE + static_cast<size_t>(i) * entrySize;
 
         WriteLe(payload, base, static_cast<int32_t>(e.pci));
 
@@ -350,7 +324,7 @@ void GnbRrcTask::triggerSib19Broadcast()
             WriteLe(payload, base + 36, e.vy);
             WriteLe(payload, base + 44, e.vz);
         }
-        else
+        else if (ephType == ESib19EphemerisMode::Orbital)
         {
             WriteLe(payload, base + 4,  e.semiMajorAxis);
             WriteLe(payload, base + 12, e.eccentricity);
@@ -360,17 +334,26 @@ void GnbRrcTask::triggerSib19Broadcast()
             WriteLe(payload, base + 28, e.meanAnomaly);
             // base+32..base+51 reserved — zeroed by vector initialisation
         }
+        else  // Tle
+        {
+            // name at +4 (25 bytes), line1 at +29 (70 bytes), line2 at +99 (70 bytes)
+            // bytes 169..171 are padding — already zeroed by vector initialisation
+            std::memcpy(payload.data() + base + 4,  e.tleName,  sizeof(e.tleName));
+            std::memcpy(payload.data() + base + 29, e.tleLine1, sizeof(e.tleLine1));
+            std::memcpy(payload.data() + base + 99, e.tleLine2, sizeof(e.tleLine2));
+        }
 
-        // Common fields (same layout for both ephemeris types)
-        WriteLe(payload, base + 52, epoch10ms);
-        WriteLe(payload, base + 60, cfg.kOffset);
-        WriteLe(payload, base + 64, cfg.taCommon);
-        WriteLe(payload, base + 72, cfg.taCommonDrift);
-        WriteLe(payload, base + 76, taDriftVar);
-        WriteLe(payload, base + 80, ulSync);
-        WriteLe(payload, base + 84, cellKOffset);
-        WriteLe(payload, base + 88, polarization);
-        WriteLe(payload, base + 92, taDriftTop);
+        // Common fields at offset `commonOff` within each entry (layout is identical
+        // for all modes; only the starting offset differs between TLE and others).
+        WriteLe(payload, base + commonOff,      epoch10ms);
+        WriteLe(payload, base + commonOff + 8,  cfg.kOffset);
+        WriteLe(payload, base + commonOff + 12, cfg.taCommon);
+        WriteLe(payload, base + commonOff + 20, cfg.taCommonDrift);
+        WriteLe(payload, base + commonOff + 24, taDriftVar);
+        WriteLe(payload, base + commonOff + 28, ulSync);
+        WriteLe(payload, base + commonOff + 32, cellKOffset);
+        WriteLe(payload, base + commonOff + 36, polarization);
+        WriteLe(payload, base + commonOff + 40, taDriftTop);
     }
 
     m_logger->debug("SIB19: broadcasting %u entries ephType=%d (own pci=%d + %zu neighbors)",

@@ -15,7 +15,7 @@
 #include <string_view>
 #include <utils/common_types.hpp>
 #include <utils/json.hpp>
-#include <utils/position_calcs.hpp>
+#include <lib/sat/sat_calc.hpp>
 
 namespace nr::rrc::common
 {
@@ -332,11 +332,11 @@ class ReportConfigEvent
             
             GeoPosition refLoc1{d1_referenceLocation1.latitudeDeg, d1_referenceLocation1.longitudeDeg, 0.0};
             
-            double distanceToRef1 = HaversineDistanceMeters(ueLocation, refLoc1);
+            double distanceToRef1 = nr::sat::HaversineDistanceMeters(ueLocation, refLoc1);
             if (distanceToRef1 > d1_distanceThreshFromReference1 + d1_hysteresisLocation) {
 
                 GeoPosition refLoc2{d1_referenceLocation2.latitudeDeg, d1_referenceLocation2.longitudeDeg, 0.0};
-                double distanceToRef2 = HaversineDistanceMeters(ueLocation, refLoc2);
+                double distanceToRef2 = nr::sat::HaversineDistanceMeters(ueLocation, refLoc2);
 
                 return distanceToRef2 < d1_distanceThreshFromReference2 - d1_hysteresisLocation;
 
@@ -349,11 +349,11 @@ class ReportConfigEvent
             
             GeoPosition refLoc1{condD1_referenceLocation1.latitudeDeg, condD1_referenceLocation1.longitudeDeg, 0.0};
             
-            double distanceToRef1 = HaversineDistanceMeters(ueLocation, refLoc1);
+            double distanceToRef1 = nr::sat::HaversineDistanceMeters(ueLocation, refLoc1);
             if (distanceToRef1 > condD1_distanceThreshFromReference1 + condD1_hysteresisLocation) {
 
                 GeoPosition refLoc2{condD1_referenceLocation2.latitudeDeg, condD1_referenceLocation2.longitudeDeg, 0.0};
-                double distanceToRef2 = HaversineDistanceMeters(ueLocation, refLoc2);
+                double distanceToRef2 = nr::sat::HaversineDistanceMeters(ueLocation, refLoc2);
 
                 return distanceToRef2 < condD1_distanceThreshFromReference2 - condD1_hysteresisLocation;
 
