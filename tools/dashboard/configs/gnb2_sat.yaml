@@ -175,6 +175,9 @@ ntn:
     #    Sat 3: Trailing
     line1: '1 99993U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0000'
     line2: '2 99993  45.0000 280.4606 0001000   0.0000  50.0000 15.00000000    19'
+    # Starlink
+    #line1: '1 44725U 19074N   26117.33334491  .00218751  00000+0  39116-2 0  9995'
+    #line2: '2 44725  53.1609 336.9206 0001460  92.8773  76.3071 15.48722716  5882'
     # Sat 4: Distant 1 
     # line1: '1 99994U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0001'
     # line2: '2 99994  45.0000 280.4606 0001000   0.0000  30.0000 15.00000000    18'
@@ -186,6 +189,7 @@ ntn:
   timeWarp:
     # startEpoch must be in TLE epoch format YYDDD.DDDDDDDD
     startEpoch: "26001.00000000"   # lines up with the TLE epoch
+    #startEpoch: "26117.33334491"   # lines up with the TLE epoch
     # startCondition controls whether the satellite time starts immediately (moving) 
     #   or waits for a trigger (paused).
     startCondition: paused

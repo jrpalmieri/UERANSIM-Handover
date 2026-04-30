@@ -15,7 +15,7 @@ ui:
   poll_interval_sec: 1.0
   max_log_lines: 400
   command_timeout_sec: 3.0
-  process_log_dir: ./tools/UI/logs
+  process_log_dir: ./tools/dashboard/logs
 
 user_plane:
   upf_ip: 172.22.0.8
@@ -41,7 +41,7 @@ core_db:
 ue:
   node: UE1
   count: 1
-  config: ./tools/UI/configs/ue1.yaml
+  config: ./tools/dashboard/configs/ue1.yaml
   auto_setcap: true
   run_with_sudo: true
   sudo_non_interactive: false
@@ -51,8 +51,40 @@ ue:
 
 gnbs:
 - node: GNB1
-  config: ./tools/UI/configs/gnb1.yaml
+  config: ./tools/dashboard/configs/gnb1_fixed.yaml
   args: []
 - node: GNB2
-  config: ./tools/UI/configs/gnb2.yaml
+  config: ./tools/dashboard/configs/gnb2_fixed.yaml
   args: []
+
+script:
+- time: 10
+  commands:
+  - node: GNB2
+    command: set-rsrp
+    args: [-90]
+- time: 12
+  commands:
+  - node: GNB2
+    command: set-rsrp
+    args: [-87]
+- time: 14
+  commands:
+  - node: GNB2
+    command: set-rsrp
+    args: [-84]
+- time: 16
+  commands:
+  - node: GNB2
+    command: set-rsrp
+    args: [-81]
+- time: 18
+  commands:
+  - node: GNB2
+    command: set-rsrp
+    args: [-78]
+- time: 20
+  commands:
+  - node: GNB2
+    command: set-rsrp
+    args: [-75]

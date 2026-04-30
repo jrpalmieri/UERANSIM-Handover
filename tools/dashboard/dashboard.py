@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windowed runtime dashboard for multi-UE status, two gNBs, and AMF with manual RSRP injection."""
+"""Windowed runtime dashboard for multi-UE status, gNBs, and AMF with manual RSRP injection."""
 
 from __future__ import annotations
 
@@ -164,31 +164,58 @@ class ManagedProcess:
 
 class WindowedDashboard:
     def __init__(self, config: Optional[Dict[str, object]] = None, workspace: Optional[Path] = None, config_path: Optional[Path] = None, auto_run: bool = False, auto_close: bool = False) -> None:
+
+        # ── Startup parameters ────────────────────────────────────────────────
         self.workspace = workspace or Path.cwd()
         self.config: Optional[Dict[str, object]] = None
-        self.demo_running = False
+        self.config_name: str = "None"
+        self.demo_name: str = ""
         self.auto_run = auto_run
         self.auto_close = auto_close
-        self.config_window: Optional[tk.Toplevel] = None
-        self.content_frame: Optional[ttk.Frame] = None
 
-        # Config-derived fields with safe defaults (overwritten by _apply_config)
+        # ── Config-derived: general / UI timing ──────────────────────────────
+        # Safe defaults; overwritten by _apply_config when a config is loaded.
         self.poll_interval = 1.0
         self.log_limit = 400
         self.command_timeout = 3.0
+
+        # ── Config-derived: executable paths ─────────────────────────────────
         self.nr_cli = "./build/nr-cli"
         self.nr_ue = "./build/nr-ue"
         self.nr_gnb = "./build/nr-gnb"
+
+        # ── Config-derived: UE ───────────────────────────────────────────────
         self.ue_count = 1
         self.ue_keys: List[str] = ["ue1"]
         self.primary_ue_key = "ue1"
-        self.gnb_count = 0
-        self.gnb_keys: List[str] = []
+        self.ue_log_file_template: str = "ue_%i.log"
         self.ue_create_db_profiles = False
         self.ue_run_with_sudo = False
         self.ue_cli_with_sudo = False
         self.ue_cli_sudo_non_interactive = True
         self.ue_cli_sudo_disabled_logged = False
+        self.ue_latitude = None
+        self.ue_longitude = None
+        self.ue_altitude = None
+
+        # ── Config-derived: GNB ──────────────────────────────────────────────
+        self.gnb_count = 0
+        self.gnb_keys: List[str] = []
+        self.gnb_log_file_templates: Dict[str, str] = {}
+        self.gnb_link_ips: Dict[str, str] = {}
+        self.gnb_ncis: Dict[str, str] = {}
+
+        # ── Config-derived: satellite / TLE ──────────────────────────────────
+        self.all_tles: List[Dict[str, str]] = []
+        self.gnb_tles: Dict[str, tuple] = {}
+        self.gnb_sat_names: Dict[str, str] = {}
+        self.sat_epoch_base_raw: str = ""       # raw config value: 'latest', 'earliest', or YYDDD string
+        self.sat_epoch_base_resolved: str = ""  # resolved YYDDD epoch string
+
+        # ── Config-derived: AMF ──────────────────────────────────────────────
+        self.amf_log_file_template: str = ""
+
+        # ── Config-derived: user plane (data path) ───────────────────────────
         self.user_plane_upf_ip = "127.0.0.1"
         self.user_plane_upf_port = 5000
         self.user_plane_capture_enabled = True
@@ -197,90 +224,12 @@ class WindowedDashboard:
         self.user_plane_move_tun_to_netns = False
         self.user_plane_netns_name = "ue1"
         self.user_plane_netns_prefix_len = 16
-        self.user_plane_log_limit = 400
         self.user_plane_auto_ensure_host_route = True
         self.user_plane_host_route_gateway = "172.22.0.1"
         self.user_plane_host_route_subnet = "172.22.0.0/24"
-        self.user_plane_rx_logs: deque[str] = deque(maxlen=self.user_plane_log_limit)
-        self.user_plane_tx_logs: deque[str] = deque(maxlen=self.user_plane_log_limit)
-        self.user_plane_lock = threading.Lock()
-        self.user_plane_window: Optional[tk.Toplevel] = None
-        self.user_plane_rx_widget: Optional[scrolledtext.ScrolledText] = None
-        self.user_plane_tx_widget: Optional[scrolledtext.ScrolledText] = None
-        self.user_plane_header_var: Optional[tk.StringVar] = None
-        self.user_plane_capture_thread: Optional[threading.Thread] = None
-        self.user_plane_tcpdump_thread: Optional[threading.Thread] = None
-        self.user_plane_tcpdump_proc: Optional[subprocess.Popen[str]] = None
-        self.user_plane_capture_stop = threading.Event()
-        self.user_plane_capture_status = "stopped"
-        self.user_plane_capture_backend = "none"
-        self.user_plane_route_status = "unknown"
-        self.user_plane_last_route_log = ""
-        self.user_plane_route_last_check_ip: Optional[str] = None
-        self.user_plane_route_last_check_time = 0.0
-        self.user_plane_netns_status = "disabled"
-        self.user_plane_tun_moved_to_netns = False
-        self.user_plane_last_netns_log = ""
-        self.primary_ue_tun_name: Optional[str] = None
-        self.primary_ue_tun_ip: Optional[str] = None
+        self.user_plane_log_limit = 400   # must precede user_plane_rx_logs / tx_logs
 
-        self.panes: Dict[str, EntityPane] = {}
-        self.processes: Dict[str, ManagedProcess] = {}
-        self.stop_event = threading.Event()
-        self.node_names: Dict[str, str] = {}
-        self.last_cli_error: Dict[str, str] = {}
-        self.ue_db_status: Dict[str, str] = {}
-        self.gnb_link_ips: Dict[str, str] = {}
-        self.gnb_tles: Dict[str, tuple] = {}
-        self.current_rsrp_dbm: Dict[str, Optional[int]] = {}
-        self.rsrp_current_vars: Dict[str, tk.StringVar] = {}
-
-        self.root = tk.Tk()
-        self.root.title("UERANSIM Windowed Dashboard")
-        self.root.geometry("1500x900")
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-
-        self.log_widgets: Dict[str, scrolledtext.ScrolledText] = {}
-        self.scalar_vars: Dict[str, tk.StringVar] = {}
-        self.header_config_var = tk.StringVar(value="Demo: None")
-        self.header_run_var = tk.StringVar(value="Status: Ready")
-        self.config_name: str = "None"
-        self.demo_name: str = ""
-        self._demo_completed: bool = False
-        self.location_window: Optional[tk.Toplevel] = None
-        self.rsrp_window: Optional[tk.Toplevel] = None
-        self.viz_window: Optional[tk.Toplevel] = None
-        self.inject_target_var = tk.StringVar(value="gnb1")
-        self.inject_dbm_var = tk.StringVar(value="-80")
-        self.inject_status_var = tk.StringVar(value="Ready")
-        self.ue_count_var = tk.StringVar(value="UEs: total=0, log-pane=1")
-        self.elapsed_var = tk.StringVar(value="Elapsed: 0s")
-        self.demo_start_time: float = 0.0
-        self.elapsed_timer_id: Optional[str] = None
-        self.run_stop_after_sec: float = 0.0
-        self.run_iterations: int = 1
-        self.run_iteration: int = 0
-        self.reset_core: bool = False
-        self.reset_command: str = ""
-        self.reset_command_args: List[str] = []
-        self._reset_proc: Optional[subprocess.Popen[str]] = None
-        self._resetting: bool = False
-        self.log_dir: Path = Path("./tools/UI/logs")
-        self.run_log_dir_name: str = "run-%t"
-        self.run_log_dir: Optional[Path] = None
-        self.run_log_template: str = "demo.log"
-        self.ue_log_file_template: str = "ue_%i.log"
-        self.gnb_log_file_templates: Dict[str, str] = {}
-        self._run_ts: str = ""
-        self._demo_log_file: Optional[TextIO] = None
-        self.stop_after_timer_id: Optional[str] = None
-        self.program_thread: Optional[threading.Thread] = None
-        self.program_stop_event = threading.Event()
-        self.program_running = False
-        self.repeat_message_thread: Optional[threading.Thread] = None
-        self.repeat_message_stop_event = threading.Event()
-        self.repeat_message_running = False
-
+        # ── Config-derived: user plane test (UPT) ────────────────────────────
         self.upt_enabled = False
         self.upt_ue_source = "UE1"
         self.upt_start_trigger = "tun-up"
@@ -292,21 +241,127 @@ class WindowedDashboard:
         self.upt_message_size_bytes = 0
         self.upt_pad_byte_value = 0x20
 
-        self.amf_log_file_template: str = ""
+        # ── Config-derived: packet capture (PCAP) ────────────────────────────
         self.pcap_enabled = False
         self.pcap_interface = ""
         self.pcap_output_file = "trace.pcap"
         self.pcap_use_sudo = True
         self.pcap_sudo_non_interactive = True
+
+        # ── Config-derived: script ────────────────────────────────────────────
+        self.script_entries: List[Dict[str, object]] = []
+        self._script_editor_rows: List[Dict[str, object]] = []
+
+        # ── Node / process runtime state ──────────────────────────────────────
+        self.panes: Dict[str, EntityPane] = {}
+        self.processes: Dict[str, ManagedProcess] = {}
+        self.stop_event = threading.Event()
+        self.node_names: Dict[str, str] = {}
+        self.last_cli_error: Dict[str, str] = {}
+        self.ue_db_status: Dict[str, str] = {}
+        self.current_rsrp_dbm: Dict[str, Optional[int]] = {}
+        self.primary_ue_tun_name: Optional[str] = None
+        self.primary_ue_tun_ip: Optional[str] = None
+
+        # ── Demo run lifecycle ────────────────────────────────────────────────
+        self.demo_running = False
+        self._demo_completed: bool = False
+        self._resetting: bool = False
+        self.run_iteration: int = 0
+        self.run_iterations: int = 1
+        self.run_stop_after_sec: float = 0.0
+        self.reset_core: bool = False
+        self.reset_command: str = ""
+        self.reset_command_args: List[str] = []
+        self._reset_proc: Optional[subprocess.Popen[str]] = None
+        self.log_dir: Path = Path("./tools/dashboard/logs")
+        self.run_log_dir: Optional[Path] = None
+        self.run_log_dir_name: str = "run-%t"
+        self.run_log_template: str = "demo.log"
+        self._run_ts: str = ""
+        self._demo_log_file: Optional[TextIO] = None
+        self.demo_start_time: float = 0.0
+        self.elapsed_timer_id: Optional[str] = None
+        self.stop_after_timer_id: Optional[str] = None
+
+        # ── Script execution runtime ──────────────────────────────────────────
+        self.script_start_time: float = 0.0
+        self.script_executed_set: set = set()
+        self.script_timer_id: Optional[str] = None
+        self._active_script_entries: List[Dict[str, object]] = []
+
+        # ── Handover program / repeat message ─────────────────────────────────
+        self.program_thread: Optional[threading.Thread] = None
+        self.program_stop_event = threading.Event()
+        self.program_running = False
+        self.repeat_message_thread: Optional[threading.Thread] = None
+        self.repeat_message_stop_event = threading.Event()
+        self.repeat_message_running = False
+
+        # ── User plane capture runtime ────────────────────────────────────────
+        self.user_plane_rx_logs: deque[str] = deque(maxlen=self.user_plane_log_limit)
+        self.user_plane_tx_logs: deque[str] = deque(maxlen=self.user_plane_log_limit)
+        self.user_plane_lock = threading.Lock()
+        self.user_plane_capture_thread: Optional[threading.Thread] = None
+        self.user_plane_tcpdump_thread: Optional[threading.Thread] = None
+        self.user_plane_tcpdump_proc: Optional[subprocess.Popen[str]] = None
+        self.user_plane_capture_stop = threading.Event()
+        self.user_plane_capture_status = "stopped"
+        self.user_plane_capture_backend = "none"
+        self.user_plane_netns_status = "disabled"
+        self.user_plane_tun_moved_to_netns = False
+        self.user_plane_last_netns_log = ""
+        self.user_plane_route_status = "unknown"
+        self.user_plane_last_route_log = ""
+        self.user_plane_route_last_check_ip: Optional[str] = None
+        self.user_plane_route_last_check_time = 0.0
+
+        # ── Packet capture runtime ────────────────────────────────────────────
         self.pcap_proc: Optional[subprocess.Popen[str]] = None
         self.pcap_thread: Optional[threading.Thread] = None
         self.pcap_stop_event = threading.Event()
 
-        self.script_entries: List[Dict[str, object]] = []
-        self.script_start_time: float = 0.0
-        self.script_executed_set: set = set()
-        self.script_timer_id: Optional[str] = None
-        self._script_editor_rows: List[Dict[str, object]] = []
+        # ── Tk root window ────────────────────────────────────────────────────
+        # All tk.StringVar / ttk.Widget assignments must follow this line.
+        self.root = tk.Tk()
+        self.root.title("Satellite Handover Dashboard")
+        self.root.geometry("1500x900")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # ── Main window layout ────────────────────────────────────────────────
+        self.content_frame: Optional[ttk.Frame] = None
+        self.log_widgets: Dict[str, scrolledtext.ScrolledText] = {}
+        self.scalar_vars: Dict[str, tk.StringVar] = {}
+        self.header_config_var = tk.StringVar(value="Demo: None")
+        self.header_run_var = tk.StringVar(value="Status: Ready")
+        self.ue_count_var = tk.StringVar(value="UEs: total=0, log-pane=1")
+        self.elapsed_var = tk.StringVar(value="Elapsed: 0s")
+
+        # ── RSRP / injection controls ─────────────────────────────────────────
+        self.inject_target_var = tk.StringVar(value="gnb1")
+        self.inject_dbm_var = tk.StringVar(value="-80")
+        self.inject_status_var = tk.StringVar(value="Ready")
+        self.rsrp_current_vars: Dict[str, tk.StringVar] = {}
+
+        # ── Config editor UI ──────────────────────────────────────────────────
+        self.config_window: Optional[tk.Toplevel] = None
+        self._cfg_vars: Dict[str, object] = {}
+        self._cfg_apply_btn: Optional[ttk.Button] = None
+        self._sat_selection_vars: Dict[int, tk.StringVar] = {}
+        self._epoch_mode_var: Optional[tk.StringVar] = None
+        self._epoch_manual_var: Optional[tk.StringVar] = None
+
+        # ── Secondary popup windows ───────────────────────────────────────────
+        self.location_window: Optional[tk.Toplevel] = None
+        self.rsrp_window: Optional[tk.Toplevel] = None
+        self.viz_window: Optional[tk.Toplevel] = None
+        self.user_plane_window: Optional[tk.Toplevel] = None
+        self.user_plane_rx_widget: Optional[scrolledtext.ScrolledText] = None
+        self.user_plane_tx_widget: Optional[scrolledtext.ScrolledText] = None
+        self.user_plane_header_var: Optional[tk.StringVar] = None
+
+        # ── Menu (created by _build_menu, called from _build_skeleton_ui) ─────
+        self.run_menu: Optional[tk.Menu] = None
 
         self._build_skeleton_ui()
 
@@ -326,6 +381,7 @@ class WindowedDashboard:
         self.command_timeout = float(ui_cfg.get("command_timeout_sec", 3.0))
 
         self.nr_cli = str(config.get("command_cli", "./build/nr-cli"))
+
         ue_cfg = config.get("ue", {})
         self.nr_ue = str(ue_cfg.get("ue_command", "./build/nr-ue"))
         self.ue_log_file_template = str(ue_cfg.get("ue_log_file", "ue_%i.log"))
@@ -337,6 +393,18 @@ class WindowedDashboard:
         self.ue_cli_with_sudo = bool(ue_cfg.get("cli_with_sudo", self.ue_run_with_sudo))
         self.ue_cli_sudo_non_interactive = bool(ue_cfg.get("cli_sudo_non_interactive", True))
         self.ue_cli_sudo_disabled_logged = False
+
+        def _opt_float(val: object) -> Optional[float]:
+            if val is None or str(val).strip() == "":
+                return None
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
+
+        self.ue_latitude = _opt_float(ue_cfg.get("latitude"))
+        self.ue_longitude = _opt_float(ue_cfg.get("longitude"))
+        self.ue_altitude = _opt_float(ue_cfg.get("altitude"))
 
         up_cfg = config.get("user_plane", {})
         self.user_plane_upf_ip = str(up_cfg.get("upf_ip", "127.0.0.1"))
@@ -375,7 +443,7 @@ class WindowedDashboard:
         self.reset_command_args = [str(x) for x in run_cfg.get("reset_command_args", [])]
         self.run_log_template = str(run_cfg.get("run_log", "demo_%i.log"))
         log_cfg = run_cfg.get("logging", {})
-        log_dir_str = str(log_cfg.get("log_dir", "./tools/UI/logs"))
+        log_dir_str = str(log_cfg.get("log_dir", "./tools/dashboard/logs"))
         self.log_dir = Path(self._resolve(log_dir_str))
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.run_log_dir_name = str(log_cfg.get("run_log_dir_name", "run-%t"))
@@ -393,7 +461,7 @@ class WindowedDashboard:
         gnb_section = config.get("gnb", {})
         self.nr_gnb = str(gnb_section.get("gnb_command", "./build/nr-gnb"))
         gnbs = gnb_section.get("gnbs", [])
-        self.gnb_count = min(3, len(gnbs))
+        self.gnb_count = len(gnbs)
         self.gnb_keys = [f"gnb{i + 1}" for i in range(self.gnb_count)]
         self.gnb_log_file_templates = {
             f"gnb{i + 1}": str(gnbs[i].get("gnb_log_file", f"gnb{i + 1}_%i.log"))
@@ -417,17 +485,56 @@ class WindowedDashboard:
         self.last_cli_error = {}
         self.ue_db_status = {key: "UNKNOWN" for key in self.ue_keys}
         self.gnb_link_ips = {self.gnb_keys[i]: self._extract_gnb_link_ip(i) for i in range(self.gnb_count)}
+        self.gnb_ncis = {
+            self.gnb_keys[i]: str(gnbs[i]["nci"]).strip()
+            for i in range(self.gnb_count)
+            if "nci" in gnbs[i] and str(gnbs[i]["nci"]).strip()
+        }
 
-        sat_tles_list = config.get("sat_tles", [])
+        sat_cfg = config.get("satellite", {})
         tle_by_node: Dict[str, tuple] = {}
-        for tle_entry in (sat_tles_list if isinstance(sat_tles_list, list) else []):
-            if isinstance(tle_entry, dict) and "gnb" in tle_entry and "line1" in tle_entry and "line2" in tle_entry:
-                tle_by_node[str(tle_entry["gnb"])] = (str(tle_entry["line1"]), str(tle_entry["line2"]))
+        sat_name_by_node: Dict[str, str] = {}
+        if isinstance(sat_cfg, dict):
+            source_file = str(sat_cfg.get("tle_source_file", "")).strip()
+            self.all_tles = self._load_tles_from_file(source_file) if source_file else []
+            self.sat_epoch_base_raw = str(sat_cfg.get("epoch_base", "latest")).strip()
+            for entry in sat_cfg.get("gnbs", []):
+                if not isinstance(entry, dict):
+                    continue
+                gnb_name = str(entry.get("gnb", ""))
+                sat_name = str(entry.get("sat_name", ""))
+                for tle in self.all_tles:
+                    if tle["name"] == sat_name:
+                        tle_by_node[gnb_name] = (tle["line1"], tle["line2"])
+                        sat_name_by_node[gnb_name] = sat_name
+                        break
+        else:
+            self.all_tles = []
+            self.sat_epoch_base_raw = ""
+        # Apply gnb_host_sat_name from each GNB config entry (lower priority than satellite.gnbs)
+        for i in range(self.gnb_count):
+            gnb_node = str(gnbs[i]["node"])
+            if gnb_node in tle_by_node:
+                continue
+            host_sat_name = str(gnbs[i].get("gnb_host_sat_name", "")).strip()
+            if not host_sat_name:
+                continue
+            for tle in self.all_tles:
+                if tle["name"] == host_sat_name:
+                    tle_by_node[gnb_node] = (tle["line1"], tle["line2"])
+                    sat_name_by_node[gnb_node] = host_sat_name
+                    break
         self.gnb_tles = {
             self.gnb_keys[i]: tle_by_node[str(gnbs[i]["node"])]
             for i in range(self.gnb_count)
             if str(gnbs[i]["node"]) in tle_by_node
         }
+        self.gnb_sat_names = {
+            self.gnb_keys[i]: sat_name_by_node[str(gnbs[i]["node"])]
+            for i in range(self.gnb_count)
+            if str(gnbs[i]["node"]) in sat_name_by_node
+        }
+        self.sat_epoch_base_resolved = self._resolve_epoch_base(self.sat_epoch_base_raw, self.all_tles)
 
         self.current_rsrp_dbm = {key: None for key in self.gnb_keys}
         self.rsrp_current_vars = {}
@@ -445,6 +552,92 @@ class WindowedDashboard:
         if p.is_absolute():
             return str(p)
         return str((self.workspace / p).resolve())
+
+    def _load_tles_from_file(self, source_file: str) -> List[Dict[str, str]]:
+        path = Path(self._resolve(source_file))
+        result: List[Dict[str, str]] = []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as e:
+            print(f"[TLE] Failed to load {source_file}: {e}", flush=True)
+            return result
+        i = 0
+        while i < len(lines):
+            raw = lines[i].strip()
+            if not raw or raw.startswith("#"):
+                i += 1
+                continue
+            if raw.startswith("1 ") and len(raw) >= 60:
+                # Bare two-line TLE with no name
+                if i + 1 < len(lines) and lines[i + 1].strip().startswith("2 "):
+                    result.append({"name": f"SAT-{len(result) + 1}", "line1": raw, "line2": lines[i + 1].strip()})
+                    i += 2
+                else:
+                    i += 1
+            else:
+                # Three-line format: name, line1, line2
+                if (i + 2 < len(lines)
+                        and lines[i + 1].strip().startswith("1 ")
+                        and lines[i + 2].strip().startswith("2 ")):
+                    result.append({"name": raw, "line1": lines[i + 1].strip(), "line2": lines[i + 2].strip()})
+                    i += 3
+                else:
+                    i += 1
+        return result
+
+    @staticmethod
+    def _extract_tle_epoch(line1: str) -> str:
+        # TLE line1 epoch occupies columns 18-31 (0-indexed), format YYDDD.DDDDDDDD
+        try:
+            return line1[18:32].strip()
+        except IndexError:
+            return ""
+
+    def _resolve_epoch_base(self, raw: str, tles: List[Dict[str, str]]) -> str:
+        """Resolve epoch_base config value to a YYDDD epoch string.
+
+        raw can be 'latest', 'earliest', or a literal YYDDD.ddddddd string.
+        Returns '' if no TLEs are available and the mode requires them.
+        """
+        mode = raw.strip().lower()
+        if mode in ("latest", "earliest"):
+            epochs = [self._extract_tle_epoch(t["line1"]) for t in tles]
+            epochs = [e for e in epochs if e]
+            if not epochs:
+                return ""
+            return max(epochs) if mode == "latest" else min(epochs)
+        return raw.strip()
+
+    def _build_sat_script_entries(self) -> List[Dict[str, object]]:
+        if not self.gnb_tles:
+            return []
+        all_sats: List[Dict[str, object]] = []
+        for gnb_key, (line1, line2) in self.gnb_tles.items():
+            nci = self.gnb_ncis.get(gnb_key, "")
+            if not nci:
+                continue
+            pci = int(nci.strip(), 16)
+            all_sats.append({"pci": pci, "line1": line1, "line2": line2})
+        if not all_sats:
+            return []
+        entries: List[Dict[str, object]] = []
+        for gnb_key in self.gnb_keys:
+            if gnb_key not in self.gnb_tles:
+                continue
+            node_name = self.node_names.get(gnb_key, gnb_key.upper())
+            entries.append({"time": 0, "node": node_name, "command": "sat-tle",
+                            "args": [{"satellites": all_sats}]})
+        epoch_str = self.sat_epoch_base_resolved
+        if epoch_str:
+            for gnb_key in self.gnb_keys:
+                node_name = self.node_names.get(gnb_key, gnb_key.upper())
+                entries.append({"time": 0, "node": node_name, "command": "sat-time",
+                                "args": [f"start-epoch={epoch_str}"]})
+            for ue_key in self.ue_keys:
+                node_name = self.node_names.get(ue_key, ue_key.upper())
+                entries.append({"time": 0, "node": node_name, "command": "sat-time",
+                                "args": [f"start-epoch={epoch_str}"]})
+        return entries
 
     def _parse_script(self, script_json: object) -> List[Dict[str, object]]:
         rows: List[Dict[str, object]] = []
@@ -1053,7 +1246,24 @@ class WindowedDashboard:
         for target in (self._status_loop, self._amf_loop, self._amf_log_loop):
             threading.Thread(target=target, daemon=True).start()
         self._maybe_schedule_auto_user_plane_test()
-        if self.script_entries:
+        ue_loc_entries: List[Dict[str, object]] = []
+        if (self.ue_latitude is not None
+                and self.ue_longitude is not None
+                and self.ue_altitude is not None):
+            ue_node_name = self.node_names.get(self.primary_ue_key, "UE1")
+            loc_arg = ":".join([
+                self._format_cli_float(self.ue_latitude),
+                self._format_cli_float(self.ue_longitude),
+                self._format_cli_float(self.ue_altitude),
+            ])
+            ue_loc_entries.append({
+                "time": 1,
+                "node": ue_node_name,
+                "command": "set-loc-wgs84",
+                "args": [loc_arg],
+            })
+        self._active_script_entries = ue_loc_entries + self._build_sat_script_entries() + self.script_entries
+        if self._active_script_entries:
             self.script_start_time = time.time()
             self.script_executed_set = set()
             self.script_timer_id = self.root.after(1000, self._script_tick)
@@ -1108,7 +1318,7 @@ class WindowedDashboard:
         self.demo_running = False
         if close_log:
             self._close_demo_log_file()
-        if hasattr(self, "run_menu"):
+        if self.run_menu is not None:
             self.run_menu.entryconfig("Run Demo", state=tk.NORMAL if self.config is not None else tk.DISABLED)
             self.run_menu.entryconfig("Stop Demo", state=tk.DISABLED)
         self._update_run_header()
@@ -1184,7 +1394,7 @@ class WindowedDashboard:
             self.script_timer_id = None
             return
         elapsed = time.time() - self.script_start_time
-        for i, entry in enumerate(self.script_entries):
+        for i, entry in enumerate(self._active_script_entries):
             if i not in self.script_executed_set and float(entry["time"]) <= elapsed:
                 self.script_executed_set.add(i)
                 threading.Thread(target=self._execute_script_entry, args=(entry,), daemon=True).start()
@@ -1393,19 +1603,38 @@ class WindowedDashboard:
         row = _add_section_header(run_inner, row, "Logging")
         log_section = run_section.get("logging", {})
         for field_key, default in [
-            ("log_dir", "./tools/UI/logs"),
+            ("log_dir", "./tools/dashboard/logs"),
             ("run_log_dir_name", "run-%t"),
         ]:
             row = _add_field(run_inner, row, field_key, f"run.logging.{field_key}", log_section.get(field_key, default))
 
         # ── UE tab ────────────────────────────────────────────────────────────
-        _build_section_tab("UE", "ue", [
-            ("node", "UE1", False), ("count", 1, False), ("ue_command", "./build/nr-ue", True),
+        # UE tab with Location Setting fields
+        ue_fields = [
+            ("Node Name", "UE1", False), ("count", 1, False), ("ue_command", "./build/nr-ue", True),
             ("config", "", True), ("ue_log_file", "ue_%i.log", False),
             ("create_db_profiles", False, False),
             ("auto_setcap", True, False), ("run_with_sudo", True, False),
             ("sudo_non_interactive", False, False), ("cli_with_sudo", True, False), ("args", [], False),
-        ])
+        ]
+        def _build_ue_tab():
+            tab = ttk.Frame(nb)
+            nb.add(tab, text="UE")
+            inner = _make_scroll_frame(tab)
+            section = self.config.get("ue", {})
+            row = 0
+            row = _add_section_header(inner, row, "UE", first=True)
+
+            for field_key, default, browse in ue_fields:
+                val = section.get(field_key, default) if isinstance(section, dict) else default
+                row = _add_field(inner, row, field_key, f"ue.{field_key}", val, browse=browse)
+            # Location Setting section header
+            row = _add_section_header(inner, row, "Location Setting (overrides config file values)")
+            # Location fields
+            for loc_key, loc_label in [("latitude", "Latitude (deg)"), ("longitude", "Longitude (deg)"), ("altitude", "Altitude (m)")]:
+                val = section.get(loc_key, "")
+                row = _add_field(inner, row, loc_label, f"ue.{loc_key}", val)
+        _build_ue_tab()
 
         # ── GNBs tab ──────────────────────────────────────────────────────────
         gnbs_tab = ttk.Frame(nb)
@@ -1416,6 +1645,9 @@ class WindowedDashboard:
         row = 0
         row = _add_section_header(gnbs_inner, row, "GNB", first=True)
         row = _add_field(gnbs_inner, row, "gnb_command", "gnb.gnb_command", gnb_section.get("gnb_command", "./build/nr-gnb"), browse=True)
+        self._sat_selection_vars = {}
+        sat_comboboxes: Dict[int, ttk.Combobox] = {}
+        sat_names = ["(none)"] + [t["name"] for t in self.all_tles]
         for i, gnb_cfg in enumerate(gnbs):
             row = _add_section_header(gnbs_inner, row, f"GNB{i + 1}")
             for field_key, default, browse in [
@@ -1426,25 +1658,16 @@ class WindowedDashboard:
             ]:
                 row = _add_field(gnbs_inner, row, field_key, f"gnb.gnbs.{i}.{field_key}", gnb_cfg.get(field_key, default), browse=browse)
             gnb_key = f"gnb{i + 1}"
-            tle = self.gnb_tles.get(gnb_key)
-            if tle:
-                ttk.Separator(gnbs_inner, orient="horizontal").grid(
-                    row=row, column=0, columnspan=3, sticky="ew", pady=(8, 4)
-                )
-                row += 1
-                ttk.Label(gnbs_inner, text="Satellite TLE", font=("TkDefaultFont", 9, "bold")).grid(
-                    row=row, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4)
-                )
-                row += 1
-                for tle_label, tle_val in [("line1", tle[0]), ("line2", tle[1])]:
-                    ttk.Label(gnbs_inner, text=tle_label + ":").grid(
-                        row=row, column=0, sticky="w", padx=(4, 8), pady=2
-                    )
-                    ttk.Label(
-                        gnbs_inner, text=tle_val,
-                        font=("TkFixedFont", 8), foreground="#445566", anchor="w",
-                    ).grid(row=row, column=1, columnspan=2, sticky="w", pady=2)
-                    row += 1
+            ttk.Label(gnbs_inner, text="satellite:").grid(row=row, column=0, sticky="w", padx=(4, 8), pady=3)
+            current_sat = self.gnb_sat_names.get(gnb_key, "(none)")
+            if current_sat not in sat_names:
+                current_sat = "(none)"
+            sat_var = tk.StringVar(value=current_sat)
+            self._sat_selection_vars[i] = sat_var
+            cb = ttk.Combobox(gnbs_inner, textvariable=sat_var, values=sat_names, state="readonly", width=30)
+            cb.grid(row=row, column=1, columnspan=2, sticky="ew", pady=3)
+            sat_comboboxes[i] = cb
+            row += 1
 
         # ── Core Network tab ──────────────────────────────────────────────────
         core_tab = ttk.Frame(nb)
@@ -1530,6 +1753,107 @@ class WindowedDashboard:
             text="Note: leaving 'interface' blank auto-discovers the interface\nby routing to the AMF IP address when the demo starts.",
             fg="gray", justify="left",
         ).grid(row=pcap_row, column=0, columnspan=3, sticky="w", padx=4, pady=(8, 2))
+
+        # ── Satellites tab ────────────────────────────────────────────────────
+        sat_tab = ttk.Frame(nb)
+        nb.add(sat_tab, text="Satellites")
+        sat_top = ttk.Frame(sat_tab)
+        sat_top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(6, 2))
+        sat_cfg_section = self.config.get("satellite", {})
+        src_file_val = str(sat_cfg_section.get("tle_source_file", "")) if isinstance(sat_cfg_section, dict) else ""
+        _add_field(sat_top, 0, "tle_source_file", "satellite.tle_source_file", src_file_val, browse=True)
+
+        # epoch_base: dropdown (latest/earliest/manual) + manual text entry
+        raw_epoch = self.sat_epoch_base_raw
+        if raw_epoch.lower() in ("latest", "earliest"):
+            _init_mode = raw_epoch.lower()
+            _init_manual = ""
+        elif raw_epoch:
+            _init_mode = "manual"
+            _init_manual = raw_epoch
+        else:
+            _init_mode = "latest"
+            _init_manual = ""
+        self._epoch_mode_var = tk.StringVar(value=_init_mode)
+        self._epoch_manual_var = tk.StringVar(value=_init_manual)
+        ttk.Label(sat_top, text="epoch_base:").grid(row=1, column=0, sticky="w", padx=(4, 8), pady=3)
+        _epoch_mode_cb = ttk.Combobox(sat_top, textvariable=self._epoch_mode_var,
+                                      values=["latest", "earliest", "manual"],
+                                      state="readonly", width=12)
+        _epoch_mode_cb.grid(row=1, column=1, sticky="w", pady=3)
+        _epoch_manual_entry = ttk.Entry(sat_top, textvariable=self._epoch_manual_var, width=22)
+        _epoch_manual_entry.grid(row=1, column=2, sticky="ew", padx=(4, 0), pady=3)
+
+        def _update_manual_state(*_: object) -> None:
+            state = tk.NORMAL if self._epoch_mode_var.get() == "manual" else tk.DISABLED
+            _epoch_manual_entry.config(state=state)
+
+        self._epoch_mode_var.trace_add("write", _update_manual_state)
+        _update_manual_state()
+
+        sat_count_var = tk.StringVar(value=f"{len(self.all_tles)} satellite(s) loaded")
+
+        def _do_load_tles() -> None:
+            src_var = self._cfg_vars.get("satellite.tle_source_file")
+            if src_var is None:
+                return
+            src = src_var.get().strip()  # type: ignore[union-attr]
+            if not src:
+                return
+            new_tles = self._load_tles_from_file(src)
+            self.all_tles = new_tles
+            new_sat_name_set = {t["name"] for t in new_tles}
+            # Reset GNB satellite assignments; keep if the mapped satellite still exists in new TLEs
+            new_gnb_tles: Dict[str, tuple] = {}
+            new_gnb_sat_names: Dict[str, str] = {}
+            for gnb_key, sat_name in self.gnb_sat_names.items():
+                if sat_name in new_sat_name_set:
+                    new_gnb_tles[gnb_key] = self.gnb_tles[gnb_key]
+                    new_gnb_sat_names[gnb_key] = sat_name
+            self.gnb_tles = new_gnb_tles
+            self.gnb_sat_names = new_gnb_sat_names
+            # Update GNB combobox values and reset selections that no longer match
+            new_cb_values = ["(none)"] + [t["name"] for t in new_tles]
+            for idx, cb in sat_comboboxes.items():
+                cb.configure(values=new_cb_values)
+                var = self._sat_selection_vars.get(idx)
+                if var is not None:
+                    cur = var.get()
+                    if cur not in new_sat_name_set:
+                        var.set("(none)")
+            # Refresh treeview
+            sat_tree.delete(*sat_tree.get_children())
+            for tle in new_tles:
+                sat_tree.insert("", "end", values=(tle["name"], tle["line1"], tle["line2"]))
+            # Re-resolve epoch base against newly loaded TLEs
+            mode = self._epoch_mode_var.get().strip().lower() if self._epoch_mode_var else ""
+            manual = self._epoch_manual_var.get().strip() if self._epoch_manual_var else ""
+            raw = manual if mode == "manual" else mode
+            self.sat_epoch_base_resolved = self._resolve_epoch_base(raw, new_tles)
+            sat_count_var.set(f"{len(new_tles)} satellite(s) loaded")
+
+        ttk.Button(sat_top, text="Load", command=_do_load_tles).grid(row=2, column=1, sticky="w", pady=(0, 4))
+
+        sat_tree_frame = ttk.Frame(sat_tab)
+        sat_tree_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(4, 8))
+        sat_cols = ("name", "line1", "line2")
+        sat_tree = ttk.Treeview(sat_tree_frame, columns=sat_cols, show="headings", selectmode="browse")
+        sat_tree.heading("name", text="Name")
+        sat_tree.heading("line1", text="Line 1")
+        sat_tree.heading("line2", text="Line 2")
+        sat_tree.column("name", width=160, anchor="w")
+        sat_tree.column("line1", width=340, anchor="w")
+        sat_tree.column("line2", width=340, anchor="w")
+        sat_vsb = ttk.Scrollbar(sat_tree_frame, orient="vertical", command=sat_tree.yview)
+        sat_hsb = ttk.Scrollbar(sat_tree_frame, orient="horizontal", command=sat_tree.xview)
+        sat_tree.configure(yscrollcommand=sat_vsb.set, xscrollcommand=sat_hsb.set)
+        sat_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        sat_hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        sat_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        for tle in self.all_tles:
+            sat_tree.insert("", "end", values=(tle["name"], tle["line1"], tle["line2"]))
+        ttk.Label(sat_tab, textvariable=sat_count_var,
+                  foreground="gray").pack(side=tk.BOTTOM, anchor="w", padx=8, pady=(0, 4))
 
         # ── Script tab ────────────────────────────────────────────────────────
         script_tab = ttk.Frame(nb)
@@ -1685,7 +2009,7 @@ class WindowedDashboard:
         ttk.Button(btn_bar, text="Close", command=_on_win_close).pack(side=tk.LEFT)
 
     def _populate_config_window(self) -> None:
-        if not hasattr(self, "_cfg_vars") or self.config is None:
+        if self.config is None:
             return
         for path, var in self._cfg_vars.items():
             parts = path.split(".")
@@ -1695,7 +2019,8 @@ class WindowedDashboard:
                 elif len(parts) == 3:
                     val = self.config.get(parts[0], {}).get(parts[1], {}).get(parts[2], "")
                 elif len(parts) == 2:
-                    val = self.config.get(parts[0], {}).get(parts[1], "")
+                    sect = self.config.get(parts[0])
+                    val = sect.get(parts[1], "") if isinstance(sect, dict) else ""
                 elif len(parts) == 1:
                     val = self.config.get(parts[0], "")
                 else:
@@ -1706,9 +2031,25 @@ class WindowedDashboard:
                     var.set(json.dumps(val) if isinstance(val, list) else str(val) if val is not None else "")
             except (KeyError, IndexError, TypeError):
                 pass
+        # Refresh satellite dropdown selections
+        for i, var in self._sat_selection_vars.items():
+            gnb_key = f"gnb{i + 1}"
+            sat_name = self.gnb_sat_names.get(gnb_key, "(none)")
+            var.set(sat_name if sat_name else "(none)")
+        # Refresh epoch_base mode/manual fields
+        if self._epoch_mode_var is not None and self._epoch_manual_var is not None:
+            raw = self.sat_epoch_base_raw
+            if raw.lower() in ("latest", "earliest"):
+                self._epoch_mode_var.set(raw.lower())
+            elif raw:
+                self._epoch_mode_var.set("manual")
+                self._epoch_manual_var.set(raw)
+            else:
+                self._epoch_mode_var.set("latest")
+                self._epoch_manual_var.set("")
 
     def _apply_config_from_editor(self) -> None:
-        if self.demo_running or not hasattr(self, "_cfg_vars") or self.config is None:
+        if self.demo_running or self.config is None:
             return
         new_cfg = copy.deepcopy(self.config)
         for path, var in self._cfg_vars.items():
@@ -1734,6 +2075,26 @@ class WindowedDashboard:
             except (IndexError, KeyError, TypeError):
                 pass
         new_cfg["script"] = self._script_rows_to_json(self._script_editor_rows)
+        # Persist satellite selections from GNB dropdowns and epoch_base into satellite section
+        gnbs_list = new_cfg.get("gnb", {}).get("gnbs", []) if isinstance(new_cfg.get("gnb"), dict) else []
+        sat_sect = new_cfg.get("satellite", {})
+        if not isinstance(sat_sect, dict):
+            sat_sect = {}
+        new_cfg["satellite"] = sat_sect
+        gnb_assignments = []
+        for i, gnb_cfg in enumerate(gnbs_list):
+            var = self._sat_selection_vars.get(i)
+            if var is None:
+                continue
+            sel = var.get()
+            if sel and sel != "(none)":
+                gnb_name = str(gnb_cfg.get("node", f"GNB{i + 1}"))
+                gnb_assignments.append({"gnb": gnb_name, "sat_name": sel})
+        sat_sect["gnbs"] = gnb_assignments
+        if self._epoch_mode_var is not None and self._epoch_manual_var is not None:
+            mode = self._epoch_mode_var.get().strip().lower()
+            epoch_val = self._epoch_manual_var.get().strip() if mode == "manual" else mode
+            sat_sect["epoch_base"] = epoch_val
         try:
             validate_config(new_cfg)
         except ValueError as ex:
@@ -3106,6 +3467,9 @@ class WindowedDashboard:
                 self._resolve(str(gnb_cfg["config"])),
                 *[str(x) for x in gnb_cfg.get("args", [])],
             ]
+            nci = self.gnb_ncis.get(key)
+            if nci:
+                gnb_cmd.extend(["--nci", nci])
             self.processes[key] = ManagedProcess(
                 self.panes[key],
                 gnb_cmd,
@@ -3321,6 +3685,21 @@ class WindowedDashboard:
         return f"{yy:02d}{doy:03d}" + f"{frac:.7f}"[1:]  # "0.ddddddd" → ".ddddddd"
 
     @staticmethod
+    def _yyddd_to_ms(epoch_str: str) -> Optional[float]:
+        """Convert a TLE-format YYDDD.ddddddd epoch string to Unix milliseconds (UTC)."""
+        try:
+            yy = int(epoch_str[:2])
+            year = 2000 + yy if yy < 57 else 1900 + yy
+            day_frac = float(epoch_str[2:])
+            doy = int(day_frac)
+            frac = day_frac - doy
+            dt = (datetime.datetime(year, 1, 1, tzinfo=datetime.timezone.utc)
+                  + datetime.timedelta(days=doy - 1 + frac))
+            return dt.timestamp() * 1000.0
+        except (ValueError, IndexError, OverflowError):
+            return None
+
+    @staticmethod
     def _haversine_2d_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         radius_m = 6371000.0
         lat1_rad = math.radians(lat1)
@@ -3345,6 +3724,35 @@ class WindowedDashboard:
             (N + alt_m) * math.cos(lat) * math.sin(lon),
             (N * (1.0 - e2) + alt_m) * math.sin(lat),
         )
+
+    @staticmethod
+    def _nadir_wgs84(lat_deg: float, lon_deg: float, alt_m: float) -> tuple[float, float]:
+        """Geocentric sub-satellite point on the WGS84 ellipsoid surface: returns (lat_deg, lon_deg)."""
+        a = 6378137.0
+        f = 1.0 / 298.257223563
+        b = a * (1.0 - f)
+        e2 = 2.0 * f - f * f
+        lat = math.radians(lat_deg)
+        lon = math.radians(lon_deg)
+        N = a / math.sqrt(1.0 - e2 * math.sin(lat) ** 2)
+        x = (N + alt_m) * math.cos(lat) * math.cos(lon)
+        y = (N + alt_m) * math.cos(lat) * math.sin(lon)
+        z = (N * (1.0 - e2) + alt_m) * math.sin(lat)
+        # Scale the ECEF vector to the ellipsoid surface along the geocentric direction
+        t = 1.0 / math.sqrt(x * x / (a * a) + y * y / (a * a) + z * z / (b * b))
+        xn, yn, zn = t * x, t * y, t * z
+        # ECEF nadir point → WGS84 geodetic (iterative Bowring)
+        lon_n = math.atan2(yn, xn)
+        p = math.sqrt(xn * xn + yn * yn)
+        lat_n = math.atan2(zn, p * (1.0 - e2))
+        for _ in range(10):
+            N_n = a / math.sqrt(1.0 - e2 * math.sin(lat_n) ** 2)
+            lat_new = math.atan2(zn + e2 * N_n * math.sin(lat_n), p)
+            if abs(lat_new - lat_n) < 1e-12:
+                lat_n = lat_new
+                break
+            lat_n = lat_new
+        return math.degrees(lat_n), math.degrees(lon_n)
 
     @classmethod
     def _distance_3d_m(
@@ -3878,7 +4286,7 @@ class WindowedDashboard:
         view_var = tk.StringVar(value="Elevation / Azimuth")
         view_combo = ttk.Combobox(
             ctrl, textvariable=view_var,
-            values=["Elevation / Azimuth", "True Scale (Earth Cross-Section)"],
+            values=["Elevation / Azimuth", "Earth Half Projection"],
             state="readonly", width=34,
         )
         view_combo.pack(side=tk.LEFT, padx=(4, 12))
@@ -3908,42 +4316,115 @@ class WindowedDashboard:
         # ── Shared state ─────────────────────────────────────────────────────
         loc_cache: Dict[str, Dict[str, float]] = {}
         tle_cache: Dict[str, Dict[str, float]] = {}
+        unassoc_sat_cache: Dict[str, Dict[str, float]] = {}  # sat_name → propagated WGS84
         poll_id: list = [None]
 
         GNB_COLORS = ["#ff8800", "#00aaff", "#ff44ff"]
         UE_COLOR   = "#44ff44"
 
+        # Set of sat names that are associated with a GNB
+        _gnb_sat_name_set: set = set(self.gnb_sat_names.values())
+
         def _update_info_panel() -> None:
             lines: List[str] = []
+            ue_loc = loc_cache.get(self.primary_ue_key)
+
             for key in [self.primary_ue_key] + self.gnb_keys:
-                label = "UE" if key == self.primary_ue_key else key.upper()
-                node  = self.node_names.get(key, key)
-                loc   = loc_cache.get(key)
-                prop  = tle_cache.get(key)
-                lines.append(f"{label}  ({node})")
-                if loc and prop:
-                    lines.append(f"  {'Reported':<20}Propagated")
-                    lines.append(f"  lat: {loc['latitude']:+12.6f}°  {prop['latitude']:+12.6f}°")
-                    lines.append(f"  lon: {loc['longitude']:+12.6f}°  {prop['longitude']:+12.6f}°")
-                    lines.append(f"  alt: {loc['altitude']:>12,.0f} m  {prop['altitude']:>12,.0f} m")
-                    if "timestampMs" in loc:
-                        lines.append(f"  ts:  {self._ms_to_yyddd(loc['timestampMs'])}")
-                elif loc:
-                    lines.append(f"  lat: {loc['latitude']:+12.6f}°")
-                    lines.append(f"  lon: {loc['longitude']:+12.6f}°")
-                    lines.append(f"  alt: {loc['altitude']:>12,.0f} m")
-                    if "timestampMs" in loc:
-                        lines.append(f"  ts:  {self._ms_to_yyddd(loc['timestampMs'])}")
+                node = self.node_names.get(key, key)
+                loc  = loc_cache.get(key)
+                prop = tle_cache.get(key)
+
+                if key == self.primary_ue_key:
+                    lines.append(f"UE  ({node})")
+                    if loc:
+                        if "timestampMs" in loc:
+                            lines.append(f"  ts:  {self._ms_to_yyddd(loc['timestampMs'])}")
+                        lines.append(f"  lat: {loc['latitude']:+12.6f}°")
+                        lines.append(f"  lon: {loc['longitude']:+12.6f}°")
+                        lines.append(f"  alt: {loc['altitude']:>10,.0f} m")
+                    else:
+                        lines.append("  (no data)")
                 else:
-                    lines.append("  (no data)")
+                    sat_name = self.gnb_sat_names.get(key, "")
+                    if sat_name:
+                        lines.append(f"{key.upper()} ({node} - {sat_name})")
+                    else:
+                        lines.append(f"{key.upper()} ({node})")
+                    if prop and loc:
+                        if "timestampMs" in loc:
+                            lines.append(f"  ts:  {self._ms_to_yyddd(loc['timestampMs'])}")
+                        lines.append(f"         Propagated         Reported")
+                        lines.append(f"  lat: {prop['latitude']:+12.6f}°  {loc['latitude']:+12.6f}°")
+                        lines.append(f"  lon: {prop['longitude']:+12.6f}°  {loc['longitude']:+12.6f}°")
+                        lines.append(f"  alt: {prop['altitude']:>10,.0f} m  {loc['altitude']:>10.0f} m")
+                        if ue_loc is not None:
+                            el_prop = self._elevation_angle_deg(
+                                ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                                prop["latitude"], prop["longitude"], prop["altitude"],
+                            )
+                            el_rep = self._elevation_angle_deg(
+                                ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                                loc["latitude"], loc["longitude"], loc["altitude"],
+                            )
+                            lines.append(f"  el:  {el_prop:+8.2f}°      {el_rep:+8.2f}°")
+                        else:
+                            lines.append("  el:  N/A")
+                    elif prop:
+                        lines.append(f"  lat: {prop['latitude']:+12.6f}°")
+                        lines.append(f"  lon: {prop['longitude']:+12.6f}°")
+                        lines.append(f"  alt: {prop['altitude']:>10,.0f} m")
+                        if ue_loc is not None:
+                            el_prop = self._elevation_angle_deg(
+                                ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                                prop["latitude"], prop["longitude"], prop["altitude"],
+                            )
+                            lines.append(f"  el:  {el_prop:+8.2f}°")
+                        else:
+                            lines.append("  el:  N/A")
+                    elif loc:
+                        if "timestampMs" in loc:
+                            lines.append(f"  ts:  {self._ms_to_yyddd(loc['timestampMs'])}")
+                        lines.append(f"  lat: {loc['latitude']:+12.6f}°")
+                        lines.append(f"  lon: {loc['longitude']:+12.6f}°")
+                        lines.append(f"  alt: {loc['altitude']:>10,.0f} m")
+                        if ue_loc is not None:
+                            el_loc = self._elevation_angle_deg(
+                                ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                                loc["latitude"], loc["longitude"], loc["altitude"],
+                            )
+                            lines.append(f"  el:  {el_loc:+8.2f}°")
+                        else:
+                            lines.append("  el:  N/A")
+                    else:
+                        lines.append("  (no data)")
                 lines.append("")
+
+            # Unassociated sats — only list those above the UE horizon
+            for sat_name, sat_loc in sorted(unassoc_sat_cache.items()):
+                if ue_loc is not None:
+                    el = self._elevation_angle_deg(
+                        ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                        sat_loc["latitude"], sat_loc["longitude"], sat_loc["altitude"],
+                    )
+                    if el <= 0.0:
+                        continue
+                else:
+                    el = None
+                lines.append(sat_name)
+                lines.append(f"  lat: {sat_loc['latitude']:+12.6f}°")
+                lines.append(f"  lon: {sat_loc['longitude']:+12.6f}°")
+                lines.append(f"  alt: {sat_loc['altitude']:>10,.0f} m")
+                if el is not None:
+                    lines.append(f"  el:  {el:+8.2f}°")
+                lines.append("")
+
             info_text.config(state=tk.NORMAL)
             info_text.delete("1.0", tk.END)
             info_text.insert(tk.END, "\n".join(lines).rstrip())
             info_text.config(state=tk.DISABLED)
 
         def _fetch_all() -> int:
-            nonlocal loc_cache, tle_cache
+            nonlocal loc_cache, tle_cache, unassoc_sat_cache
             new: Dict[str, Dict[str, float]] = {}
             for key in [self.primary_ue_key] + self.gnb_keys:
                 try:
@@ -3960,13 +4441,41 @@ class WindowedDashboard:
                     propagated = self._propagate_tle_to_wgs84(tle[0], tle[1], epoch_ms=epoch_ms)
                     if propagated is not None:
                         new_tle[gnb_key] = propagated
+
+            # Determine the earliest reported sat-time across all GNBs for unassociated propagation;
+            # fall back to the configured epoch_base if no GNBs have reported yet.
+            gnb_timestamps = [
+                new[k]["timestampMs"]
+                for k in self.gnb_keys
+                if k in new and "timestampMs" in new[k]
+            ]
+            if gnb_timestamps:
+                unassoc_epoch_ms: Optional[float] = min(gnb_timestamps)
+            elif self.sat_epoch_base_resolved:
+                unassoc_epoch_ms = self._yyddd_to_ms(self.sat_epoch_base_resolved)
+            else:
+                unassoc_epoch_ms = None
+
+            # Propagate all unassociated sats in the TLE store
+            new_unassoc: Dict[str, Dict[str, float]] = {}
+            for tle_entry in self.all_tles:
+                sat_name = tle_entry["name"]
+                if sat_name in _gnb_sat_name_set:
+                    continue
+                propagated = self._propagate_tle_to_wgs84(
+                    tle_entry["line1"], tle_entry["line2"], epoch_ms=unassoc_epoch_ms
+                )
+                if propagated is not None:
+                    new_unassoc[sat_name] = propagated
+
             loc_cache = new
             tle_cache = new_tle
+            unassoc_sat_cache = new_unassoc
             return len(new)
 
         def _draw() -> None:
-            if view_var.get().startswith("True"):
-                _draw_true_scale()
+            if view_var.get().startswith("Earth"):
+                _draw_earth_half()
             else:
                 _draw_elev_az()
 
@@ -4049,6 +4558,21 @@ class WindowedDashboard:
                                     fill="#888", font=("Arial", 11))
                 return
 
+            # Unassociated satellites — small white dots (all elevations)
+            for sat_loc in unassoc_sat_cache.values():
+                el = self._elevation_angle_deg(
+                    ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                    sat_loc["latitude"], sat_loc["longitude"], sat_loc["altitude"],
+                )
+                az = self._azimuth_deg(
+                    ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                    sat_loc["latitude"], sat_loc["longitude"], sat_loc["altitude"],
+                )
+                el_c = max(-90.0, min(90.0, el))
+                sx, sy = to_xy(az % 360.0, el_c)
+                canvas.create_oval(sx - 2, sy - 2, sx + 2, sy + 2,
+                                   fill="white", outline="")
+
             for i, gnb_key in enumerate(self.gnb_keys):
                 gnb_loc = loc_cache.get(gnb_key)
                 if gnb_loc is None:
@@ -4073,156 +4597,142 @@ class WindowedDashboard:
                                    text=f"az={az:.0f}°  el={el:+.1f}°",
                                    fill=color, font=("Arial", 7), anchor="n")
 
-        # ── True Scale (Earth Cross-Section) view ─────────────────────────────
-        def _draw_true_scale() -> None:
+        # ── Earth Half Projection (Nadir View) ────────────────────────────────
+        def _draw_earth_half() -> None:
             canvas.delete("all")
             W = canvas.winfo_width()  or 800
             H = canvas.winfo_height() or 650
-            margin = 50
 
-            ue_loc    = loc_cache.get(self.primary_ue_key)
-            gnb_pairs = [(k, loc_cache[k]) for k in self.gnb_keys if k in loc_cache]
+            ML, MR, MT, MB = 46, 16, 16, 36
+            pw = W - ML - MR
+            ph = H - MT - MB
 
-            if ue_loc is None and not gnb_pairs:
+            ue_loc = loc_cache.get(self.primary_ue_key)
+
+            if ue_loc is None and not any(k in loc_cache for k in self.gnb_keys):
                 canvas.create_text(W // 2, H // 2,
-                                    text="No location data — press Refresh Now",
-                                    fill="#888", font=("Arial", 12))
+                                   text="No location data — press Refresh Now",
+                                   fill="#888", font=("Arial", 12))
                 return
 
-            # ── Vector helpers ────────────────────────────────────────────────
-            def _dot3(a: tuple, b: tuple) -> float:
-                return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
-
-            def _norm3(v: tuple) -> float:
-                return math.sqrt(v[0]**2 + v[1]**2 + v[2]**2)
-
-            def _normalize3(v: tuple) -> tuple:
-                n = _norm3(v)
-                return (v[0]/n, v[1]/n, v[2]/n) if n > 1e-10 else (1.0, 0.0, 0.0)
-
-            def _sub3(a: tuple, b: tuple) -> tuple:
-                return (a[0]-b[0], a[1]-b[1], a[2]-b[2])
-
-            def _scale3(v: tuple, s: float) -> tuple:
-                return (v[0]*s, v[1]*s, v[2]*s)
-
-            def _ecef(loc: Dict[str, float]) -> tuple:
-                return self._wgs84_to_ecef(loc["latitude"], loc["longitude"], loc["altitude"])
-
-            # ── Projection basis ──────────────────────────────────────────────
-            # e1 = radial "up" at UE;  UE sits at top of the Earth circle in the view
+            # Center longitude on UE (fall back to first GNB nadir, then 0°)
             if ue_loc:
-                ue_ecef = _ecef(ue_loc)
+                center_lon = ue_loc["longitude"]
             else:
-                ue_ecef = _ecef(gnb_pairs[0][1])
+                first_gnb = next((loc_cache[k] for k in self.gnb_keys if k in loc_cache), None)
+                if first_gnb:
+                    nlat, nlon = self._nadir_wgs84(
+                        first_gnb["latitude"], first_gnb["longitude"], first_gnb["altitude"])
+                    center_lon = nlon
+                else:
+                    center_lon = 0.0
 
-            e1 = _normalize3(ue_ecef)
+            # Canvas origin: map center = (center_lon, 0° lat)
+            map_cx = ML + pw / 2.0   # pixel x at center_lon
+            map_cy = MT + ph / 2.0   # pixel y at equator
 
-            # e2 = tangential direction in the orbital plane (perpendicular to e1)
-            e2_acc = [0.0, 0.0, 0.0]
-            for _, gloc in gnb_pairs:
-                g   = _ecef(gloc)
-                d   = _dot3(g, e1)
-                perp = _sub3(g, _scale3(e1, d))
-                n   = _norm3(perp)
-                if n > 1.0:
-                    e2_acc[0] += perp[0] / n
-                    e2_acc[1] += perp[1] / n
-                    e2_acc[2] += perp[2] / n
+            # Each degree of longitude spans pw/180 pixels; each degree of lat ph/180 pixels
+            px_per_lon = pw / 180.0
+            px_per_lat = ph / 180.0
 
-            e2_raw = tuple(e2_acc)
-            if _norm3(e2_raw) < 0.1:
-                # Fallback: arbitrary perpendicular to e1
-                cand = (0.0, 1.0, 0.0) if abs(e1[1]) < 0.9 else (1.0, 0.0, 0.0)
-                d    = _dot3(cand, e1)
-                perp = _sub3(cand, _scale3(e1, d))
-                e2_raw = perp
-            e2 = _normalize3(e2_raw)
+            def lon_to_x(lon: float) -> float:
+                # Normalise delta to [-180, 180] so wrapping works
+                delta = ((lon - center_lon + 180.0) % 360.0) - 180.0
+                return map_cx + delta * px_per_lon
 
-            # Project ECEF → (horizontal=e2, vertical=e1) in metres
-            def _project(ecef: tuple) -> tuple:
-                return _dot3(ecef, e2), _dot3(ecef, e1)
+            def lat_to_y(lat: float) -> float:
+                return map_cy - lat * px_per_lat   # north = up
 
-            # ── 2-D positions ─────────────────────────────────────────────────
-            earth_r = 6371000.0
-            ue_2d   = _project(ue_ecef) if ue_loc else None
-            gnb_2ds = [(k, _project(_ecef(loc))) for k, loc in gnb_pairs]
+            # ── Background ───────────────────────────────────────────────────
+            canvas.create_rectangle(ML, MT, ML + pw, MT + ph,
+                                    fill="#0a1828", outline="#334455", width=1)
 
-            # ── Scale ─────────────────────────────────────────────────────────
-            earth_boundary = [(earth_r, 0.0), (-earth_r, 0.0), (0.0, earth_r), (0.0, -earth_r)]
-            all_h = [p[0] for _, p in gnb_2ds] + [ep[0] for ep in earth_boundary]
-            all_v = [p[1] for _, p in gnb_2ds] + [ep[1] for ep in earth_boundary]
-            if ue_2d:
-                all_h.append(ue_2d[0])
-                all_v.append(ue_2d[1])
+            # ── Latitude grid ─────────────────────────────────────────────────
+            for lat_g in range(-90, 91, 30):
+                gy = lat_to_y(lat_g)
+                if lat_g == 0:
+                    canvas.create_line(ML, gy, ML + pw, gy, fill="#3a6ea8", width=2)
+                    canvas.create_text(ML - 4, gy, text="0°", anchor="e",
+                                       fill="#6688aa", font=("Arial", 7))
+                else:
+                    canvas.create_line(ML, gy, ML + pw, gy, fill="#162636", width=1)
+                    canvas.create_text(ML - 4, gy, text=f"{lat_g:+}°", anchor="e",
+                                       fill="#445566", font=("Arial", 7))
 
-            max_extent = max(max(abs(v) for v in all_h), max(abs(v) for v in all_v)) * 1.15
-            avail = min(W - 2 * margin, H - 2 * margin)
-            scale = avail / (2.0 * max_extent)
+            # ── Longitude grid (every 30° within ±90° of centre) ─────────────
+            for dlon in range(-90, 91, 30):
+                glon = center_lon + dlon
+                gx = lon_to_x(glon)
+                disp_lon = ((glon + 180.0) % 360.0) - 180.0  # normalise for label
+                if dlon == 0:
+                    canvas.create_line(gx, MT, gx, MT + ph, fill="#3a6ea8", width=1, dash=(6, 4))
+                    canvas.create_text(gx, MT + ph + 14, text=f"{disp_lon:.0f}°\n(UE)",
+                                       anchor="n", fill="#6688aa", font=("Arial", 7))
+                else:
+                    canvas.create_line(gx, MT, gx, MT + ph, fill="#162636", width=1)
+                    canvas.create_text(gx, MT + ph + 14, text=f"{disp_lon:.0f}°",
+                                       anchor="n", fill="#445566", font=("Arial", 7))
 
-            cx0, cy0 = W / 2.0, H / 2.0
+            # ── Border ────────────────────────────────────────────────────────
+            canvas.create_rectangle(ML, MT, ML + pw, MT + ph,
+                                    fill="", outline="#334455", width=1)
 
-            def to_canvas(h: float, v: float) -> tuple:
-                return cx0 + h * scale, cy0 - v * scale  # invert v: y grows down on canvas
+            # ── Unassociated satellites — small white dots at nadir ──────────────
+            for sat_loc in unassoc_sat_cache.values():
+                nlat, nlon = self._nadir_wgs84(
+                    sat_loc["latitude"], sat_loc["longitude"], sat_loc["altitude"])
+                delta_lon = ((nlon - center_lon + 180.0) % 360.0) - 180.0
+                if abs(delta_lon) > 90.0:
+                    continue
+                sx = lon_to_x(nlon)
+                sy = lat_to_y(nlat)
+                canvas.create_oval(sx - 2, sy - 2, sx + 2, sy + 2,
+                                   fill="white", outline="")
 
-            # ── Earth ─────────────────────────────────────────────────────────
-            er_px = earth_r * scale
-            canvas.create_oval(cx0 - er_px, cy0 - er_px, cx0 + er_px, cy0 + er_px,
-                                fill="#0d2a47", outline="#3a6ea8", width=2)
-            canvas.create_text(cx0, cy0, text="Earth", fill="#4a7faa", font=("Arial", 9))
-
-            # ── Orbit circles (one per unique altitude) ───────────────────────
-            drawn_radii: set = set()
-            for i, (gnb_key, (gh, gv)) in enumerate(gnb_2ds):
-                color     = GNB_COLORS[i % len(GNB_COLORS)]
-                orbit_r_m = math.sqrt(gh**2 + gv**2)
-                rounded   = round(orbit_r_m / 10000) * 10000  # bucket 10 km
-                if rounded not in drawn_radii:
-                    op = orbit_r_m * scale
-                    canvas.create_oval(cx0 - op, cy0 - op, cx0 + op, cy0 + op,
-                                       outline=color, width=1, dash=(4, 10))
-                    drawn_radii.add(rounded)
-
-            # ── Horizon line at UE ─────────────────────────────────────────────
-            if ue_2d is not None:
-                _, uy_c = to_canvas(*ue_2d)
-                canvas.create_line(margin, uy_c, W - margin, uy_c,
-                                   fill="#556677", width=1, dash=(8, 5))
-                canvas.create_text(margin + 4, uy_c - 4, text="horizon", anchor="sw",
-                                   fill="#6688aa", font=("Arial", 7))
-
-            # ── Scale bar ─────────────────────────────────────────────────────
-            ref_km = 10 ** math.floor(math.log10(max_extent / 1000))
-            ref_px = ref_km * 1000 * scale
-            if ref_px >= 15:
-                bx = W - margin - ref_px
-                by = H - margin + 18
-                canvas.create_line(bx, by, bx + ref_px, by, fill="#556677", width=2)
-                lbl = f"{ref_km:,.0f} km" if ref_km >= 1 else f"{int(ref_km * 1000)} m"
-                canvas.create_text(bx + ref_px / 2, by + 4, text=lbl,
-                                   anchor="n", fill="#6688aa", font=("Arial", 7))
-
-            # ── UE ────────────────────────────────────────────────────────────
-            if ue_2d is not None:
-                ux_c, uy_c = to_canvas(*ue_2d)
+            # ── GNBs at nadir points ──────────────────────────────────────────
+            for i, gnb_key in enumerate(self.gnb_keys):
+                gnb_loc = loc_cache.get(gnb_key)
+                if gnb_loc is None:
+                    continue
+                color = GNB_COLORS[i % len(GNB_COLORS)]
+                nlat, nlon = self._nadir_wgs84(
+                    gnb_loc["latitude"], gnb_loc["longitude"], gnb_loc["altitude"])
+                # Skip if nadir is more than 90° away in longitude (outside half-projection)
+                delta_lon = ((nlon - center_lon + 180.0) % 360.0) - 180.0
+                if abs(delta_lon) > 90.0:
+                    continue
+                gx = lon_to_x(nlon)
+                gy = lat_to_y(nlat)
                 r = 6
-                canvas.create_oval(ux_c - r, uy_c - r, ux_c + r, uy_c + r,
-                                   fill=UE_COLOR, outline="white", width=2)
-                canvas.create_text(ux_c, uy_c - r - 3, text="UE",
-                                   fill=UE_COLOR, font=("Arial", 8, "bold"), anchor="s")
-
-            # ── GNBs ──────────────────────────────────────────────────────────
-            for i, (gnb_key, gnb_2d) in enumerate(gnb_2ds):
-                color  = GNB_COLORS[i % len(GNB_COLORS)]
-                gx_c, gy_c = to_canvas(*gnb_2d)
-                r = 6
-                canvas.create_oval(gx_c - r, gy_c - r, gx_c + r, gy_c + r,
+                # Draw a small nadir footprint line from dot down to equator line
+                eq_y = lat_to_y(0.0)
+                canvas.create_line(gx, gy, gx, eq_y, fill=color, width=1, dash=(3, 4))
+                canvas.create_oval(gx - r, gy - r, gx + r, gy + r,
                                    fill=color, outline="white", width=1)
-                canvas.create_text(gx_c, gy_c - r - 3, text=gnb_key.upper(),
+                canvas.create_text(gx, gy - r - 3, text=gnb_key.upper(),
                                    fill=color, font=("Arial", 8, "bold"), anchor="s")
-                alt_km = loc_cache[gnb_key]["altitude"] / 1000.0
-                canvas.create_text(gx_c, gy_c + r + 2, text=f"{alt_km:,.0f} km",
+                alt_km = gnb_loc["altitude"] / 1000.0
+                canvas.create_text(gx, gy + r + 2,
+                                   text=f"nadir ({nlat:+.1f}°, {nlon:+.1f}°)  {alt_km:,.0f} km",
                                    fill=color, font=("Arial", 7), anchor="n")
+
+            # ── UE ground position ────────────────────────────────────────────
+            if ue_loc:
+                ux = lon_to_x(ue_loc["longitude"])
+                uy = lat_to_y(ue_loc["latitude"])
+                r = 7
+                canvas.create_oval(ux - r, uy - r, ux + r, uy + r,
+                                   fill=UE_COLOR, outline="white", width=2)
+                canvas.create_text(ux, uy - r - 3, text="UE",
+                                   fill=UE_COLOR, font=("Arial", 8, "bold"), anchor="s")
+                canvas.create_text(ux, uy + r + 2,
+                                   text=f"({ue_loc['latitude']:+.2f}°, {ue_loc['longitude']:+.2f}°)",
+                                   fill=UE_COLOR, font=("Arial", 7), anchor="n")
+
+            # ── Axis label ────────────────────────────────────────────────────
+            canvas.create_text(ML + pw // 2, H - 4,
+                                text="Longitude  (half-Earth view, UE-centred)",
+                                fill="#6688aa", font=("Arial", 8), anchor="s")
 
         # ── Event wiring ──────────────────────────────────────────────────────
         view_combo.bind("<<ComboboxSelected>>", lambda _: _draw())
@@ -4612,7 +5122,7 @@ def validate_config(config: Dict[str, object]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="UERANSIM windowed dashboard")
-    parser.add_argument("--config", required=False, default=None, help="Path to dashboard YAML config (optional; .json also accepted)")
+    parser.add_argument("--config", required=False, default=None, help="Path to dashboard YAML config")
     parser.add_argument(
         "-u", "--ues", "--ue-count",
         dest="ue_count",
@@ -4640,7 +5150,8 @@ def main() -> None:
 
     if args.config is not None:
         cfg_path = Path(args.config).resolve()
-        workspace = cfg_path.parent.parent.parent.resolve()
+#        workspace = cfg_path.parent.parent.parent.resolve()
+        workspace = Path(os.getcwd())  # Use current working directory as workspace for relative paths in config
 
         config = _load_config_file(cfg_path)
 

@@ -1,0 +1,6 @@
+# required for tests
+-r ./tests/requirements.txt
+# required for tle_loader
+-r ./tools/tle_loader/requirements.txt
+# required for dashboard
+-r ./tools/dashboard/requirements.txt

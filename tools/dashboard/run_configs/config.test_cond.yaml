@@ -1,4 +1,4 @@
-demo_name: 'Handover by eventD1'
+demo_name: 'Conditional Handover by eventT1'
 
 amf:
   host: 172.22.0.10
@@ -39,7 +39,7 @@ ue:
   node: UE1
   count: 1
   ue_command: ./build/nr-ue
-  config: ./tools/UI/configs/ue1.yaml
+  config: ./tools/dashboard/configs/ue1.yaml
   ue_log_file: ue.log_%i
   create_db_profiles: false
   auto_setcap: true
@@ -53,11 +53,11 @@ gnb:
   gnb_command: ./build/nr-gnb
   gnbs:
   - node: GNB1
-    config: ./tools/UI/configs/gnb1_fixed_D1.yaml
+    config: ./tools/dashboard/configs/gnb1_fixed_T1.yaml
     gnb_log_file: gnb1_%i.log
     args: []
   - node: GNB2
-    config: ./tools/UI/configs/gnb2_fixed.yaml
+    config: ./tools/dashboard/configs/gnb2_fixed.yaml
     gnb_log_file: gnb2_%i.log
     args: []
 
@@ -90,19 +90,12 @@ run:
   reset_command_args: [--save-logs=%i]
   run_log: demorun.log
   logging:
-    log_dir: ./tools/UI/logs
-    run_log_dir_name: demo-d1-%u-%t
+    log_dir: ./tools/dashboard/logs
+    run_log_dir_name: demo-cond-%u-%t
 
 script:
 - time: 20
   commands:
   - node: GNB2
     command: set-rsrp
-    args: [-80]
-- time: 30
-  commands:
-  - node: UE1
-    command: set-loc-wgs84
-    # format = lat:log:alt
-    args: [40.0000:-75.0200:0]
-
+    args: [-90]

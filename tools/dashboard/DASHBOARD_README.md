@@ -1,17 +1,6 @@
-# UERANSIM Runtime UI
+# Satellite Simulation Tool
 
-This tool launches one UE and two gNB processes, then renders a terminal dashboard with separate
-windows for:
-
-- UE (single pane for all UE logs)
-- GNB1
-- GNB2
-- AMF
-- Summary
-
-Entity windows (UE, GNB1, GNB2, AMF) are log-only and show live process output.
-Summary window shows combined scalar/status information for UE, GNB1, GNB2, and AMF.
-Summary includes all configured UEs (`ue.count`) with no fixed upper limit.
+This tool is used to control satellite simulations using UERANSIM-Handover and Open5GS.  It provides a launcher to configure and execute multiple UE and gNB processes, inject commands to control their operations, and log the results.  It also provides a visualization UI to show satellite motion during simulation runs.
 
 ## Features
 
@@ -29,25 +18,12 @@ Summary includes all configured UEs (`ue.count`) with no fixed upper limit.
 
 ## Run
 
+
 ```bash
 python3 tools/UI/dashboard.py --config tools/UI/config.example.json
 ```
 
-Quit with `q`.
-
-## Run (Windowed)
-
-```bash
-python3 tools/UI/dashboard_windowed.py --config tools/UI/config.example.json
-```
-
-The windowed dashboard keeps the same runtime behavior and adds a control bar to:
-
-- select target gNB (`gnb1` or `gnb2`)
-- enter a manual RSRP value (dBm)
-- inject that value into gNB RLS over UDP to simulate movement and trigger handover behavior
-
-Menu bar additions:
+Menu bar:
 
 - `File` -> `Exit` performs a graceful shutdown of spawned processes.
 - `Handover` -> `Send gNB Position/Velocity` sends ECEF position/velocity to selected gNB via `set-loc-pv`.

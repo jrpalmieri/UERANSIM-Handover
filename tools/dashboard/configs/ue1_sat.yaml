@@ -109,12 +109,12 @@ integrityMaxRate:
 # UE position - used in RSRP calculations and CHO distance-based conditions.
 # Specified in WGS-84 geographic coordinates (latitude, longitude, altitude).
 position:
-  # latitude: 40.000     # degrees North
-  # longitude: -75.000    # degrees East
-  # altitude: 0.0      # meters above WGS-84 ellipsoid
-  latitude: 45.000     # degrees North
-  longitude: 90.000    # degrees East
+  latitude: 40.000     # degrees North
+  longitude: -75.000    # degrees East
   altitude: 0.0      # meters above WGS-84 ellipsoid
+  # latitude: 45.000     # degrees North
+  # longitude: 90.000    # degrees East
+  # altitude: 0.0      # meters above WGS-84 ellipsoid
 
 # NTN (non-Terrestrial Network) configuration
 ntn:

@@ -169,6 +169,8 @@ ntn:
     #  Sat 1: Zenith (Elevation ~90 deg)
     line1: '1 99991U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0008'
     line2: '2 99991  45.0000 280.4606 0001000   0.0000  90.0000 15.00000000    11'
+    #line1: '1 44714U 19074B   26117.00002315  .00123192  00000+0  24714-2 0  9996'
+    #line2: '2 44714  53.1543 312.8389 0000942  66.9226 117.3748 15.45800594  5831'
     #    Sat 2: Rising (Lagging by 20 deg Mean Anomaly)
     # line1: '1 99992U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0009'
     # line2: '2 99992  45.0000 280.4606 0001000   0.0000  70.0000 15.00000000    10'
@@ -186,6 +188,7 @@ ntn:
   timeWarp:
     # startEpoch must be in TLE epoch format YYDDD.DDDDDDDD
     startEpoch: "26001.00000000"   # lines up with the TLE epoch
+    #startEpoch: "26117.00002315"   # lines up with the TLE epoch
     # startCondition controls whether the satellite time starts immediately (moving) 
     #   or waits for a trigger (paused).
     startCondition: paused
