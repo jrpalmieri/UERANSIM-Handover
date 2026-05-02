@@ -48,24 +48,38 @@ static constexpr int MAX_LOOKAHEAD_SEC = 7200; // 2-hour horizon
 void GnbRrcTask::satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, const int ownPci, RrcUeContext *ue)
 {
 
-    // min elevation angel to trigger handover, in degrees (set in config)
+    // min elevation angle to trigger handover, in degrees (set in config)
     const int theta  = m_config->ntn.elevationMinDeg;
 
     auto ownTleOpt   = m_base->satStates->getTle(ownPci);
 
-    if (!ownTleOpt.has_value() || !ue->uePosition.isValid)
+    if (!ownTleOpt.has_value())
     {
-        m_logger->warn("UE[%d] Dynamic trigger: own TLE or UE position unavailable, "
-                        "using defaults (t=%ds d=%dm)",
+        m_logger->warn("UE[%d] Dynamic trigger: own TLE unavailable, using trigger defaults (t=%ds d=%dm)",
                         ue->ueId, dynTriggerParams.condT1_thresholdSec, dynTriggerParams.condD1_distanceThresholdFromReference1);
         return;
     }
-    const SatTleEntry &ownTle = m_config->ntn.ownTle.value();
+
+    // get current UE position from global store
+    std::optional<GeoPosition> uePos = m_base->getUePosition(ue->ueId);
+
+    // validity checks
+    //   (could also add a timestamp check to ensure freshness, but not a concern the way this is currently implemented
+    //      since all UEs report their positions to all gNBs in heartbeats.))
+    if (!uePos.has_value() || !uePos->isValid)
+    {
+        m_logger->warn("UE[%d] Dynamic trigger: UE position unavailable, using trigger defaults (t=%ds d=%dm)",
+                        ue->ueId, dynTriggerParams.condT1_thresholdSec, dynTriggerParams.condD1_distanceThresholdFromReference1);
+        return;
+    }
+
+    const SatTleEntry &ownTle = ownTleOpt.value();
+    
     m_logger->debug("UE[%d]: Calculating Dynamic trigger conditions for NTN using TLE: %s / %s",
                         ue->ueId, ownTle.line1.c_str(), ownTle.line2.c_str());
 
     // convert ue position from lat/long/alt to ECEF for the calculation
-    EcefPosition ueEcef = GeoToEcef(ue->uePosition);
+    EcefPosition ueEcef = GeoToEcef(uePos.value());
 
     // get current sat time
     const int64_t satNowMs = m_base->satTime->CurrentSatTimeMillis();
@@ -101,27 +115,28 @@ void GnbRrcTask::satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerPara
 
     // update the Dynamic triggers with the calculated values
 
+    // condT1
     dynTriggerParams.condT1_thresholdSec = satNowSec + tExit;
     dynTriggerParams.condT1_durationSec = 100;
 
-    // d1 is comparing UE pos to nadir pos at exit, and if over threshold, that means the sat is beyond the elevation angle threshold
+    // condD1 is comparing UE pos to nadir pos at exit, and if over threshold, that means the sat is beyond the elevation angle threshold
     {
         auto refGeo = EcefToGeo(nadirAtExitM);
         dynTriggerParams.condD1_referenceLocation1 = {refGeo.latitude, refGeo.longitude};
     }
     dynTriggerParams.condD1_distanceThresholdFromReference1 = static_cast<int>(EcefDistance(ueEcef, nadirAtExitM));
-    // d2 we set to dummy vals that will always be true, since we just care about triggering the handover once the sat is beyond the elevation threshold
-    dynTriggerParams.condD1_referenceLocation2 = {ue->uePosition.latitude, ue->uePosition.longitude};
+    // D2 we set to dummy vals that will always be true, since we just care about triggering the handover once the sat is beyond the elevation threshold
+    dynTriggerParams.condD1_referenceLocation2 = {uePos->latitude, uePos->longitude};
     dynTriggerParams.condD1_distanceThresholdFromReference2 = 1;
     dynTriggerParams.condD1_hysteresisLocation = 10;
-
+    // copy condD1 values to D1 - caller will choose between them
     dynTriggerParams.d1_distanceThresholdFromReference1 = dynTriggerParams.condD1_distanceThresholdFromReference1;
     dynTriggerParams.d1_referenceLocation1 = dynTriggerParams.condD1_referenceLocation1;
     dynTriggerParams.d1_distanceThresholdFromReference2 = dynTriggerParams.condD1_distanceThresholdFromReference2;
     dynTriggerParams.d1_referenceLocation2 = dynTriggerParams.condD1_referenceLocation2;
     dynTriggerParams.d1_hysteresisLocation = dynTriggerParams.condD1_hysteresisLocation;
 
-    m_logger->debug("UE[%d]: NTN trigger conditions calculated: t_thresh=%d sec (%d sec from sat-now), "
+    m_logger->debug("UE[%d]: NTN trigger conditions: t_thresh=%d sec (%d sec from sat-now), "
                 "d1_ref1=[%.4f,%.4f], d1_thresh1=%d m, d1_ref2=[%.4f,%.4f], d1_thresh2=%d m",
                         ue->ueId, dynTriggerParams.condT1_thresholdSec, tExit,
                         dynTriggerParams.condD1_referenceLocation1.latitudeDeg, dynTriggerParams.condD1_referenceLocation1.longitudeDeg, dynTriggerParams.condD1_distanceThresholdFromReference1,

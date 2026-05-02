@@ -592,10 +592,9 @@ void UeRrcTask::parseConditionalReconfiguration(
         cand.executed = false;
 
         m_logger->info("CHO candidate %d added: targetPCI=%d newC-RNTI=%d t304=%dms "
-                       "conditions=%s priority=%d",
+                       "conditions=%s",
                        cand.candidateId, cand.targetPci, cand.newCRNTI, cand.t304Ms,
-                       conditionGroupStr(cand.measIds, m_measConfig).c_str(),
-                       cand.executionPriority);
+                       conditionGroupStr(cand.measIds, m_measConfig).c_str());
 
         // add to the candidate list, or update if candidateId already exists
         bool wasUpdated = upsertChoCandidate(m_choCandidates, std::move(cand));

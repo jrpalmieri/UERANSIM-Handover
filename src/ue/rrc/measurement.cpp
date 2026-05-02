@@ -35,7 +35,7 @@ namespace nr::ue
 {
 
 /* ================================================================== */
-/*  JSON serialisation helpers for measurement types                  */
+/*  JSON serialization helpers for measurement types                  */
 /* ================================================================== */
 
 
@@ -60,7 +60,6 @@ Json ToJson(const ChoCandidate &v)
         {"newCRNTI", v.newCRNTI},
         {"t304Ms", v.t304Ms},
         {"txId", v.txId},
-        {"executionPriority", v.executionPriority},
         {"executed", v.executed},
     });
 }
@@ -121,18 +120,18 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
     int servingRsrp = getServingCellRsrp(servingCellId, allMeas);
 
     // current time - depends on whether this in NTN mode or not
-    int64_t now;
+    int64_t nowMs;
     if (m_base->config->ntn.ntnEnabled)
     {
-        now = m_base->satTime != nullptr
+        nowMs = m_base->satTime != nullptr
               ? m_base->satTime->CurrentSatTimeMillis()
               : utils::CurrentTimeMillis();
     }
     else {
-        now = utils::CurrentTimeMillis();
+        nowMs = utils::CurrentTimeMillis();
     }
 
-    now = now / 1000; // convert to seconds
+    int64_t now = nowMs / 1000; // convert to seconds
 
     m_logger->debug("evaluateMeasurements: servingCell=%d servingRsrp=%d dBm, allMeas.size=%zu sat-time=%lld",
          servingCellId, servingRsrp, allMeas.size(), now);
@@ -246,9 +245,9 @@ void UeRrcTask::evaluateMeasurements(int servingCellId, const std::map<int, int>
         {
             // if this is the first time condition is satisfied, record the current timestamp
             if (state.enteringTimestamp == 0)
-                state.enteringTimestamp = now;
+                state.enteringTimestamp = nowMs;
 
-            int64_t elapsed = now - state.enteringTimestamp;
+            int64_t elapsed = nowMs - state.enteringTimestamp;
 
             // check that condition has been satisfied for at least timeToTrigger,
             //  and if so, send report

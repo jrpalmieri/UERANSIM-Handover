@@ -38,6 +38,10 @@ gnbSearchList:
   - 127.0.0.2
   - 127.0.0.3
   - 127.0.0.4
+  - 127.0.0.5
+  - 127.0.0.6
+
+
 
 # RLS loop/timer settings (ms).
 #  LOOP_COUNTER - period of UE Heartbeat loop
@@ -110,7 +114,7 @@ integrityMaxRate:
 # Specified in WGS-84 geographic coordinates (latitude, longitude, altitude).
 position:
   latitude: 40.000     # degrees North
-  longitude: -75.000    # degrees East
+  longitude: -72.000    # degrees East
   altitude: 0.0      # meters above WGS-84 ellipsoid
   # latitude: 45.000     # degrees North
   # longitude: 90.000    # degrees East

@@ -5,7 +5,7 @@ This tool is used to control satellite simulations using UERANSIM-Handover and O
 ## Features
 
 - starts UE and gNB entities as separate executables
-- polls compact scalar metrics through `nr-cli ... -e "ui-status"`
+- polls status information from UE and GNB through command interface (e.g., `nr-cli`)
 - tails stdout/stderr of each spawned process
 - writes UE and gNB process logs to files (overwritten on each run)
 - monitors AMF reachability with configurable `sctp` or `tcp` connect checks
@@ -14,7 +14,7 @@ This tool is used to control satellite simulations using UERANSIM-Handover and O
 ## Prerequisites
 
 - Build UERANSIM first so `nr-ue`, `nr-gnb`, and `nr-cli` exist.
-- Ensure gNB and UE config files contain the node names referenced by this UI config.
+- See requirements.txt for python dependencies
 
 ## Run
 

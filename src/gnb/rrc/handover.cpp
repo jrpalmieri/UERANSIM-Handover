@@ -114,15 +114,6 @@ using nr::rrc::common::IsConditionalEvent;
 /* ====================================== */
 
 
-// static int calcLatLongDistance(const EventReferenceLocation &pos1,
-//                         const EventReferenceLocation &pos2)
-// {
-//     GeoPosition a{pos1.latitudeDeg, pos1.longitudeDeg, 0.0};
-//     GeoPosition b{pos2.latitudeDeg, pos2.longitudeDeg, 0.0};
-//     return static_cast<int>(std::round(HaversineDistanceMeters(a, b)));
-// }
-
-
 static bool allocateUniqueCondReconfigId(RrcUeContext *ue, int &outId)
 {
     if (ue == nullptr)
@@ -163,121 +154,11 @@ void GnbRrcTask::calculateTriggerConditions(nr::rrc::common::DynamicEventTrigger
     {
         satHandoverTriggerCalc(dynTriggerParams, ownPci, ue);
 
-        // auto ownTleOpt   = m_base->satStates->find(ownPci);
-        // const int theta  = m_config->ntn.elevationMinDeg;
-
-        // if (!ownTleOpt.has_value() || !ue->uePosition.isValid)
-        // {
-        //     m_logger->warn("UE[%d] Dynamic trigger: own TLE or UE position unavailable, "
-        //                    "using defaults (t=%ds d=%dm)",
-        //                    ue->ueId, dynTriggerParams.condT1_thresholdSec, dynTriggerParams.condD1_distanceThresholdFromReference1);
-        //     return;
-        // }
-
-        // // convert ue position from lat/long/alt to ECEF for the calculation
-        // EcefPosition ueEcef = GeoToEcef(ue->uePosition);
-        // const SatTleEntry &ownTle = m_config->ntn.ownTle.value();
-        // m_logger->debug("UE[%d]: Calculating Dynamic trigger conditions for NTN using TLE: %s / %s",
-        //                  ue->ueId, ownTle.line1.c_str(), ownTle.line2.c_str());
-
-
-        // static constexpr int MAX_LOOKAHEAD_SEC = 7200; // 2-hour horizon
-
-        // // get current sat time
-        // const int64_t satNowMs = m_base->satTime->CurrentSatTimeMillis();
-        // const libsgp4::DateTime now = nr::rrc::common::UnixMillisToDateTime(satNowMs);
-        // //libsgp4::DateTime now = sat_time::Now();
-        // const int satNowSec = static_cast<int>(satNowMs / 1000);
-
-        // // get the Ecef of the current location
-        // SatEcefState curState{};
-        // if (!nr::rrc::common::PropagateTleToEcef(ownTle.line1, ownTle.line2, now, curState))
-        // {
-
-        //     m_logger->warn("UE[%d]: Failed to propagate TLE to ECEF, aborting", ue->ueId);
-        //     return;
-        // }
-
-        // auto elevAngle = ElevationAngleDeg(ueEcef, curState.pos);
-        // m_logger->debug("UE[%d]: Current elevation angle to satellite is %.2f deg (threshold is %d deg)",
-        //                 ue->ueId, elevAngle, theta);
-
-        // // If already below the threshold right now, set trigger for right now
-        // if (elevAngle < static_cast<double>(theta))
-        // {
-        //     dynTriggerParams.condT1_thresholdSec = satNowSec;
-        //     dynTriggerParams.condT1_durationSec = 100;
-        //     {
-        //         auto refGeo = EcefToGeo(curState.pos);
-        //         dynTriggerParams.condD1_referenceLocation1 = {refGeo.latitude, refGeo.longitude};
-        //     }
-        //     dynTriggerParams.condD1_distanceThresholdFromReference1 = static_cast<int>(EcefDistance(ueEcef, curState.nadir));
-        //     dynTriggerParams.condD1_referenceLocation2 = {ue->uePosition.latitude, ue->uePosition.longitude};
-        //     dynTriggerParams.condD1_distanceThresholdFromReference2 = 0;
-        //     dynTriggerParams.condD1_hysteresisLocation = 10;
-
-        //     dynTriggerParams.d1_distanceThresholdFromReference1 = dynTriggerParams.condD1_distanceThresholdFromReference1;
-        //     dynTriggerParams.d1_referenceLocation1 = dynTriggerParams.condD1_referenceLocation1;
-        //     dynTriggerParams.d1_distanceThresholdFromReference2 = dynTriggerParams.condD1_distanceThresholdFromReference2;
-        //     dynTriggerParams.d1_referenceLocation2 = dynTriggerParams.condD1_referenceLocation2;
-        //     dynTriggerParams.d1_hysteresisLocation = dynTriggerParams.condD1_hysteresisLocation;
-
-        //     m_logger->debug("UE[%d]: NTN trigger conditions calculated (immediate trigger): t_thresh=%d sec, "
-        //     "d1_ref1=[%.4f,%.4f], d1_thresh1=%d m, d1_ref2=[%.4f,%.4f], d1_thresh2=%d m",
-        //             ue->ueId, dynTriggerParams.condT1_thresholdSec,
-        //             dynTriggerParams.condD1_referenceLocation1.latitudeDeg, dynTriggerParams.condD1_referenceLocation1.longitudeDeg, dynTriggerParams.condD1_distanceThresholdFromReference1,
-        //             dynTriggerParams.condD1_referenceLocation2.latitudeDeg, dynTriggerParams.condD1_referenceLocation2.longitudeDeg, dynTriggerParams.condD1_distanceThresholdFromReference2);
-
-        //     return;
-        // }
-
-        // // find the exit time (t_exit) and the nadir distance at exit (nadirAtExitM) by propagating the 
-        // //  TLE forward in time until the elevation drops below the threshold
-        // EcefPosition nadirAtExitM{};
-        // int tExit = nr::rrc::common::FindExitTimeSec(ownTle.line1,
-        //                                             ownTle.line2,
-        //                                             ueEcef,
-        //                                             now,
-        //                                             0,
-        //                                             theta,
-        //                                             MAX_LOOKAHEAD_SEC,
-        //                                             nadirAtExitM);
-
-        // dynTriggerParams.condT1_thresholdSec = satNowSec + tExit;
-        // dynTriggerParams.condT1_durationSec = 100;
-
-        // // d1 is comparing UE pos to nadir pos at exit, and if over threshold, that means teh sat is beyond the elevation angle threshold
-        // {
-        //     auto refGeo = EcefToGeo(nadirAtExitM);
-        //     dynTriggerParams.condD1_referenceLocation1 = {refGeo.latitude, refGeo.longitude};
-        // }
-        // dynTriggerParams.condD1_distanceThresholdFromReference1 = static_cast<int>(EcefDistance(ueEcef, nadirAtExitM));
-        // // d2 we set to dummy vals that will always be true, since we just case about triggering the handover once the sat is beyond the elevation threshold
-        // dynTriggerParams.condD1_referenceLocation2 = {ue->uePosition.latitude, ue->uePosition.longitude};
-        // dynTriggerParams.condD1_distanceThresholdFromReference2 = 1;
-        // dynTriggerParams.condD1_hysteresisLocation = 10;
-
-        // dynTriggerParams.d1_distanceThresholdFromReference1 = dynTriggerParams.condD1_distanceThresholdFromReference1;
-        // dynTriggerParams.d1_referenceLocation1 = dynTriggerParams.condD1_referenceLocation1;
-        // dynTriggerParams.d1_distanceThresholdFromReference2 = dynTriggerParams.condD1_distanceThresholdFromReference2;
-        // dynTriggerParams.d1_referenceLocation2 = dynTriggerParams.condD1_referenceLocation2;
-        // dynTriggerParams.d1_hysteresisLocation = dynTriggerParams.condD1_hysteresisLocation;
-
         return;
     }
 
     // for non-NTN mode, we use gnb location and a fixed distance threshold to calculate the trigger conditions.
 
-    // obtain gnb location
-    // EventReferenceLocation gnbPos{};
-    // {
-    //     // lock mutex to safely read gNB position
-    //     std::lock_guard<std::mutex> lock(m_base->gnbPositionMutex);
-    //     gnbPos.latitudeDeg = m_base->gnbPosition.latitude;
-    //     gnbPos.longitudeDeg = m_base->gnbPosition.longitude;
-    // }
-    
-    
     // for timer, use config values as deltas, add to current time
     dynTriggerParams.condT1_thresholdSec +=  utils::CurrentTimeMillis() / 1000;
 
@@ -331,16 +212,6 @@ static const ReportConfigEvent *findEventConfigByKind(
     }
     return nullptr;
 }
-
-// [[maybe_unused]] static const ReportConfigEvent *findEventConfigByType(
-//     const GnbHandoverConfig &config, const std::string &eventType)
-// {
-//     auto parsed = nr::rrc::common::ParseHandoverEventType(eventType);
-//     if (!parsed.has_value())
-//         return nullptr;
-
-//     return findEventConfigByKind(config, *parsed);
-// }
 
 
 static const GnbNeighborConfig *findNeighborByNci(const std::vector<GnbNeighborConfig> &neighborList, int64_t nci)
@@ -1480,7 +1351,15 @@ void GnbRrcTask::evaluateHandoverDecision(int ueId, int measId)
     {
 
         // D1: distance to serving cell (d1) > threshold1 - hysteresis AND distance to neighbor cell (d2) < threshold2 + hysteresis
-        shouldHandover = rc.evaluateD1(ue->uePosition);
+        auto uePos = m_base->getUePosition(ue->ueId);
+        if (!uePos.has_value() || !uePos->isValid)
+        {
+            m_logger->warn("UE[%d] HandoverEval: event=D1 but UE position is invalid, skipping evaluation",
+                           ue->ueId);
+            return;
+        }
+        
+        shouldHandover = rc.evaluateD1(uePos.value());
         
         m_logger->debug("UE[%d] HandoverEval: event=D1 "
                         "distThresh1=%dm distThresh2=%dm hysteresis=%dm "
@@ -1553,15 +1432,21 @@ void GnbRrcTask::processConditionalHandover(int ueId, const nr::rrc::common::Dyn
     // remain valid for the lifetime of this stack frame.
     const auto neighborSnapshot = m_base->neighbors->getAll();
 
+    // Get UE current position from global storage
+    auto uePos = m_base->getUePosition(ue->ueId);
+    EcefPosition ueEcefPos{};
+    if (uePos.has_value())
+    {
+        ueEcefPos = nr::sat::GeoToEcef(uePos.value());
+    }
+    else
+    {
+        m_logger->warn("UE[%d] -- UE position is invalid, using trigger defaults", ue->ueId);
+    }
+
     // prioritizeNeighbors returns a sorted vector of (neighborCell, score) pairs
     //   (higher score = higher priority = longer transit time above theta_e)
-    auto prioritizedNeighbors = prioritizeNeighbors(
-        neighborSnapshot, ownPci,
-        ue->uePosition.isValid
-            ? EcefPosition{ue->uePosition}
-            : EcefPosition{},
-        dynTriggerParams.condT1_thresholdSec
-    );
+    auto prioritizedNeighbors = prioritizeNeighbors(neighborSnapshot, ownPci, ueEcefPos, dynTriggerParams.condT1_thresholdSec);
 
     // If the profile has a specific targetCellId, filter to that cell.
     std::optional<int64_t> explicitTargetPci{};
@@ -1594,7 +1479,7 @@ void GnbRrcTask::processConditionalHandover(int ueId, const nr::rrc::common::Dyn
     ue->choPreparationPending = true;
     ue->choPreparationCandidateProfileId = choProfileIdx;
     
-    // Step 3 - store the CHO target PCIs and their priority scores in UE RRC context
+    // Step 3 - store the CHO target PCIs in UE RRC context
 
     ue->choPreparationCandidatePcis.clear();
     ue->choPreparationCandidateScores.clear();

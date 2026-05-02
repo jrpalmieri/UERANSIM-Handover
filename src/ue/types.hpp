@@ -132,13 +132,8 @@ struct UeConfig
 
         struct TimeWarpConfig
         {
-            enum class EStartCondition
-            {
-                Moving,
-                Paused,
-            };
 
-            EStartCondition startCondition{EStartCondition::Moving};
+            nr::sat::ESatTimeState startState{nr::sat::ESatTimeState::Moving};
             double tickScaling{1.0};
             std::optional<int64_t> startEpochMillis{};
         };
@@ -288,6 +283,7 @@ struct ActiveCellInfo
     ECellCategory category{};
     Plmn plmn{};
     int tac{};
+    int dbm{};
 
     [[nodiscard]] bool hasValue() const;
 };
@@ -371,7 +367,6 @@ struct ChoCandidate
     int newCRNTI{};             // C-RNTI assigned by target cell
     int t304Ms{1000};           // T304 supervision timer (ms)
     int txId{0};              // ASN.1 transactionId for the ReconfigurationWithSync message to apply on trigger
-    int executionPriority{0x7FFFFFFF}; // Lower = higher priority; max = unset
 
     // List of all MeasIds whose conditions apply to this candidate (from condExecutionCond).
     std::vector<int> measIds;

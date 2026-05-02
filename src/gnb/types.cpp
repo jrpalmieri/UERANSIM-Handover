@@ -69,7 +69,7 @@ Json ToJson(const GnbStatusInfo &v)
 Json ToJson(const GnbConfig &v)
 {
     std::string startCondition =
-        v.ntn.timeWarp.startCondition == NtnConfig::TimeWarpConfig::EStartCondition::Paused
+        v.ntn.timeWarp.startState == nr::sat::ESatTimeState::Paused
             ? "paused"
             : "moving";
 

@@ -233,7 +233,7 @@ void GnbRrcTask::upsertSatellitePositionVelocity(const SatellitePositionVelocity
 void GnbRrcTask::onUpdateLocationTimerExpired()
 {
 
-    m_logger->debug("Update Location Timer Expired - Updating gNB location by propagating TLE to current time");
+    m_logger->debug("Update Location Timer Triggered - Updating gNB location by propagating TLE to current time");
 
     if (!m_config->ntn.ntnEnabled)
     {
@@ -253,12 +253,13 @@ void GnbRrcTask::onUpdateLocationTimerExpired()
     auto satNow = m_base->satTime->CurrentSatTimeMillis();
     libsgp4::DateTime now = nr::sat::UnixMillisToDateTime(satNow);
 
+    gnbGeo = EcefToGeo(m_base->satStates->getSgp4(ownPci)->FindPositionEcef(satNow));
     // get the current geodetic coordinates of the gNB by propagating its TLE to the current time
-    if (!nr::sat::PropagateTleToGeo(ownTle->line1, ownTle->line2, now, gnbGeo))
-    {
-        m_logger->warn("Failed to propagate own TLE to geodetic coordinates; cannot update location");
-        return;
-    }
+    // if (!nr::sat::PropagateTleToGeo(ownTle->line1, ownTle->line2, now, gnbGeo))
+    // {
+    //     m_logger->warn("Failed to propagate own TLE to geodetic coordinates; cannot update location");
+    //     return;
+    // }
 
     // write location update to global state
     m_base->setGnbPosition(gnbGeo, satNow);

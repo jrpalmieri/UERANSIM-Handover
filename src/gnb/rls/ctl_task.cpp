@@ -147,8 +147,6 @@ void RlsControlTask::handleRlsMessage(NmGnbRlsToRls &w)
             out->cRnti       = static_cast<int>(m.senderId2);
             out->rrcChannel  = static_cast<rrc::RrcChannel>(m.payload);
             out->data        = std::move(m.pdu);
-            out->uePos       = w.uePos;
-            out->hasPosData  = w.hasPosData;
             m_mainTask->push(std::move(out));
         }
         else

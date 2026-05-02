@@ -197,6 +197,7 @@ class WindowedDashboard:
         self.ue_latitude = None
         self.ue_longitude = None
         self.ue_altitude = None
+        self.ue_start_delay: float = 0.0
 
         # ── Config-derived: GNB ──────────────────────────────────────────────
         self.gnb_count = 0
@@ -211,6 +212,7 @@ class WindowedDashboard:
         self.gnb_sat_names: Dict[str, str] = {}
         self.sat_epoch_base_raw: str = ""       # raw config value: 'latest', 'earliest', or YYDDD string
         self.sat_epoch_base_resolved: str = ""  # resolved YYDDD epoch string
+        self.sat_tick_scaling: Optional[float] = None
 
         # ── Config-derived: AMF ──────────────────────────────────────────────
         self.amf_log_file_template: str = ""
@@ -405,6 +407,7 @@ class WindowedDashboard:
         self.ue_latitude = _opt_float(ue_cfg.get("latitude"))
         self.ue_longitude = _opt_float(ue_cfg.get("longitude"))
         self.ue_altitude = _opt_float(ue_cfg.get("altitude"))
+        self.ue_start_delay = max(0.0, float(ue_cfg.get("start_delay_sec", 0.0)))
 
         up_cfg = config.get("user_plane", {})
         self.user_plane_upf_ip = str(up_cfg.get("upf_ip", "127.0.0.1"))
@@ -498,6 +501,13 @@ class WindowedDashboard:
             source_file = str(sat_cfg.get("tle_source_file", "")).strip()
             self.all_tles = self._load_tles_from_file(source_file) if source_file else []
             self.sat_epoch_base_raw = str(sat_cfg.get("epoch_base", "latest")).strip()
+            try:
+                ts = sat_cfg.get("tick_scaling")
+                self.sat_tick_scaling = float(ts) if ts is not None and str(ts).strip() != "" else None
+                if self.sat_tick_scaling is not None and self.sat_tick_scaling <= 0:
+                    self.sat_tick_scaling = None
+            except (ValueError, TypeError):
+                self.sat_tick_scaling = None
             for entry in sat_cfg.get("gnbs", []):
                 if not isinstance(entry, dict):
                     continue
@@ -511,6 +521,7 @@ class WindowedDashboard:
         else:
             self.all_tles = []
             self.sat_epoch_base_raw = ""
+            self.sat_tick_scaling = None
         # Apply gnb_host_sat_name from each GNB config entry (lower priority than satellite.gnbs)
         for i in range(self.gnb_count):
             gnb_node = str(gnbs[i]["node"])
@@ -622,21 +633,10 @@ class WindowedDashboard:
             return []
         entries: List[Dict[str, object]] = []
         for gnb_key in self.gnb_keys:
-            if gnb_key not in self.gnb_tles:
-                continue
             node_name = self.node_names.get(gnb_key, gnb_key.upper())
-            entries.append({"time": 0, "node": node_name, "command": "sat-tle",
+            entries.append({"time": 1, "node": node_name, "command": "sat-tle",
                             "args": [{"satellites": all_sats}]})
-        epoch_str = self.sat_epoch_base_resolved
-        if epoch_str:
-            for gnb_key in self.gnb_keys:
-                node_name = self.node_names.get(gnb_key, gnb_key.upper())
-                entries.append({"time": 0, "node": node_name, "command": "sat-time",
-                                "args": [f"start-epoch={epoch_str}"]})
-            for ue_key in self.ue_keys:
-                node_name = self.node_names.get(ue_key, ue_key.upper())
-                entries.append({"time": 0, "node": node_name, "command": "sat-time",
-                                "args": [f"start-epoch={epoch_str}"]})
+        # GNB and UE sat-time clocks are set via --sat-time CLI args at process launch, not the script
         return entries
 
     def _parse_script(self, script_json: object) -> List[Dict[str, object]]:
@@ -934,13 +934,19 @@ class WindowedDashboard:
             panes_frame.grid_rowconfigure(r, weight=1)
             self._create_pane_widgets(pane_frame, key, log_height=10)
 
-        # Right column: all GNBs in a subframe so they share vertical space evenly
+        # Right column: up to 3 GNBs displayed; extras run silently without a pane
+        _MAX_DISPLAYED_GNBS = 3
+        displayed_gnb_keys = self.gnb_keys[:_MAX_DISPLAYED_GNBS]
+        hidden_gnb_count = len(self.gnb_keys) - len(displayed_gnb_keys)
         right_frame = ttk.Frame(panes_frame)
         right_frame.grid(row=0, column=1, rowspan=len(left_keys), sticky="nsew", padx=(3, 6), pady=6)
-        for key in self.gnb_keys:
+        for key in displayed_gnb_keys:
             gnb_frame = ttk.LabelFrame(right_frame, text=self.panes[key].title, padding=8)
             gnb_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(0, 6))
             self._create_pane_widgets(gnb_frame, key, log_height=10)
+        if hidden_gnb_count > 0:
+            hidden_label = f"+ {hidden_gnb_count} more gNB{'s' if hidden_gnb_count > 1 else ''} running (no pane)"
+            ttk.Label(right_frame, text=hidden_label, foreground="gray").pack(side=tk.BOTTOM, anchor="w", pady=(2, 0))
 
         self.run_menu.entryconfig("Run Demo", state=tk.NORMAL)
         self.run_menu.entryconfig("Stop Demo", state=tk.DISABLED)
@@ -1032,7 +1038,7 @@ class WindowedDashboard:
             messagebox.showerror("Config Error", str(ex))
             return
         self.config_name = cfg_path.name
-        workspace = cfg_path.parent.parent.parent.resolve()
+        workspace = Path.cwd()
         self._apply_config(config, workspace)
         if self.config_window is not None and self.config_window.winfo_exists():
             self._populate_config_window()
@@ -1246,23 +1252,7 @@ class WindowedDashboard:
         for target in (self._status_loop, self._amf_loop, self._amf_log_loop):
             threading.Thread(target=target, daemon=True).start()
         self._maybe_schedule_auto_user_plane_test()
-        ue_loc_entries: List[Dict[str, object]] = []
-        if (self.ue_latitude is not None
-                and self.ue_longitude is not None
-                and self.ue_altitude is not None):
-            ue_node_name = self.node_names.get(self.primary_ue_key, "UE1")
-            loc_arg = ":".join([
-                self._format_cli_float(self.ue_latitude),
-                self._format_cli_float(self.ue_longitude),
-                self._format_cli_float(self.ue_altitude),
-            ])
-            ue_loc_entries.append({
-                "time": 1,
-                "node": ue_node_name,
-                "command": "set-loc-wgs84",
-                "args": [loc_arg],
-            })
-        self._active_script_entries = ue_loc_entries + self._build_sat_script_entries() + self.script_entries
+        self._active_script_entries = self._build_sat_script_entries() + self.script_entries
         if self._active_script_entries:
             self.script_start_time = time.time()
             self.script_executed_set = set()
@@ -1582,6 +1572,7 @@ class WindowedDashboard:
         run_tab = ttk.Frame(nb)
         nb.add(run_tab, text="Run")
         run_inner = _make_scroll_frame(run_tab)
+        ui_section = self.config.get("ui", {})
         row = 0
         row = _add_section_header(run_inner, row, "Demo", first=True)
         row = _add_field(run_inner, row, "demo_name", "demo_name", self.config.get("demo_name", ""))
@@ -1589,6 +1580,7 @@ class WindowedDashboard:
         ttk.Label(run_inner, text=self.config_name, foreground="gray").grid(row=row, column=1, sticky="w", pady=3)
         row += 1
         row = _add_field(run_inner, row, "command_cli", "command_cli", self.config.get("command_cli", "./build/nr-cli"), browse=True)
+        row = _add_field(run_inner, row, "command_timeout_sec", "ui.command_timeout_sec", ui_section.get("command_timeout_sec", 3.0))
         row = _add_section_header(run_inner, row, "Run")
         run_section = self.config.get("run", {})
         for field_key, default in [
@@ -1600,6 +1592,7 @@ class WindowedDashboard:
             ("run_log", "demo_%i.log"),
         ]:
             row = _add_field(run_inner, row, field_key, f"run.{field_key}", run_section.get(field_key, default))
+        row = _add_field(run_inner, row, "poll_interval_sec", "ui.poll_interval_sec", ui_section.get("poll_interval_sec", 1.0))
         row = _add_section_header(run_inner, row, "Logging")
         log_section = run_section.get("logging", {})
         for field_key, default in [
@@ -1607,6 +1600,7 @@ class WindowedDashboard:
             ("run_log_dir_name", "run-%t"),
         ]:
             row = _add_field(run_inner, row, field_key, f"run.logging.{field_key}", log_section.get(field_key, default))
+        row = _add_field(run_inner, row, "max_log_lines", "ui.max_log_lines", ui_section.get("max_log_lines", 400))
 
         # ── UE tab ────────────────────────────────────────────────────────────
         # UE tab with Location Setting fields
@@ -1614,6 +1608,7 @@ class WindowedDashboard:
             ("Node Name", "UE1", False), ("count", 1, False), ("ue_command", "./build/nr-ue", True),
             ("config", "", True), ("ue_log_file", "ue_%i.log", False),
             ("create_db_profiles", False, False),
+            ("start_delay_sec", 0.0, False),
             ("auto_setcap", True, False), ("run_with_sudo", True, False),
             ("sudo_non_interactive", False, False), ("cli_with_sudo", True, False), ("args", [], False),
         ]
@@ -1689,13 +1684,6 @@ class WindowedDashboard:
             ("db_uri", "mongodb://localhost/open5gs", False), ("check_timeout_sec", 10.0, False), ("python", "python3", False),
         ]:
             row = _add_field(core_inner, row, field_key, f"core_db.{field_key}", db_section.get(field_key, default), browse=browse)
-
-        # ── UI tab ────────────────────────────────────────────────────────────
-        _build_section_tab("UI", "ui", [
-            ("poll_interval_sec", 1.0, False),
-            ("max_log_lines", 400, False),
-            ("command_timeout_sec", 3.0, False),
-        ])
 
         # ── User Plane tab ────────────────────────────────────────────────────
         up_tab = ttk.Frame(nb)
@@ -1791,6 +1779,10 @@ class WindowedDashboard:
         self._epoch_mode_var.trace_add("write", _update_manual_state)
         _update_manual_state()
 
+        ts_val = sat_cfg_section.get("tick_scaling", "") if isinstance(sat_cfg_section, dict) else ""
+        _add_field(sat_top, 2, "time_scale", "satellite.tick_scaling",
+                   ts_val if ts_val is not None else "")
+
         sat_count_var = tk.StringVar(value=f"{len(self.all_tles)} satellite(s) loaded")
 
         def _do_load_tles() -> None:
@@ -1832,7 +1824,7 @@ class WindowedDashboard:
             self.sat_epoch_base_resolved = self._resolve_epoch_base(raw, new_tles)
             sat_count_var.set(f"{len(new_tles)} satellite(s) loaded")
 
-        ttk.Button(sat_top, text="Load", command=_do_load_tles).grid(row=2, column=1, sticky="w", pady=(0, 4))
+        ttk.Button(sat_top, text="Load", command=_do_load_tles).grid(row=3, column=1, sticky="w", pady=(0, 4))
 
         sat_tree_frame = ttk.Frame(sat_tab)
         sat_tree_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(4, 8))
@@ -2286,7 +2278,7 @@ class WindowedDashboard:
         out = self._cli_exec_with_mode(node, "ui-status", use_sudo=self.ue_cli_with_sudo)
         if "error" in out:
             self._record_cli_error(key, out["error"])
-            return {"RRC": "N/A", "NAS": "N/A", "PCI": "N/A", "dBm": "N/A"}
+            return {"RRC": "N/A", "NAS": "N/A", "PCI": "N/A", "dBm": "N/A", "cell-measurements": ""}
 
         self.last_cli_error.pop(key, None)
         return {
@@ -2294,6 +2286,7 @@ class WindowedDashboard:
             "NAS": out.get("nas-state", "N/A"),
             "PCI": out.get("connected-pci", "N/A"),
             "dBm": out.get("connected-dbm", "N/A"),
+            "cell-measurements": out.get("cell-measurements", ""),
         }
 
     def _discover_primary_ue_tun_info(self) -> None:
@@ -3429,6 +3422,12 @@ class WindowedDashboard:
 
         self._prepare_ue_privileges(nr_ue_path)
 
+        # Compute synchronized start epochs. GNBs use the base epoch; the UE epoch is
+        # offset forward by start_delay so both clocks read the same virtual time at
+        # the moment the UE process actually launches.
+        gnb_epoch = self.sat_epoch_base_resolved
+        ue_epoch = self._offset_epoch_str(gnb_epoch, self.ue_start_delay) if gnb_epoch else ""
+
         ue_cmd = [
             nr_ue_path,
             "-c",
@@ -3438,6 +3437,24 @@ class WindowedDashboard:
 
         if self.ue_count > 1:
             ue_cmd.extend(["-n", str(self.ue_count)])
+
+        if ue_epoch:
+            _ue_sat_time = f"start-epoch={ue_epoch}"
+            if self.sat_tick_scaling is not None:
+                _ue_sat_time += f",tick-scaling={self.sat_tick_scaling}"
+            _ue_sat_time += ",run"
+            ue_cmd.extend(["--sat-time", _ue_sat_time])
+
+        # Pass initial location via CLI arg instead of a post-start CLI command.
+        if (self.ue_latitude is not None
+                and self.ue_longitude is not None
+                and self.ue_altitude is not None):
+            loc_str = ",".join([
+                self._format_cli_float(self.ue_latitude),
+                self._format_cli_float(self.ue_longitude),
+                self._format_cli_float(self.ue_altitude),
+            ])
+            ue_cmd.extend(["--location", loc_str])
 
         if bool(ue_cfg.get("run_with_sudo", False)):
             sudo_non_interactive = bool(ue_cfg.get("sudo_non_interactive", False))
@@ -3470,6 +3487,15 @@ class WindowedDashboard:
             nci = self.gnb_ncis.get(key)
             if nci:
                 gnb_cmd.extend(["--nci", nci])
+            gnb_node_name = self.node_names.get(key, "")
+            if gnb_node_name:
+                gnb_cmd.extend(["--name", gnb_node_name])
+            if gnb_epoch:
+                _gnb_sat_time = f"start-epoch={gnb_epoch}"
+                if self.sat_tick_scaling is not None:
+                    _gnb_sat_time += f",tick-scaling={self.sat_tick_scaling}"
+                _gnb_sat_time += ",run"
+                gnb_cmd.extend(["--sat-time", _gnb_sat_time])
             self.processes[key] = ManagedProcess(
                 self.panes[key],
                 gnb_cmd,
@@ -3477,8 +3503,24 @@ class WindowedDashboard:
                 self._process_log_path(key),
             )
 
-        for proc in self.processes.values():
-            proc.start()
+        # Start GNBs immediately; delay UE start if start_delay is configured.
+        for key in self.gnb_keys:
+            self.processes[key].start()
+
+        if self.ue_start_delay > 0:
+            self.panes[self.primary_ue_key].append_log(
+                f"[start] UE will start in {self.ue_start_delay:.1f}s"
+            )
+            self.root.after(int(self.ue_start_delay * 1000), self._delayed_start_ue)
+        else:
+            self.processes["ue"].start()
+
+    def _delayed_start_ue(self) -> None:
+        if not self.demo_running:
+            return
+        ue_proc = self.processes.get("ue")
+        if ue_proc is not None:
+            ue_proc.start()
 
     def _inject_rsrp_value(self, key: str, dbm: int, source: str) -> None:
         dbm = max(MIN_RSRP, min(MAX_RSRP, dbm))
@@ -3698,6 +3740,13 @@ class WindowedDashboard:
             return dt.timestamp() * 1000.0
         except (ValueError, IndexError, OverflowError):
             return None
+
+    def _offset_epoch_str(self, epoch_str: str, offset_sec: float) -> str:
+        """Return epoch_str advanced by offset_sec seconds, keeping YYDDD.ddddddd format."""
+        ms = self._yyddd_to_ms(epoch_str)
+        if ms is None:
+            return epoch_str
+        return self._ms_to_yyddd(ms + offset_sec * 1000.0)
 
     @staticmethod
     def _haversine_2d_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -4307,6 +4356,13 @@ class WindowedDashboard:
         info_outer.pack(side=tk.RIGHT, fill=tk.Y)
         info_outer.pack_propagate(False)
 
+        ue_pane = ttk.LabelFrame(info_outer, text="UE Status", padding=(4, 4))
+        ue_pane.pack(fill=tk.X, side=tk.TOP, pady=(0, 6))
+        ue_info_text = tk.Text(
+            ue_pane, height=13, font=("Courier", 8), state=tk.DISABLED, wrap=tk.NONE,
+        )
+        ue_info_text.pack(fill=tk.X)
+
         ttk.Label(info_outer, text="Location Data", font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
         info_text = scrolledtext.ScrolledText(
             info_outer, width=50, font=("Courier", 8), state=tk.DISABLED, wrap=tk.NONE,
@@ -4325,78 +4381,160 @@ class WindowedDashboard:
         # Set of sat names that are associated with a GNB
         _gnb_sat_name_set: set = set(self.gnb_sat_names.values())
 
+        def _update_ue_pane() -> None:
+            ue_node = self.node_names.get(self.primary_ue_key, self.primary_ue_key)
+            ue_loc = loc_cache.get(self.primary_ue_key)
+            ue_scalars: Dict[str, str] = {}
+            if self.primary_ue_key in self.panes:
+                ue_scalars, _ = self.panes[self.primary_ue_key].snapshot()
+
+            lines: List[str] = []
+            lines.append(f"UE  ({ue_node})")
+            if ue_loc:
+                if "timestampMs" in ue_loc:
+                    lines.append(f"  ts:  {self._ms_to_yyddd(ue_loc['timestampMs'])}")
+                lines.append(f"  lat: {ue_loc['latitude']:+12.6f}°")
+                lines.append(f"  lon: {ue_loc['longitude']:+12.6f}°")
+                lines.append(f"  alt: {ue_loc['altitude']:>10,.0f} m")
+            else:
+                lines.append("  (no location)")
+
+            ue_pci = ue_scalars.get("PCI", "N/A")
+            connected_gnb = "N/A"
+            if ue_pci not in ("N/A", ""):
+                for gnb_key in self.gnb_keys:
+                    gnb_scalars, _ = self.panes[gnb_key].snapshot()
+                    if gnb_scalars.get("PCI", "") == ue_pci:
+                        connected_gnb = self.node_names.get(gnb_key, gnb_key)
+                        break
+            lines.append(f"  Connected:  {connected_gnb}")
+            lines.append("")
+
+            # Parse "pci:dbm,pci:dbm,..." from UE live cell measurements
+            cell_meas: Dict[str, int] = {}
+            cell_meas_raw = ue_scalars.get("cell-measurements", "")
+            if cell_meas_raw:
+                for pair in cell_meas_raw.split(","):
+                    if ":" in pair:
+                        pci_s, dbm_s = pair.split(":", 1)
+                        try:
+                            cell_meas[pci_s.strip()] = int(dbm_s.strip())
+                        except ValueError:
+                            pass
+
+            # Build PCI → gNB name from gNB pane scalars
+            pci_to_name: Dict[str, str] = {}
+            for gnb_key in self.gnb_keys:
+                gnb_scalars, _ = self.panes[gnb_key].snapshot()
+                pci_val = gnb_scalars.get("PCI", "")
+                if pci_val and pci_val != "N/A":
+                    pci_to_name[pci_val] = self.node_names.get(gnb_key, gnb_key)
+
+            col = 22
+            lines.append("  Signal Measurements:")
+            lines.append(f"  {'GNB':<{col}} RSRP")
+            lines.append("  " + "-" * (col + 12))
+            if cell_meas:
+                for pci_s, dbm in sorted(cell_meas.items(),
+                                         key=lambda x: int(x[0]) if x[0].isdigit() else 0):
+                    gnb_name = pci_to_name.get(pci_s, f"Cell {pci_s}")
+                    lines.append(f"  {gnb_name:<{col}} {dbm} dBm")
+            else:
+                for gnb_key in self.gnb_keys:
+                    gnb_name = self.node_names.get(gnb_key, gnb_key)
+                    lines.append(f"  {gnb_name:<{col}} N/A")
+
+            ue_info_text.config(state=tk.NORMAL)
+            ue_info_text.delete("1.0", tk.END)
+            ue_info_text.insert(tk.END, "\n".join(lines))
+            ue_info_text.config(state=tk.DISABLED)
+
         def _update_info_panel() -> None:
+            _update_ue_pane()
             lines: List[str] = []
             ue_loc = loc_cache.get(self.primary_ue_key)
 
-            for key in [self.primary_ue_key] + self.gnb_keys:
+            for key in self.gnb_keys:
                 node = self.node_names.get(key, key)
                 loc  = loc_cache.get(key)
                 prop = tle_cache.get(key)
 
-                if key == self.primary_ue_key:
-                    lines.append(f"UE  ({node})")
-                    if loc:
-                        if "timestampMs" in loc:
-                            lines.append(f"  ts:  {self._ms_to_yyddd(loc['timestampMs'])}")
-                        lines.append(f"  lat: {loc['latitude']:+12.6f}°")
-                        lines.append(f"  lon: {loc['longitude']:+12.6f}°")
-                        lines.append(f"  alt: {loc['altitude']:>10,.0f} m")
-                    else:
-                        lines.append("  (no data)")
+                sat_name = self.gnb_sat_names.get(key, "")
+                if sat_name:
+                    lines.append(f"{key.upper()} ({node} - {sat_name})")
                 else:
-                    sat_name = self.gnb_sat_names.get(key, "")
-                    if sat_name:
-                        lines.append(f"{key.upper()} ({node} - {sat_name})")
+                    lines.append(f"{key.upper()} ({node})")
+                if prop and loc:
+                    if "timestampMs" in loc:
+                        lines.append(f"  ts:  {self._ms_to_yyddd(loc['timestampMs'])}")
+                    lines.append(f"         Propagated         Reported")
+                    lines.append(f"  lat: {prop['latitude']:+12.6f}°  {loc['latitude']:+12.6f}°")
+                    lines.append(f"  lon: {prop['longitude']:+12.6f}°  {loc['longitude']:+12.6f}°")
+                    lines.append(f"  alt: {prop['altitude']:>10,.0f} m  {loc['altitude']:>10.0f} m")
+                    if ue_loc is not None:
+                        el_prop = self._elevation_angle_deg(
+                            ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                            prop["latitude"], prop["longitude"], prop["altitude"],
+                        )
+                        el_rep = self._elevation_angle_deg(
+                            ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                            loc["latitude"], loc["longitude"], loc["altitude"],
+                        )
+                        dist_3d_km = self._distance_3d_m(
+                            ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                            prop["latitude"], prop["longitude"], prop["altitude"],
+                        ) / 1000.0
+                        _ssp = self._nadir_wgs84(prop["latitude"], prop["longitude"], prop["altitude"])
+                        dist_ssp_km = self._haversine_2d_distance_m(
+                            ue_loc["latitude"], ue_loc["longitude"], _ssp[0], _ssp[1]
+                        ) / 1000.0
+                        lines.append(f"  el:  {el_prop:+8.2f}°      {el_rep:+8.2f}°   3D={dist_3d_km:,.0f} km  SSP={dist_ssp_km:,.0f} km")
                     else:
-                        lines.append(f"{key.upper()} ({node})")
-                    if prop and loc:
-                        if "timestampMs" in loc:
-                            lines.append(f"  ts:  {self._ms_to_yyddd(loc['timestampMs'])}")
-                        lines.append(f"         Propagated         Reported")
-                        lines.append(f"  lat: {prop['latitude']:+12.6f}°  {loc['latitude']:+12.6f}°")
-                        lines.append(f"  lon: {prop['longitude']:+12.6f}°  {loc['longitude']:+12.6f}°")
-                        lines.append(f"  alt: {prop['altitude']:>10,.0f} m  {loc['altitude']:>10.0f} m")
-                        if ue_loc is not None:
-                            el_prop = self._elevation_angle_deg(
-                                ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
-                                prop["latitude"], prop["longitude"], prop["altitude"],
-                            )
-                            el_rep = self._elevation_angle_deg(
-                                ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
-                                loc["latitude"], loc["longitude"], loc["altitude"],
-                            )
-                            lines.append(f"  el:  {el_prop:+8.2f}°      {el_rep:+8.2f}°")
-                        else:
-                            lines.append("  el:  N/A")
-                    elif prop:
-                        lines.append(f"  lat: {prop['latitude']:+12.6f}°")
-                        lines.append(f"  lon: {prop['longitude']:+12.6f}°")
-                        lines.append(f"  alt: {prop['altitude']:>10,.0f} m")
-                        if ue_loc is not None:
-                            el_prop = self._elevation_angle_deg(
-                                ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
-                                prop["latitude"], prop["longitude"], prop["altitude"],
-                            )
-                            lines.append(f"  el:  {el_prop:+8.2f}°")
-                        else:
-                            lines.append("  el:  N/A")
-                    elif loc:
-                        if "timestampMs" in loc:
-                            lines.append(f"  ts:  {self._ms_to_yyddd(loc['timestampMs'])}")
-                        lines.append(f"  lat: {loc['latitude']:+12.6f}°")
-                        lines.append(f"  lon: {loc['longitude']:+12.6f}°")
-                        lines.append(f"  alt: {loc['altitude']:>10,.0f} m")
-                        if ue_loc is not None:
-                            el_loc = self._elevation_angle_deg(
-                                ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
-                                loc["latitude"], loc["longitude"], loc["altitude"],
-                            )
-                            lines.append(f"  el:  {el_loc:+8.2f}°")
-                        else:
-                            lines.append("  el:  N/A")
+                        lines.append("  el:  N/A")
+                elif prop:
+                    lines.append(f"  lat: {prop['latitude']:+12.6f}°")
+                    lines.append(f"  lon: {prop['longitude']:+12.6f}°")
+                    lines.append(f"  alt: {prop['altitude']:>10,.0f} m")
+                    if ue_loc is not None:
+                        el_prop = self._elevation_angle_deg(
+                            ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                            prop["latitude"], prop["longitude"], prop["altitude"],
+                        )
+                        dist_3d_km = self._distance_3d_m(
+                            ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                            prop["latitude"], prop["longitude"], prop["altitude"],
+                        ) / 1000.0
+                        _ssp = self._nadir_wgs84(prop["latitude"], prop["longitude"], prop["altitude"])
+                        dist_ssp_km = self._haversine_2d_distance_m(
+                            ue_loc["latitude"], ue_loc["longitude"], _ssp[0], _ssp[1]
+                        ) / 1000.0
+                        lines.append(f"  el:  {el_prop:+8.2f}°   3D={dist_3d_km:,.0f} km  SSP={dist_ssp_km:,.0f} km")
                     else:
-                        lines.append("  (no data)")
+                        lines.append("  el:  N/A")
+                elif loc:
+                    if "timestampMs" in loc:
+                        lines.append(f"  ts:  {self._ms_to_yyddd(loc['timestampMs'])}")
+                    lines.append(f"  lat: {loc['latitude']:+12.6f}°")
+                    lines.append(f"  lon: {loc['longitude']:+12.6f}°")
+                    lines.append(f"  alt: {loc['altitude']:>10,.0f} m")
+                    if ue_loc is not None:
+                        el_loc = self._elevation_angle_deg(
+                            ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                            loc["latitude"], loc["longitude"], loc["altitude"],
+                        )
+                        dist_3d_km = self._distance_3d_m(
+                            ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                            loc["latitude"], loc["longitude"], loc["altitude"],
+                        ) / 1000.0
+                        _ssp = self._nadir_wgs84(loc["latitude"], loc["longitude"], loc["altitude"])
+                        dist_ssp_km = self._haversine_2d_distance_m(
+                            ue_loc["latitude"], ue_loc["longitude"], _ssp[0], _ssp[1]
+                        ) / 1000.0
+                        lines.append(f"  el:  {el_loc:+8.2f}°   3D={dist_3d_km:,.0f} km  SSP={dist_ssp_km:,.0f} km")
+                    else:
+                        lines.append("  el:  N/A")
+                else:
+                    lines.append("  (no data)")
                 lines.append("")
 
             # Unassociated sats — only list those above the UE horizon
@@ -4415,7 +4553,15 @@ class WindowedDashboard:
                 lines.append(f"  lon: {sat_loc['longitude']:+12.6f}°")
                 lines.append(f"  alt: {sat_loc['altitude']:>10,.0f} m")
                 if el is not None:
-                    lines.append(f"  el:  {el:+8.2f}°")
+                    dist_3d_km = self._distance_3d_m(
+                        ue_loc["latitude"], ue_loc["longitude"], ue_loc["altitude"],
+                        sat_loc["latitude"], sat_loc["longitude"], sat_loc["altitude"],
+                    ) / 1000.0
+                    _ssp = self._nadir_wgs84(sat_loc["latitude"], sat_loc["longitude"], sat_loc["altitude"])
+                    dist_ssp_km = self._haversine_2d_distance_m(
+                        ue_loc["latitude"], ue_loc["longitude"], _ssp[0], _ssp[1]
+                    ) / 1000.0
+                    lines.append(f"  el:  {el:+8.2f}°   3D={dist_3d_km:,.0f} km  SSP={dist_ssp_km:,.0f} km")
                 lines.append("")
 
             info_text.config(state=tk.NORMAL)
@@ -5020,7 +5166,7 @@ class WindowedDashboard:
         for key, var in self.scalar_vars.items():
             scalars, _ = self.panes[key].snapshot()
             if key in self.ue_keys:
-                scalars = {k: v for k, v in scalars.items() if k != "DB"}
+                scalars = {k: v for k, v in scalars.items() if k not in ("DB", "cell-measurements")}
             var.set("  ".join(f"{k}:{v}" for k, v in scalars.items()))
 
         if self.user_plane_window is not None and self.user_plane_window.winfo_exists():
@@ -5086,8 +5232,8 @@ def validate_config(config: Dict[str, object]) -> None:
 
     gnb_section = config["gnb"]
     gnbs = gnb_section.get("gnbs", []) if isinstance(gnb_section, dict) else []
-    if not isinstance(gnbs, list) or not (1 <= len(gnbs) <= 3):
-        raise ValueError("Config gnb.gnbs must contain 1 to 3 gNB definitions.")
+    if not isinstance(gnbs, list) or len(gnbs) < 1:
+        raise ValueError("Config gnb.gnbs must contain at least 1 gNB definition.")
 
     for key in ["node", "config"]:
         if key not in config["ue"]:
@@ -5101,6 +5247,17 @@ def validate_config(config: Dict[str, object]) -> None:
         for key in ["node", "config"]:
             if key not in gnb:
                 raise ValueError(f"gNB #{i + 1} config missing required key: {key}")
+
+    sat_cfg = config.get("satellite", {})
+    if isinstance(sat_cfg, dict):
+        ts = sat_cfg.get("tick_scaling")
+        if ts is not None and str(ts).strip() != "":
+            try:
+                ts_f = float(ts)
+            except (ValueError, TypeError) as ex:
+                raise ValueError(f"satellite.tick_scaling must be a number: {ex}") from ex
+            if ts_f <= 0:
+                raise ValueError("satellite.tick_scaling must be greater than zero")
 
     up_cfg = config.get("user_plane", {})
     upf_port = int(up_cfg.get("upf_port", 5000))

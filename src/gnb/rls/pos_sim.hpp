@@ -7,6 +7,7 @@
 namespace nr::gnb
 {
 
+
 /// Compute simulated RSRP (dBm) for the satellite link.
 /// gnbEcef: current satellite ECEF position (meters).
 /// ueGeo:   UE position in lat/lon/alt.
@@ -22,5 +23,11 @@ int SatelliteSimulatedDbm(const nr::sat::EcefPosition &gnbEcef,
 int TerrestrialSimulatedDbm(const GeoPosition &gnbGeo,
                             const GeoPosition &ueGeo,
                             const GnbRfLinkConfig &link);
+
+// pre-calculate certain values in RSRP calculations, since they do not change over time.
+//  avoids repeating expensive calculations
+void pre_calculations(double carrierFrequencyHz, double txPowerDbm, double txGainDbi, double ueRxGainDbi,
+    double &fsplBase, double &umaBase, double &umaFar, double &lBudget_base);
+
 
 } // namespace nr::gnb

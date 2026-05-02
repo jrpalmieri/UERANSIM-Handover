@@ -28,19 +28,27 @@ ignoreStreamIds: true
 #     Note: this value can be manually changed during operation through the command interface to simulate changes in RF conditions.
 #   if updateMode is "Calculated", the RSRP is calculated  using the carrier frequency, tx power, and antenna gains.
 rfLink:
-  updateMode: Fixed
+  #updateMode: Fixed
   rsrpDbValue: -80
-  #updateMode: Calculated
-  # typical values for a LEO satellite gNB
-  carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
-  txPowerDbm: 43.0          # Radiated (transmit) power (dBm)
-  txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
-  ueRxGainDbi: 25.0         # UE Receive antenna gain (dBi)
+  updateMode: Calculated
+
+  # typical values for a LEO satellite gNB (Ku-Band)
+  # carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
+  # txPowerDbm: 20.0          # Radiated (transmit) power (dBm)
+  # txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
+  # ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
+
   # typical values for a terrestrial gNB (macro), which can be adjusted as needed for different scenarios
   # carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
   # txPowerDbm: 15.0          # Radiated (transmit) power (dBm)
   # txGainDbi: 15.0           # gNB Transmit antenna gain (dBi)
   # ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi) - 0.0 is omnidirectional
+
+  # typical values for direct-to-cell service
+  carrFrequencyHz: 2.5e9   # carrier frequency (Hz)
+  txPowerDbm: 15.0          # Radiated (transmit) power (dBm) per element
+  txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
+  ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
 
 # RLS loop/timer settings (ms).
 #   TIMER_PERIOD_ACK_SEND: - period for timer that triggers sending ACKs to PDUs from UE
@@ -104,7 +112,7 @@ handover:
   #     ttt: ms100
 
   choEnabled: true
-  choDefaultProfileId: 4  # default profile ID to use for CHO candidates if not overridden
+  choDefaultProfileId: 5  # default profile ID to use for CHO candidates if not overridden
   choCandidateProfiles:
     - candidateProfileId: 1
       # targetCellId is either a specific cell ID (e.g. '0x000000020') which must be on the neighbor list
@@ -156,6 +164,14 @@ handover:
           a3hysteresisDb: 1
           ttt: ms100
 
+    - candidateProfileId: 5
+      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
+      targetCellId: calculated
+      conditions:
+        - eventType: condT1
+          threhsoldSecTS: 0   # this value is set by the gnb based on current time
+          durationSec: 600
+
 # NTN (non-Terrestrial Network) configuration
 ntn:
 
@@ -164,11 +180,11 @@ ntn:
   ntnEnabled: true
 
   # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
-  tle:
+  #tle:
     # Samples - same epoch, nadir: lat=45N, lon=90W
     #  Sat 1: Zenith (Elevation ~90 deg)
-    line1: '1 99991U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0008'
-    line2: '2 99991  45.0000 280.4606 0001000   0.0000  90.0000 15.00000000    11'
+    #line1: '1 99991U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0008'
+    #line2: '2 99991  45.0000 280.4606 0001000   0.0000  90.0000 15.00000000    11'
     #line1: '1 44714U 19074B   26117.00002315  .00123192  00000+0  24714-2 0  9996'
     #line2: '2 44714  53.1543 312.8389 0000942  66.9226 117.3748 15.45800594  5831'
     #    Sat 2: Rising (Lagging by 20 deg Mean Anomaly)

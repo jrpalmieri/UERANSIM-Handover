@@ -260,6 +260,43 @@ EcefPosition PropagateKeplerianToEcef(const KeplerianElementsRaw &orb,
     return ecef;
 }
 
+int64_t TleEpochToUnixMillis(const std::string &epoch)
+{
+
+    int year2 = (epoch[0] - '0') * 10 + (epoch[1] - '0');
+    int fullYear = year2 >= 57 ? (1900 + year2) : (2000 + year2);
+
+    double dayOfYear = 0.0;
+    try
+    {
+        dayOfYear = std::stod(epoch.substr(2));
+    }
+    catch (const std::exception &)
+    {
+        throw std::runtime_error("Epoch has invalid day-of-year value");
+    }
+
+    if (!(dayOfYear >= 1.0 && dayOfYear < 367.0))
+        throw std::runtime_error("Epoch day-of-year must be in [1, 367)");
+
+    libsgp4::DateTime dt(static_cast<unsigned int>(fullYear), dayOfYear);
+
+    return DateTimeToUnixMillis(dt);
+
+}
+
+std::string UnixMillisToTleEpoch(int64_t unixMillis)
+{
+    libsgp4::DateTime epoch = UnixMillisToDateTime(unixMillis);
+    int year = epoch.Year() % 100; // last two digits of the year
+    double dayOfYear = static_cast<double>(epoch.DayOfYear(epoch.Year(), epoch.Month(), epoch.Day())) + (epoch.Hour() / 24.0) + (epoch.Minute() / 1440.0) + (epoch.Second() / 86400.0);
+
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%02d%012.6f", year, dayOfYear);
+    return std::string(buffer);
+}
+
+
 /**
  * @brief Finds the exit time for a satellite based on its state and an observer's position.
  * Caller provides a resolver function to obtain the satellite's ECEF state at a given time offset, allowing

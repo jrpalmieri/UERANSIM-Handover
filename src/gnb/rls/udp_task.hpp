@@ -77,7 +77,7 @@ class RlsUdpTask : public NtsTask
     void sendRlsPdu(const InetAddress &addr,
                     const rls::RlsMessage &msg);
     void heartbeatCycle(int64_t time);
-    int computeDbm(const GeoPosition &uePos);
+    int computeDbm(const GeoPosition &uePos, int ueId);
 //    void handleSatPositionUpdate(const rls::RlsMessage &msg);
 //    void handleRsrpUpdate(const rls::RlsMessage &msg);
 

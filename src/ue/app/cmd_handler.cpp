@@ -423,17 +423,27 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
         auto currentCell = m_base->shCtx.currentCell.get();
         if (currentCell.hasValue())
             currentCellId = currentCell.cellId;
-
+        
         std::string connectedPci = "NONE";
         std::string connectedDbm = "NONE";
-        if (currentCellId.has_value())
+        std::string cellMeasStr;
         {
-            connectedPci = std::to_string(*currentCellId);
-
             std::shared_lock lock(m_base->cellDbMeasMutex);
-            auto it = m_base->cellDbMeas.find(*currentCellId);
-            if (it != m_base->cellDbMeas.end())
-                connectedDbm = std::to_string(it->second);
+            if (currentCellId.has_value())
+            {
+                connectedPci = std::to_string(*currentCellId);
+                auto it = m_base->cellDbMeas.find(*currentCellId);
+                if (it != m_base->cellDbMeas.end())
+                    connectedDbm = std::to_string(it->second);
+            }
+            bool first = true;
+            for (const auto &[cellId, dbm] : m_base->cellDbMeas)
+            {
+                if (!first)
+                    cellMeasStr += ",";
+                cellMeasStr += std::to_string(cellId) + ":" + std::to_string(dbm);
+                first = false;
+            }
         }
 
         Json json = Json::Obj({
@@ -441,6 +451,7 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
             {"nas-state", ToJson(m_base->nasTask->mm->m_mmSubState)},
             {"connected-pci", connectedPci},
             {"connected-dbm", connectedDbm},
+            {"cell-measurements", cellMeasStr},
         });
 
         sendResult(msg.address, json.dumpYaml());

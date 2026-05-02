@@ -64,6 +64,15 @@ RlsUdpTask::RlsUdpTask(TaskBase *base, uint64_t sti,
 
 void RlsUdpTask::onStart()
 {
+    double fsplBasePtr;
+    double uMaPathLossBasePtr;
+    double uMaPathLossFarPtr;
+    double linkBudgetBasePtr;
+
+    pre_calculations(m_base->config->rfLink.carrFrequencyHz, m_base->config->rfLink.txPowerDbm, 
+        m_base->config->rfLink.txGainDbi, m_base->config->rfLink.ueRxGainDbi, fsplBasePtr, uMaPathLossBasePtr, uMaPathLossFarPtr, linkBudgetBasePtr);
+    
+    m_logger->debug("Storing pre-calculations of RSRP values: fsplBase=%f, umaBase=%f, umaFar=%f, linkBudgetBase=%f", fsplBasePtr, uMaPathLossBasePtr, uMaPathLossFarPtr, linkBudgetBasePtr);
 }
 
 void RlsUdpTask::onLoop()
@@ -99,6 +108,7 @@ void RlsUdpTask::receiveRlsPdu(
     std::unique_ptr<rls::RlsMessage> &&msg)
 {
 
+    int64_t currentTime = utils::CurrentTimeMillis();
 
     // UEs provide heartbeat messages to on-net GNBs with their STI and simulated position.
     //   The gNB responds with a simulated RSRP value. The gNB also tracks the UE's address 
@@ -109,12 +119,6 @@ void RlsUdpTask::receiveRlsPdu(
     if (msg->msgType == rls::EMessageType::HEARTBEAT)
     {
         auto &hb = static_cast<const rls::RlsHeartBeat &>(*msg);
-        int dbm = computeDbm(hb.simPos);
-        // clamp the dbm values to allowed RSRP range
-        //  note - values below cons::RLF_RSRP are considered radio link failure.  
-        //      ACKs should still be sent. The UE will manage how to treat them.
-        dbm = std::max(dbm, cons::MIN_RSRP);
-        dbm = std::min(dbm, cons::MAX_RSRP);
 
         int ueId = 0;
         bool isNewUe = false;
@@ -130,7 +134,7 @@ void RlsUdpTask::receiveRlsPdu(
                 m_ueMap[ueId].address = addr;
                 if (msg->senderId2 != 0)
                     m_ueMap[ueId].cRnti = static_cast<int>(msg->senderId2);
-                m_ueMap[ueId].lastSeen    = utils::CurrentTimeMillis();
+                m_ueMap[ueId].lastSeen    = currentTime;
                 m_ueMap[ueId].lastPos     = hb.simPos;
                 m_ueMap[ueId].hasPosData  = true;
             }
@@ -145,7 +149,7 @@ void RlsUdpTask::receiveRlsPdu(
                 m_ueMap[ueId].sti        = msg->sti;
                 m_ueMap[ueId].address    = addr;
                 m_ueMap[ueId].cRnti      = static_cast<int>(msg->senderId2);
-                m_ueMap[ueId].lastSeen   = utils::CurrentTimeMillis();
+                m_ueMap[ueId].lastSeen   = currentTime;
                 m_ueMap[ueId].lastPos    = hb.simPos;
                 m_ueMap[ueId].hasPosData = true;
                 isNewUe = true;
@@ -154,8 +158,8 @@ void RlsUdpTask::receiveRlsPdu(
 
         // For newly seen UEs, push a SIGNAL_DETECTED message to the control task with the new UE ID, which will
         //    trigger sending of the MIB/SIB1 to the UE.
-        //    Note that in real networks, the MIB/SIB1 are sent periodically to handle UE movement and RF channel variability.
-        //      In this implementation, we only send them once upon initial detection to simplify the implementation and 
+        //    Note that in real networks, the MIB/SIB1 are sent frequently (every ~50-200ms) to handle UE movement and RF channel variability.
+        //      In this implementation, we send them upon initial detection and then a long intervals to simplify the implementation and 
         //      reduce unnecessary message sending, since the simulated RF channel is stable.
         if (isNewUe)
         {
@@ -167,9 +171,14 @@ void RlsUdpTask::receiveRlsPdu(
 
         // Send a HEARTBEAT_ACK back to the sender with the simulated signal strength in dBm
         rls::RlsHeartBeatAck ack{m_sti, m_cellId};
-        ack.dbm = dbm;
+
+        // compute the RSRP in dBm
+        ack.dbm = computeDbm(hb.simPos, ueId);
 
         sendRlsPdu(addr, ack);
+
+        // update the global measurement data with the reported UE position
+        m_base->setUePosition(ueId, hb.simPos, currentTime);
         return;
     }
 
@@ -198,13 +207,16 @@ void RlsUdpTask::receiveRlsPdu(
     }
 
     // If we get here, this is a non-heartbeat message from a known UE.
+
+    // update the global measurement data with the reported UE position
+    if (hasPosData)
+        m_base->setUePosition(ueId, uePos, currentTime);
+
     //  Forward it to the control task for processing, including the UE ID, C-RNTI, and last known UE position.
     auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RECEIVE_RLS_MESSAGE);
     w->ueId       = ueId;
     w->msg        = std::move(msg);
     w->cRnti      = cRnti;
-    w->uePos      = uePos;
-    w->hasPosData = hasPosData;
     m_ctlTask->push(std::move(w));
 }
 
@@ -293,30 +305,37 @@ void RlsUdpTask::send(int ueId, const rls::RlsMessage &msg)
  * @param uePos - UE's current position in lat/lon/alt, which is provided by the UE in the heartbeat message
  * @return int - RSRP in dbm
  */
-int RlsUdpTask::computeDbm(const GeoPosition &uePos)
+int RlsUdpTask::computeDbm(const GeoPosition &uePos, int ueId)
 {
     auto *cfg = m_base->config;
+    int dbm = 0;
 
     // if configured for "fixed" mode, just return the fixed RSRP value
     if (cfg->rfLink.updateMode == EGnbRsrpMode::Fixed)
         return m_base->fixedRsrp;
 
     // get current gnb position
-    GeoPosition gnbPos;
-    {
-        std::lock_guard<std::mutex> lock(m_base->gnbPositionMutex);
-        gnbPos = m_base->gnbPosition;
-    }
+    GeoPosition gnbPos = m_base->getGnbPosition();;
 
     // if we are in NTN mode, use the satellite model to calculate the path loss.
     if (cfg->ntn.ntnEnabled)
     {
-        return SatelliteSimulatedDbm(nr::sat::GeoToEcef(gnbPos), uePos, cfg->rfLink);
+        dbm = SatelliteSimulatedDbm(nr::sat::GeoToEcef(gnbPos), uePos, cfg->rfLink);
+    }
+    // Terrestrial mode path loss
+    else 
+    {
+        dbm = TerrestrialSimulatedDbm(gnbPos, uePos, cfg->rfLink);
     }
 
-    // Terrestrial mode path loss
-    return TerrestrialSimulatedDbm(
-        gnbPos, uePos, cfg->rfLink);
+    // if returned power value is below minimum, this signals that UE is below horizon.
+    //   debug log this to help with testing and verification
+    if (dbm < cons::MIN_RSRP) 
+    {
+        m_logger->debug("UE[%d} - below horizon, clamping to min RSRP %d dBm.", ueId, cons::MIN_RSRP);
+        dbm = cons::MIN_RSRP;
+    }
+    return dbm;
 }
 
 

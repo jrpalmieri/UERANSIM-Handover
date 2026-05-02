@@ -12,14 +12,20 @@
 namespace nr::sat
 {
 
+enum class ESatTimeState
+{
+    Moving,
+    Paused,
+};
+
 class SatTime
 {
   public:
-    enum class EStartCondition
-    {
-        Moving,
-        Paused,
-    };
+    // enum class EStartCondition
+    // {
+    //     Moving,
+    //     Paused,
+    // };
 
     struct Status
     {
@@ -33,7 +39,7 @@ class SatTime
     };
 
     explicit SatTime(int64_t startEpochMillis,
-                     EStartCondition startCondition = EStartCondition::Moving,
+                     ESatTimeState startState = ESatTimeState::Moving,
                      double tickScaling = 1.0,
                      std::function<int64_t()> wallclockNow = {});
 

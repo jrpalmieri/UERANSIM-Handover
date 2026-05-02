@@ -29,19 +29,27 @@ ignoreStreamIds: true
 
 # RF link configuration.
 rfLink:
-#  updateMode: Fixed
-#  rsrpDbValue: -150
+  #updateMode: Fixed
+  rsrpDbValue: -150
   updateMode: Calculated
-  #typical values for a LEO satellite gNB
-  carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
-  txPowerDbm: 43.0          # Radiated (transmit) power (dBm)
-  txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
-  ueRxGainDbi: 25.0         # UE Receive antenna gain (dBi)
-  # typical values for a terrestrial gNB (macro)
+
+  # typical values for a LEO satellite gNB (Ku-Band)
+  # carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
+  # txPowerDbm: 20.0          # Radiated (transmit) power (dBm)
+  # txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
+  # ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
+
+  # typical values for a terrestrial gNB (macro), which can be adjusted as needed for different scenarios
   # carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
   # txPowerDbm: 15.0          # Radiated (transmit) power (dBm)
   # txGainDbi: 15.0           # gNB Transmit antenna gain (dBi)
-  # ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
+  # ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi) - 0.0 is omnidirectional
+
+  # typical values for direct-to-cell service
+  carrFrequencyHz: 2.5e9   # carrier frequency (Hz)
+  txPowerDbm: 15.0          # Radiated (transmit) power (dBm) per element
+  txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
+  ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
 
 # RLS loop/timer settings (ms).
 #  If these are omitted, default values will be used:
@@ -67,6 +75,11 @@ neighborList:
     idLength: 32
     tac: 1
     ipAddress: 127.0.0.4
+    handoverInterface: N2
+  - nci: '0x000000044'
+    idLength: 32
+    tac: 1
+    ipAddress: 127.0.0.5
     handoverInterface: N2
 
 # gNB geographic position (lat/lon/alt, WGS-84)
@@ -96,11 +109,11 @@ xn:
 #   per CHO profile.
 
 handover:
-  # events:
-  #   - eventType: A3
-  #     a3OffsetDb: 3
-  #     a3hysteresisDb: 1
-  #     ttt: ms100
+  events:
+    - eventType: A3
+      a3OffsetDb: 3
+      a3hysteresisDb: 1
+      ttt: ms100
 
   choEnabled: false
   choDefaultProfileId: 1  # default profile ID to use for CHO candidates if not overridden
@@ -164,7 +177,7 @@ ntn:
   ntnEnabled: true
 
   # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
-  tle:
+#  tle:
     # Samples - same epoch, nadir: lat=45N, lon=90W
     #  Sat 1: Zenith (Elevation ~90 deg)
     # line1: '1 99991U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0008'
@@ -173,8 +186,8 @@ ntn:
     # line1: '1 99992U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0009'
     # line2: '2 99992  45.0000 280.4606 0001000   0.0000  70.0000 15.00000000    10'
     #    Sat 3: Trailing
-    line1: '1 99993U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0000'
-    line2: '2 99993  45.0000 280.4606 0001000   0.0000  50.0000 15.00000000    19'
+    #line1: '1 99993U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0000'
+    #line2: '2 99993  45.0000 280.4606 0001000   0.0000  50.0000 15.00000000    19'
     # Starlink
     #line1: '1 44725U 19074N   26117.33334491  .00218751  00000+0  39116-2 0  9995'
     #line2: '2 44725  53.1609 336.9206 0001460  92.8773  76.3071 15.48722716  5882'

@@ -49,7 +49,7 @@ void testMovingClockAtScaleOne()
 {
     FakeClock clock{1000};
     nr::sat::SatTime satTime(5000,
-                             nr::sat::SatTime::EStartCondition::Moving,
+                             nr::sat::ESatTimeState::Moving,
                              1.0,
                              [&clock]() {
                                  return clock.now();
@@ -64,7 +64,7 @@ void testPausedStartAndRun()
 {
     FakeClock clock{500};
     nr::sat::SatTime satTime(12345,
-                             nr::sat::SatTime::EStartCondition::Paused,
+                             nr::sat::ESatTimeState::Paused,
                              1.0,
                              [&clock]() {
                                  return clock.now();
@@ -82,7 +82,7 @@ void testScaleChangeKeepsContinuity()
 {
     FakeClock clock{0};
     nr::sat::SatTime satTime(0,
-                              nr::sat::SatTime::EStartCondition::Moving,
+                              nr::sat::ESatTimeState::Moving,
                               1.0,
                               [&clock]() {
                                   return clock.now();
@@ -100,7 +100,7 @@ void testScheduledPause()
 {
     FakeClock clock{100};
     nr::sat::SatTime satTime(1000,
-                              nr::sat::SatTime::EStartCondition::Moving,
+                              nr::sat::ESatTimeState::Moving,
                               2.0,
                               [&clock]() {
                                   return clock.now();
@@ -121,7 +121,7 @@ void testSetStartEpochResetsDomainClock()
 {
     FakeClock clock{0};
     nr::sat::SatTime satTime(10,
-                              nr::sat::SatTime::EStartCondition::Moving,
+                              nr::sat::ESatTimeState::Moving,
                               1.0,
                               [&clock]() {
                                   return clock.now();

@@ -33,9 +33,9 @@ UserEquipment::UserEquipment(UeConfig *config, app::IUeController *ueController,
     base->cliCallbackTask = cliCallbackTask;
 
     int64_t startEpochMillis = config->ntn.timeWarp.startEpochMillis.value_or(utils::CurrentTimeMillis());
-    auto startCondition = nr::sat::SatTime::EStartCondition::Moving;
-    if (config->ntn.timeWarp.startCondition == nr::ue::UeConfig::NtnConfig::TimeWarpConfig::EStartCondition::Paused)
-        startCondition = nr::sat::SatTime::EStartCondition::Paused;
+    auto startCondition = nr::sat::ESatTimeState::Moving;
+    if (config->ntn.timeWarp.startState == nr::sat::ESatTimeState::Paused)
+        startCondition = nr::sat::ESatTimeState::Paused;
 
     base->satTime = new nr::sat::SatTime(startEpochMillis, startCondition, config->ntn.timeWarp.tickScaling);
 

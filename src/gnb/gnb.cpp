@@ -58,16 +58,16 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     // initialize the sat clock
     int64_t startEpochMillis = config->ntn.timeWarp.startEpochMillis.value_or(utils::CurrentTimeMillis());
     
-    auto startCondition = nr::sat::SatTime::EStartCondition::Moving;
-    if (config->ntn.timeWarp.startCondition == nr::gnb::NtnConfig::TimeWarpConfig::EStartCondition::Paused)
-        startCondition = nr::sat::SatTime::EStartCondition::Paused;
+    auto startCondition = nr::sat::ESatTimeState::Moving;
+    if (config->ntn.timeWarp.startState == nr::sat::ESatTimeState::Paused)
+        startCondition = nr::sat::ESatTimeState::Paused;
 
     base->satTime = new nr::sat::SatTime(startEpochMillis, startCondition, config->ntn.timeWarp.tickScaling);
     sat_time::SetSatTimeSource(base->satTime);
 
     m_logger->info("Initialized satellite clock: startEpoch=%llums (%s), startCondition=%s, tickScaling=%.3f", startEpochMillis,
                    config->ntn.timeWarp.startEpochText.c_str(),
-                   startCondition == nr::sat::SatTime::EStartCondition::Moving ? "Moving" : "Paused",
+                   startCondition == nr::sat::ESatTimeState::Moving ? "Moving" : "Paused",
                    config->ntn.timeWarp.tickScaling);
 
     // initialize the neighbor list

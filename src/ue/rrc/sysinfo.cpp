@@ -30,6 +30,8 @@ void UeRrcTask::receiveMib(int cellId, const ASN_RRC_MIB &msg)
     desc.mib.isIntraFreqReselectAllowed = msg.intraFreqReselection == ASN_RRC_MIB__intraFreqReselection_allowed;
 
     desc.mib.hasMib = true;
+    m_logger->info("Received MIB from cellId=%d: barred=%s, intraFreqReselectionAllowed=%s",
+         cellId, desc.mib.isBarred ? "yes" : "no", desc.mib.isIntraFreqReselectAllowed ? "yes" : "no");
 
     updateAvailablePlmns();
 }
@@ -70,6 +72,16 @@ void UeRrcTask::receiveSib1(int cellId, const ASN_RRC_SIB1 &msg)
     desc.sib1.hasSib1 = true;
 
     updateAvailablePlmns();
+
+    m_logger->info("Received SIB1 from cellId=%d: nci=%d, tac=%d, reserved=%s, plmn: (mcc=%03d, mnc=%02d), aiBarringSet={ai1=%s, ai2=%s, ai11=%s, ai12=%s, ai13=%s, ai14=%s, ai15=%s}",
+         cellId, desc.sib1.nci, desc.sib1.tac, desc.sib1.isReserved ? "yes" : "no",
+         desc.sib1.plmn.hasValue() ? desc.sib1.plmn.mcc : -1,
+         desc.sib1.plmn.hasValue() ? desc.sib1.plmn.mnc : -1,
+         desc.sib1.aiBarringSet.ai1 ? "yes" : "no", desc.sib1.aiBarringSet.ai2 ? "yes" : "no",
+         desc.sib1.aiBarringSet.ai11 ? "yes" : "no", desc.sib1.aiBarringSet.ai12 ? "yes" : "no",
+         desc.sib1.aiBarringSet.ai13 ? "yes" : "no", desc.sib1.aiBarringSet.ai14 ? "yes" : "no",
+         desc.sib1.aiBarringSet.ai15 ? "yes" : "no");
+
 }
 
 } // namespace nr::ue

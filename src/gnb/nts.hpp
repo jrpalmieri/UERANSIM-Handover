@@ -129,12 +129,6 @@ struct NmGnbRlsToRls : NtsMessage
     // RECEIVE_RLS_MESSAGE
     std::unique_ptr<rls::RlsMessage> msg{};
 
-    // RECEIVE_RLS_MESSAGE
-    // UPLINK_RRC
-    // Last known UE geographic position, sourced from the most recent heartbeat.
-    GeoPosition uePos{};
-    bool        hasPosData{false};
-
     // DOWNLINK_DATA
     // UPLINK_DATA
     int psi{};

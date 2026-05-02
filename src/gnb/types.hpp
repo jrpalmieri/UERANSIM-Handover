@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -18,6 +19,10 @@
 #include <lib/app/monitor.hpp>
 #include <lib/asn/utils.hpp>
 #include <lib/rrc/common/event_types.hpp>
+
+#include <lib/sat/sat_time.hpp>
+#include <lib/sat/sat_state.hpp>
+
 #include <utils/common_types.hpp>
 #include <utils/logger.hpp>
 #include <utils/network.hpp>
@@ -30,11 +35,11 @@
 
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
 
-namespace nr::sat
-{
-class SatTime;
-class SatStates;
-}
+// namespace nr::sat
+// {
+// class SatTime;
+// class SatStates;
+// }
 
 namespace nr::gnb
 {
@@ -295,7 +300,7 @@ struct RrcUeContext
     std::map<long, MeasIdentityMappings> measIdentities;
     
     // UE position (populated from RLS heartbeat data via UPLINK_RRC path)
-    GeoPosition uePosition{};
+    //GeoPosition uePosition{};
 
     /* Last measurement report data */
 
@@ -616,13 +621,7 @@ struct NtnConfig
 {
     struct TimeWarpConfig
     {
-        enum class EStartCondition
-        {
-            Moving,
-            Paused,
-        };
-
-        EStartCondition startCondition{EStartCondition::Moving};
+        nr::sat::ESatTimeState startState{nr::sat::ESatTimeState::Moving};
         double tickScaling{1.0};
         std::optional<int64_t> startEpochMillis{};
         std::string startEpochText{};
@@ -719,15 +718,57 @@ struct TaskBase
 
     GnbNeighbors *neighbors{};
 
-    // Access gnbPosition only through getGnbPosition/setGnbPosition.
-    // These methods serialize concurrent readers and writers.
-    mutable std::mutex gnbPositionMutex{};
+    // storage for reported UE position data, keyed by UE ID, 
+    //   (updated from RLS heartbeats via UPLINK_RRC path)
+    //  DO NOT USE DIRECTLY - access through getUePosition/setUePosition which serialize concurrent access with a shared mutex
+    std::unordered_map<int,GeoPosition> uePositions{};
+    // mediating concurrent access to ue position data between RLS task (writer) and other consumer tasks
+    mutable std::shared_mutex uePositionsMutex{};
+
+    // set lat/long/alt of UE store timestamp
+    void setUePosition(const int UeId, const GeoPosition &position, int64_t timestampMs)
+    {
+        std::unique_lock<std::shared_mutex> lock(uePositionsMutex);
+        uePositions[UeId] = position;
+        uePositions[UeId].timestampMs = timestampMs;
+        uePositions[UeId].isValid = true;
+    
+    }
+
+    // set lat/long/alt of UE without updating timestamp
+    void setUePosition(const int UeId, const GeoPosition &position)
+    {
+        std::unique_lock<std::shared_mutex> lock(uePositionsMutex);
+        uePositions[UeId] = position;
+        uePositions[UeId].isValid = true;
+    
+    }
+
+    // returns nullopt if no position is available for the given UE ID
+    std::optional<GeoPosition> getUePosition(const int UeId)
+    {
+        std::shared_lock<std::shared_mutex> lock(uePositionsMutex);
+        auto it = uePositions.find(UeId);
+        if (it != uePositions.end())
+        {
+            return it->second;
+        }
+        return std::nullopt;
+    }
+
+
+
+    // Storage for gnbPosition.  In NTN mode, periodically recaluclated by RRC task based on 
+    //  satellite propagation, and used by various consumer tasks for computing measurements, handover decisions, etc.
+    //  DO NOT USE DIRECTLY - access through getGnbPosition/setGnbPosition which serialize concurrent access with a shared mutex
     GeoPosition gnbPosition{};
+    // mediating concurrent access to gnb position data between RRC task (writer) and other consumer tasks
+    mutable std::shared_mutex gnbPositionMutex{};
 
     // set lat/long/alt and timestamp together
     void setGnbPosition(const GeoPosition &position, int64_t timestampMs)
     {
-        std::lock_guard<std::mutex> lock(gnbPositionMutex);
+        std::unique_lock<std::shared_mutex> lock(gnbPositionMutex);
         gnbPosition.latitude = position.latitude;
         gnbPosition.longitude = position.longitude;
         gnbPosition.altitude = position.altitude;
@@ -738,7 +779,7 @@ struct TaskBase
     // set lat/long/alt without updating timestamp
     void setGnbPosition(const GeoPosition &position)
     {
-        std::lock_guard<std::mutex> lock(gnbPositionMutex);
+        std::unique_lock<std::shared_mutex> lock(gnbPositionMutex);
         gnbPosition.latitude = position.latitude;
         gnbPosition.longitude = position.longitude;
         gnbPosition.altitude = position.altitude;
@@ -747,7 +788,7 @@ struct TaskBase
 
     [[nodiscard]] GeoPosition getGnbPosition() const
     {
-        std::lock_guard<std::mutex> lock(gnbPositionMutex);
+        std::shared_lock<std::shared_mutex> lock(gnbPositionMutex);
         return gnbPosition;
     }
 

@@ -42,6 +42,7 @@ ue:
   config: ./tools/dashboard/configs/ue1_sat.yaml
   ue_log_file: ue.log_%i
   create_db_profiles: false
+  start_delay_sec: 5.0
   # latitude: 40.00
   # longitude: -72.00
   # altitude: 0.0
@@ -155,19 +156,18 @@ script:
   #     }
   #   ]}]
 
-# coordinate start of sat times
-- time: 2
-  effective_time: 5
-  commands:
-  - node: GNB1
-    command: sat-time
-    args: ['run']
-  - node: GNB2
-    command: sat-time
-    args: ['run']
-  - node: UE1
-    command: sat-time
-    args: ['run']
+# coordinate start of sat times (now handled through cli)
+# - time: 2
+#   commands:
+#   - node: GNB1
+#     command: sat-time
+#     args: ['run']
+#   - node: GNB2
+#     command: sat-time
+#     args: ['run']
+#   - node: UE1
+#     command: sat-time
+#     args: ['run']
 
 - time: 20
   commands:

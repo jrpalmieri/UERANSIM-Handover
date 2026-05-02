@@ -75,8 +75,6 @@ void GnbRlsTask::onLoop()
             m->cRnti      = w.cRnti;
             m->rrcChannel = w.rrcChannel;
             m->data       = std::move(w.data);
-            m->uePos      = w.uePos;
-            m->hasPosData = w.hasPosData;
             m_base->rrcTask->push(std::move(m));
             break;
         }

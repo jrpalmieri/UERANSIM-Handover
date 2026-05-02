@@ -57,9 +57,9 @@ int FindExitTimeSec(const Propagator &sgp4,
 
 
 
-int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime);
+// int64_t DateTimeToUnixMillis(const libsgp4::DateTime &dateTime);
 
-libsgp4::DateTime UnixMillisToDateTime(int64_t unixMillis);
+// libsgp4::DateTime UnixMillisToDateTime(int64_t unixMillis);
 
 double SolveKepler(double meanAnomalyRad, double eccentricity);
 
@@ -67,5 +67,7 @@ EcefPosition PropagateKeplerianToEcef(const KeplerianElementsRaw &orb,
                                       int64_t epochMs,
                                       int64_t tMs);
 
+int64_t TleEpochToUnixMillis(const std::string &epoch);
+std::string UnixMillisToTleEpoch(int64_t unixMillis);
 
 } // namespace nr::sat

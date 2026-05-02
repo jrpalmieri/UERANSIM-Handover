@@ -27,17 +27,6 @@ void GnbRrcTask::handleRlsSapMessage(NmGnbRlsToRrc &msg)
     }
     case NmGnbRlsToRrc::UPLINK_RRC: {
         
-        // Update the UE context with the latest position reported in heartbeats.
-        if (msg.hasPosData)
-        {
-            auto *ue = tryFindUeByUeId(msg.ueId);
-            if (ue)
-            {
-                ue->uePosition.altitude = msg.uePos.altitude;
-                ue->uePosition.latitude = msg.uePos.latitude;
-                ue->uePosition.longitude = msg.uePos.longitude;
-            }
-        }
         handleUplinkRrc(msg.ueId, msg.cRnti, msg.rrcChannel, msg.data);
         break;
     }

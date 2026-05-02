@@ -1,0 +1,241 @@
+mcc: '001'          # Mobile Country Code value
+mnc: '01'           # Mobile Network Code value (2 or 3 digits)
+
+nci: '0x000000011'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
+idLength: 32        # portion of NCI that is used for the gNB ID, in bits [22...32]
+                    # Note: The remaining low order bits of NCI (36-idLength) are used for the Cell ID.
+tac: 1              # Tracking Area Code
+
+linkIp: 127.0.0.2   # gNB's local IP address for Radio Link Simulation (must match UE gnbSearchList)
+ngapIp: 172.22.0.202   # gNB's local IP address for N2 Interface (Usually same with local IP)
+gtpIp: 172.22.0.202    # gNB's local IP address for N3 Interface (Usually same with local IP)
+
+# List of AMF address information
+amfConfigs:
+  - address: 172.22.0.10
+    port: 38412
+
+# List of supported S-NSSAIs by this gNB
+slices:
+  - sst: 1
+    #sd: 1
+
+# Indicates whether or not SCTP stream number errors should be ignored.
+ignoreStreamIds: true
+
+# rf link parameters to calculate RSRP values sent to UEs
+#   if updateMode is "Fixed", only the provided rsrpDbValue is used and the other parameters are ignored.
+#     Note: this value can be manually changed during operation through the command interface to simulate changes in RF conditions.
+#   if updateMode is "Calculated", the RSRP is calculated  using the carrier frequency, tx power, and antenna gains.
+rfLink:
+  #updateMode: Fixed
+  rsrpDbValue: -80
+  updateMode: Calculated
+
+  # typical values for a LEO satellite gNB (Ku-Band)
+  # carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
+  # txPowerDbm: 20.0          # Radiated (transmit) power (dBm)
+  # txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
+  # ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
+
+  # typical values for a terrestrial gNB (macro), which can be adjusted as needed for different scenarios
+  # carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
+  # txPowerDbm: 15.0          # Radiated (transmit) power (dBm)
+  # txGainDbi: 15.0           # gNB Transmit antenna gain (dBi)
+  # ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi) - 0.0 is omnidirectional
+
+  # typical values for direct-to-cell service
+  carrFrequencyHz: 2.5e9   # carrier frequency (Hz)
+  txPowerDbm: 15.0          # Radiated (transmit) power (dBm) per element
+  txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
+  ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
+
+# RLS loop/timer settings (ms).
+#   TIMER_PERIOD_ACK_SEND: - period for timer that triggers sending ACKs to PDUs from UE
+#   TIMER_PERIOD_ACK_CONTROL: - time threshold for receiving ACKs from UE for PDUs sent by gNB
+#  If these are omitted, default values will be used:
+#   LOOP_COUNTER: 1000
+#   RECEIVE_TIMEOUT: 200
+#   TIMER_PERIOD_ACK_SEND: 1500
+#   TIMER_PERIOD_ACK_CONTROL: 2250
+# (HEARTBEAT_THRESHOLD is always computed as LOOP_COUNTER + RECEIVE_TIMEOUT).
+rls:
+  LOOP_COUNTER: 200
+  RECEIVE_TIMEOUT: 500
+  TIMER_PERIOD_ACK_SEND: 1000
+  TIMER_PERIOD_ACK_CONTROL: 1500
+
+# Neighbor cells for handover
+neighborList:
+  - nci: '0x000000022'
+    idLength: 32
+    tac: 1
+    ipAddress: 127.0.0.3
+    handoverInterface: N2
+  - nci: '0x000000033'
+    idLength: 32
+    tac: 1
+    ipAddress: 127.0.0.4
+    handoverInterface: N2
+  - nci: '0x000000044'
+    idLength: 32
+    tac: 1
+    ipAddress: 127.0.0.5
+    handoverInterface: N2
+
+# gNB geographic position (lat/lon/alt, WGS-84)
+# Used as the static terrestrial position or as fallback
+# when no TLE has been received in satellite mode
+position:
+  latitude: 45.000     # degrees North
+  longitude: 90.000    # degrees East
+  altitude: 550000.0    # meters above ellipsoid (LEO orbit)
+  #altitude: 100.0      # meters above ellipsoid (typical for terrestrial gNB)
+
+# Xn interface configuration (used for handover signaling with neighbor cells that support Xn handover)
+xn:
+  enabled: false
+  bindAddress: 127.0.0.1
+  bindPort: 9487
+  requestTimeoutMs: 1000
+  contextTtlMs: 5000
+  fallbackToN2: true
+
+# Handover measurement/CHO configuration.
+# events: classic (non-CHO) events always sent to UEs.  Generate meas reports to GNB
+# if choEnbaled is true, then gnb will also send Conditional Handover (CHO) events. 
+# The simulator allows GNB to choose from different "profiles" of CHO triggering logic. 
+# choDefaultProdfileId specifies which profile to use at startup.
+# The conditional events are listed under candidates.  CHO only allows up to two trigger events
+#   per CHO profile.
+
+handover:
+  events:
+    - eventType: A3
+      a3OffsetDb: 3
+      a3hysteresisDb: 1
+      ttt: ms100
+
+  choEnabled: false
+  choDefaultProfileId: 5  # default profile ID to use for CHO candidates if not overridden
+  choCandidateProfiles:
+    - candidateProfileId: 1
+      # targetCellId is either a specific cell ID (e.g. '0x000000020') which must be on the neighbor list
+      #   or "calculated", which causes the gNB to use the cell ID of the best candidate neighbor cell based on distance
+      targetCellId: '0x000000022'
+      conditions:
+        - eventType: condD1
+          # D1 logic: trigger when UE is outside distance threshold1 and inside distance threshold2
+          condD1DistanceThreshold1: 1200
+          condD1DistanceThreshold2: 2000
+          condD1ReferenceLocation1:
+            latitude: 37.7749
+            longitude: -122.4194
+          condD1ReferenceLocation2:
+            latitude: 37.7749
+            longitude: -122.4194
+          condD1HysteresisM: 100
+          ttt: ms100
+
+    - candidateProfileId: 2
+      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
+      targetCellId: '0x000000022'
+      conditions:
+        - eventType: condT1
+          # T1 logic: trigger when curr time > threhsoldSecTS and less than threhsoldSecTS + durationSec
+          threhsoldSecTS: 30   # this value is set by the gnb based on current time
+          durationSec: 600
+
+    - candidateProfileId: 3
+      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
+      targetCellId: calculated
+      conditions:
+        - eventType: condA3
+          # A3 logic: trigger when neighbor cell RSRP is better than serving cell RSRP by a3OffsetDb (with hysteresisM in meters and TTT)
+          a3OffsetDb: 3
+          a3hysteresisDb: 1
+          ttt: ms100
+
+    - candidateProfileId: 4
+      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
+      targetCellId: calculated
+      conditions:
+        - eventType: condT1
+          threhsoldSecTS: 0   # this value is set by the gnb based on current time
+          durationSec: 600
+
+        - eventType: condA3
+          a3OffsetDb: 3
+          a3hysteresisDb: 1
+          ttt: ms100
+
+    - candidateProfileId: 5
+      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
+      targetCellId: calculated
+      conditions:
+        - eventType: condT1
+          threhsoldSecTS: 0   # this value is set by the gnb based on current time
+          durationSec: 600
+
+# NTN (non-Terrestrial Network) configuration
+ntn:
+
+  # setting ntnEnabled to false will ignore all other ntn parameters and cause gnb to 
+  #   operate in regular (terrestrial) mode
+  ntnEnabled: true
+
+  # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
+  #tle:
+    # Samples - same epoch, nadir: lat=45N, lon=90W
+    #  Sat 1: Zenith (Elevation ~90 deg)
+    #line1: '1 99991U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0008'
+    #line2: '2 99991  45.0000 280.4606 0001000   0.0000  90.0000 15.00000000    11'
+    #line1: '1 44714U 19074B   26117.00002315  .00123192  00000+0  24714-2 0  9996'
+    #line2: '2 44714  53.1543 312.8389 0000942  66.9226 117.3748 15.45800594  5831'
+    #    Sat 2: Rising (Lagging by 20 deg Mean Anomaly)
+    # line1: '1 99992U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0009'
+    # line2: '2 99992  45.0000 280.4606 0001000   0.0000  70.0000 15.00000000    10'
+    # #    Sat 3: Trailing
+    # line1: '1 99993U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0000'
+    # line2: '2 99993  45.0000 280.4606 0001000   0.0000  50.0000 15.00000000    19'
+    # # Sat 4: Distant 1 
+    # line1: '1 99994U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0001'
+    # line2: '2 99994  45.0000 280.4606 0001000   0.0000  30.0000 15.00000000    18'
+    # # Sat 5: Distant 2 (Below Horizon)
+    # line1: '1 99995U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0002'
+    # line2: '2 99995  45.0000 280.4606 0001000   0.0000  10.0000 15.00000000    17'
+
+  # Satellite time control for NTN simulation.
+  timeWarp:
+    # startEpoch must be in TLE epoch format YYDDD.DDDDDDDD
+    startEpoch: "26001.00000000"   # lines up with the TLE epoch
+    #startEpoch: "26117.00002315"   # lines up with the TLE epoch
+    # startCondition controls whether the satellite time starts immediately (moving) 
+    #   or waits for a trigger (paused).
+    startCondition: paused
+    # tickScaling controls the speed of time progression relative to real time
+    #   tickScaling=2.0 means satellite time progresses twice as fast as real time.
+    #   tickScaling=0.5 means satellite time progresses at half the speed of real time.
+    tickScaling: 1.0
+
+  # minimum elevation angle (degrees) for the satellite to be considered 
+  #   "visible" to the UE - used for CHO conditions
+  elevationMinDeg: 30
+
+  # controls how SIB19 is configured/sent
+  sib19:
+    # sib19on must be true to enable SIB19 transmissions
+    sib19on: true
+    # send period (in ms)
+    sib19timing: 1000
+    # ephemeris type ('orbital' or 'pos-vel')
+    ephType: orbital
+    # these params are not used in the simulation, set to default values for completeness
+    kOffset: 0
+    taCommon: 0
+    taCommonDrift: 0
+    # taCommonDriftVariation: 0
+    # ulSyncValidityDuration: 60
+    # cellSpecificKoffset: 0
+    # polarization: 0          # 0: RHCP, 1: LHCP, 2: LINEAR
+    # taDrift: 0

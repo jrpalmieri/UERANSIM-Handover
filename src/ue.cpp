@@ -48,6 +48,11 @@ static struct Options
     std::string imsi{};
     int count{};
     int tempo{};
+    // CLI overrides applied to g_refConfig after ReadConfigYaml()
+    std::optional<int64_t> satTimeEpochMillis{};
+    std::optional<nr::sat::ESatTimeState> satTimeState{};
+    std::optional<double> satTimeTickScaling{};
+    std::optional<GeoPosition> locationOverride{};
 } g_options{};
 
 static libsgp4::DateTime ParseTleEpochDateTime(const std::string &tleEpoch, const std::string &fieldPath)
@@ -436,13 +441,11 @@ static nr::ue::UeConfig *ReadConfigYaml()
 
                 if (startCondition == "paused")
                 {
-                    result->ntn.timeWarp.startCondition =
-                        nr::ue::UeConfig::NtnConfig::TimeWarpConfig::EStartCondition::Paused;
+                    result->ntn.timeWarp.startState = nr::sat::ESatTimeState::Paused;
                 }
                 else if (startCondition == "moving")
                 {
-                    result->ntn.timeWarp.startCondition =
-                        nr::ue::UeConfig::NtnConfig::TimeWarpConfig::EStartCondition::Moving;
+                    result->ntn.timeWarp.startState = nr::sat::ESatTimeState::Moving;
                 }
                 else
                 {
@@ -513,13 +516,20 @@ static void ReadOptions(int argc, char **argv)
                                       std::nullopt};
     opt::OptionItem itemDisableRouting = {'r', "no-routing-config",
                                           "Do not auto configure routing for UE TUN interface", std::nullopt};
+    opt::OptionItem itemSatTime = {'s', "sat-time", "control satellite clock for NTN operation.  values: start-epoch=YYDDD.DDD,tick-scaling=1.0,run,pause",
+                                  "sat-time"};
+    opt::OptionItem itemLocation = {'l', "location", "Initial location of the UE in format lat,lon,alt (e.g. 41.01,28.95,100)",
+                                   "location"};
 
     desc.items.push_back(itemConfigFile);
     desc.items.push_back(itemImsi);
     desc.items.push_back(itemCount);
     desc.items.push_back(itemTempo);
+    desc.items.push_back(itemLocation);
     desc.items.push_back(itemDisableCmd);
     desc.items.push_back(itemDisableRouting);
+    desc.items.push_back(itemSatTime);
+
 
     opt::OptionsResult opt{argc, argv, desc, false, nullptr};
 
@@ -554,6 +564,92 @@ static void ReadOptions(int argc, char **argv)
         }
 
         Supi::Parse("imsi-" + g_options.imsi); // validate the string by parsing
+    }
+
+    // Parse --location into g_options; applied to g_refConfig after ReadConfigYaml()
+    if (opt.hasFlag(itemLocation))
+    {
+        auto locationStr = opt.getOption(itemLocation);
+        auto pos = locationStr.find(',');
+        if (pos == std::string::npos)
+            throw std::runtime_error("Invalid location format, expected lat,lon,alt");
+        auto pos2 = locationStr.find(',', pos + 1);
+        if (pos2 == std::string::npos)
+            throw std::runtime_error("Invalid location format, expected lat,lon,alt");
+        try
+        {
+            GeoPosition loc{};
+            loc.latitude  = std::stod(locationStr.substr(0, pos));
+            loc.longitude = std::stod(locationStr.substr(pos + 1, pos2 - pos - 1));
+            loc.altitude  = std::stod(locationStr.substr(pos2 + 1));
+            loc.isValid = true;
+            g_options.locationOverride = loc;
+        }
+        catch (const std::exception &)
+        {
+            throw std::runtime_error("Invalid location format, latitude, longitude, and altitude must be valid numbers");
+        }
+    }
+
+    // Parse --sat-time into g_options; applied to g_refConfig after ReadConfigYaml()
+    //   allows for chained commands separated by commas, e.g. --sat-time start-epoch=23001.500,tick-scaling=2.0,run
+    if (opt.hasFlag(itemSatTime))
+    {
+        auto satTimeStr = opt.getOption(itemSatTime);
+
+        bool parseCompleted = false;
+        int start_idx = 0, end_idx = 0;
+        while (!parseCompleted)
+        {
+            auto commaPos = satTimeStr.find(',', start_idx);
+            if (commaPos == std::string::npos)
+            {
+                parseCompleted = true;
+                commaPos = satTimeStr.size();
+            }
+
+            if (commaPos == (size_t)start_idx)
+                throw std::runtime_error("Invalid --sat-time format, unexpected comma");
+
+            end_idx = commaPos;
+            std::string subString = satTimeStr.substr(start_idx, end_idx - start_idx);
+            if (subString == "run")
+            {
+                g_options.satTimeState = nr::sat::ESatTimeState::Moving;
+            }
+            else if (subString == "pause")
+            {
+                g_options.satTimeState = nr::sat::ESatTimeState::Paused;
+            }
+            else
+            {
+                auto eqPos = subString.find('=');
+                if (eqPos == std::string::npos)
+                    throw std::runtime_error("Invalid --sat-time format, expected key=value pairs separated by commas");
+
+                auto key = subString.substr(0, eqPos);
+                auto value = subString.substr(eqPos + 1);
+
+                if (key == "start-epoch")
+                {
+                    auto startEpochDt = ParseTleEpochDateTime(value, "--sat-time start-epoch");
+                    g_options.satTimeEpochMillis = DateTimeToUnixMillis(startEpochDt);
+                }
+                else if (key == "tick-scaling")
+                {
+                    double ts = std::stod(value);
+                    if (ts <= 0.0)
+                        throw std::runtime_error("--sat-time tick-scaling must be > 0");
+                    g_options.satTimeTickScaling = ts;
+                }
+                else
+                {
+                    throw std::runtime_error("Invalid --sat-time key: " + key);
+                }
+            }
+
+            start_idx = end_idx + 1;
+        }
     }
 
     g_options.disableCmd = opt.hasFlag(itemDisableCmd);
@@ -748,6 +844,15 @@ int main(int argc, char **argv)
         g_refConfig = ReadConfigYaml();
         if (g_options.imsi.length() > 0)
             g_refConfig->supi = Supi::Parse("imsi-" + g_options.imsi);
+        // Apply CLI overrides that require g_refConfig to be populated first
+        if (g_options.satTimeEpochMillis.has_value())
+            g_refConfig->ntn.timeWarp.startEpochMillis = *g_options.satTimeEpochMillis;
+        if (g_options.satTimeState.has_value())
+            g_refConfig->ntn.timeWarp.startState = *g_options.satTimeState;
+        if (g_options.satTimeTickScaling.has_value())
+            g_refConfig->ntn.timeWarp.tickScaling = *g_options.satTimeTickScaling;
+        if (g_options.locationOverride.has_value())
+            g_refConfig->initialPosition = *g_options.locationOverride;
     }
     catch (const std::runtime_error &e)
     {
@@ -771,26 +876,6 @@ int main(int argc, char **argv)
     g_allCellMeasurements = new nr::ue::AllCellMeasurements();
     g_allCellMeasurements->cellMeasurements =
         std::set<nr::ue::CellMeasurement, nr::ue::CompareBySignalStrength>();
-
-    // if (g_refConfig->useHandoverMeasFramework)
-    // {
-    //     // launch the handover measurement framework server if enabled in config
-    //     auto &hoConfig = g_refConfig->handoverServerConfig;
-    //     std::cout << "Starting handover measurement server at " << hoConfig.address << ":" << hoConfig.port
-    //               << " using transport " << hoConfig.transport << std::endl;
-    //     if (hoConfig.transport == "UDP")
-    //     {
-    //         g_allCellMeasurements->handoverMeasServer = std::make_unique<HandoverMeasurementServerUDP>(hoConfig.address, hoConfig.port, g_allCellMeasurements);
-    //     }
-    //     else if (hoConfig.transport == "TCP")
-    //     {
-    //         g_allCellMeasurements->handoverMeasServer = std::make_unique<HandoverMeasurementServerTCP>(hoConfig.address, hoConfig.port, g_allCellMeasurements);
-    //     }
-    //     else        {
-    //         std::cerr << "ERROR: Invalid transport for handover measurement framework server: " << hoConfig.transport << std::endl;
-    //         return 1;
-
-    // }
 
     for (int i = 0; i < g_options.count; i++)
     {

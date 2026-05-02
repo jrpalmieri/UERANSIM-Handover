@@ -22,10 +22,10 @@ namespace nr::ue
 {
 
 /**
- * @brief Idle mode cell selection routine. This is triggered by teh RRC cycle timer.
+ * @brief Idle mode cell selection routine. This is triggered by the RRC cycle timer.
  * Requirements:
  * - RRC state is not RRC_CONNECTED
- * - We are at least 1 second after startup and cell information MIB/SIB is available
+ * - We are at least 1 second after startup
  * - We are at least 4 seconds after startup and a PLMN has been selected.
  * - 
  * - Radio link failure
@@ -34,16 +34,28 @@ namespace nr::ue
  */
 void UeRrcTask::performCellSelection()
 {
+    // sanity check - can't do cell selection in CONNECTED state
     if (m_state == ERrcState::RRC_CONNECTED)
         return;
 
     int64_t currentTime = utils::CurrentTimeMillis();
 
-    if (currentTime - m_startedTime <= 1000LL && m_cellDesc.empty())
-        return;
-    if (currentTime - m_startedTime <= 4000LL && !m_base->shCtx.selectedPlmn.get().hasValue())
-        return;
+    m_logger->info("Starting idle mode cell selection, current time since startup: %dms, current cellId: %d",
+                    static_cast<int>(currentTime - m_startedTime), m_base->shCtx.currentCell.get().cellId);
 
+    //    if (currentTime - m_startedTime <= 1000LL && m_cellDesc.empty())
+    // always wait 1sec after startup before doing cell selection, to allow
+    //    cell data to get populated
+    if (currentTime - m_startedTime <= 1000LL) 
+    {
+        m_logger->info("Too early for cell selection, waiting for 1 second after startup");
+        return;
+    }
+    if (currentTime - m_startedTime <= 4000LL && !m_base->shCtx.selectedPlmn.get().hasValue())
+    {
+        m_logger->info("No PLMN selected and within 4 seconds of startup. Exiting");
+        return;
+    }
     // save the last cell info we were camped on, to compare after selection and log if changed
     auto lastCell = m_base->shCtx.currentCell.get();
 
@@ -82,6 +94,8 @@ void UeRrcTask::performCellSelection()
     // if no suitable cell found (or outside of PLMN), look for acceptable cell (emergency services)
     if (!cellFound)
     {
+        m_logger->info("No suitable cell found, looking for acceptable cell (for emergency services)");
+
         report = {};
 
         cellFound = lookForAcceptableCell(cellInfo, report);
@@ -109,25 +123,40 @@ void UeRrcTask::performCellSelection()
         }
     }
 
+    // if still no cell found, end cell selection
+    if (!cellFound)
+    {
+        m_logger->info("No suitable or acceptable cell found, exiting.");
+        return;
+    }
+
     int selectedCell = cellInfo.cellId;
 
     // update shared RRC-NAS context with selected cellId
     m_base->shCtx.currentCell.set(cellInfo);
 
-    if (selectedCell != 0 && selectedCell != lastCell.cellId)
-        m_logger->info("Selected cell plmn[%s] tac[%d] category[%s]", ToJson(cellInfo.plmn).str().c_str(), cellInfo.tac,
-                       ToJson(cellInfo.category).str().c_str());
+    if (selectedCell != 0) {
 
-    // if a new cell has been selected, notify RLS and NAS tasks
-    if (selectedCell != lastCell.cellId)
-    {
-        auto w1 = std::make_unique<NmUeRrcToRls>(NmUeRrcToRls::ASSIGN_CURRENT_CELL);
-        w1->cellId = selectedCell;
-        m_base->rlsTask->push(std::move(w1));
+        if (selectedCell != lastCell.cellId)
+        {
+            m_logger->info("Selected new cell [%d]: plmn[%s] tac[%d] category[%s] dbm[%d]", cellInfo.cellId, 
+                        ToJson(cellInfo.plmn).str().c_str(), cellInfo.tac,
+                        ToJson(cellInfo.category).str().c_str(), cellInfo.dbm);
 
-        auto w2 = std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::ACTIVE_CELL_CHANGED);
-        w2->previousTai = Tai{lastCell.plmn, lastCell.tac};
-        m_base->nasTask->push(std::move(w2));
+            auto w1 = std::make_unique<NmUeRrcToRls>(NmUeRrcToRls::ASSIGN_CURRENT_CELL);
+            w1->cellId = selectedCell;
+            m_base->rlsTask->push(std::move(w1));
+
+            auto w2 = std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::ACTIVE_CELL_CHANGED);
+            w2->previousTai = Tai{lastCell.plmn, lastCell.tac};
+            m_base->nasTask->push(std::move(w2));
+        }
+        else
+        {
+            m_logger->info("Selected the same cell [%d] as previous selection: plmn[%s] tac[%d] category[%s] dbm[%d]", 
+                        cellInfo.cellId, ToJson(cellInfo.plmn).str().c_str(), cellInfo.tac,
+                        ToJson(cellInfo.category).str().c_str(), cellInfo.dbm);
+        }
     }
 }
 
@@ -137,10 +166,9 @@ void UeRrcTask::performCellSelection()
  *   has a tracking area code that is not on the forbidden list.
  *   If multiple suitable cells are found, the one with the strongest dbm is returned in cellInfo.
  * 
- * @param cellInfo cell information of thr selected cell (returned)
- * @param report report on results of cell selection attempt (returned)
+ * @param[out] cellInfo cell information of the selected cell (returned)
+ * @param[out] report report on results of cell selection attempt (returned)
  * @return true - cell found
- * @return false - cell not found
  */
 bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionReport &report)
 {
@@ -156,6 +184,9 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
     for (auto &item : m_cellDesc)
     {
         auto &cell = item.second;
+        m_logger->debug("Evaluating cellId %d for suitability, plmn[%s], tac[%d], mib[%s], sib1[%s]", item.first,
+                         ToJson(cell.sib1.plmn).str().c_str(), cell.sib1.tac, cell.mib.hasMib ? "yes" : "no",
+                         cell.sib1.hasSib1 ? "yes" : "no");
 
         if (!cell.sib1.hasSib1)
         {
@@ -214,6 +245,7 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
             if (it != m_base->cellDbMeas.end())
                 dbm = it->second;
         }
+        m_logger->debug("CellId %d has signal strength %d dBm", item.first, dbm);
 
         if (dbm < cons::RLF_RSRP)
         {
@@ -221,8 +253,9 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
             continue;
         }
 
-        // Meets non-signal strength criteria
+        // Meets criteria
         candidates.push_back(std::make_pair(item.first, dbm));
+        m_logger->debug("CellId %d is a suitable candidate", item.first);
     }
 
     if (candidates.empty())
@@ -234,10 +267,11 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
         std::shared_lock lock(m_base->cellDbMeasMutex);
 
         std::sort(candidates.begin(), candidates.end(), [this](std::pair<int, int> a, std::pair<int, int> b) {
-            return a.second < b.second;
+            return a.second > b.second;
         });
     }
 
+    // select the top of the list as the best candidate
     int selectedId = candidates[0].first;
     auto &selectedCell = m_cellDesc[selectedId];
 
@@ -246,6 +280,7 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
     cellInfo.plmn = selectedCell.sib1.plmn;
     cellInfo.tac = selectedCell.sib1.tac;
     cellInfo.category = ECellCategory::SUITABLE_CELL;
+    cellInfo.dbm = candidates[0].second;
 
     return true;
 }
@@ -333,7 +368,7 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
         std::shared_lock lock(m_base->cellDbMeasMutex);
 
         std::sort(candidates.begin(), candidates.end(), [this](std::pair<int, int> a, std::pair<int, int> b) {
-            return a.second < b.second;
+            return a.second > b.second;
         });
     }
 
@@ -360,6 +395,7 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
     cellInfo.plmn = selectedCell.sib1.plmn;
     cellInfo.tac = selectedCell.sib1.tac;
     cellInfo.category = ECellCategory::ACCEPTABLE_CELL;
+    cellInfo.dbm = candidates[0].second;
 
     return true;
 }

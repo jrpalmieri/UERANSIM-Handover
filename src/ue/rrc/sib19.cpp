@@ -169,6 +169,8 @@ void UeRrcTask::receiveSib19(int cellId, const OctetString &pdu)
     int64_t receivedTime = utils::CurrentTimeMillis() - m_startedTime;
     Sib19Info sib19{};
 
+    m_logger->debug("Received DL_SIB19 PDU from cellId=%d, len=%zu bytes", cellId, len);
+
     if (len >= SIB19_MULTI_HEADER_SIZE && readU8(0) == SIB19_MULTI_VERSION)
     {
         uint8_t ephType = readU8(1);

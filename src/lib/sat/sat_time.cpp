@@ -9,7 +9,7 @@ namespace nr::sat
 {
 
 SatTime::SatTime(int64_t startEpochMillis,
-                 EStartCondition startCondition,
+                 ESatTimeState startState,
                  double tickScaling,
                  std::function<int64_t()> wallclockNow)
     : m_wallclockNow(std::move(wallclockNow)),
@@ -17,7 +17,7 @@ SatTime::SatTime(int64_t startEpochMillis,
       m_anchorSatMillis(startEpochMillis),
       m_pausedSatMillis(startEpochMillis),
       m_tickScaling(tickScaling),
-      m_paused(startCondition == EStartCondition::Paused)
+      m_paused(startState == ESatTimeState::Paused)
 {
     if (!m_wallclockNow)
     {
