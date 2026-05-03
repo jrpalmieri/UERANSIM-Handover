@@ -91,6 +91,8 @@ class GnbRrcTask : public NtsTask
 
   private:
     
+    void onUpdateGnbStatusTimerExpired();
+
   /* Management - management.cpp */
 
     int getNextTid(int ueId);

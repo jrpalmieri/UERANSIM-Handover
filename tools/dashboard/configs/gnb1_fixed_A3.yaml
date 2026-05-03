@@ -164,11 +164,11 @@ ntn:
   ntnEnabled: false
 
   # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
-  tle:
+  #tle:
     # Samples - same epoch, nadir: lat=45N, lon=90W
     #  Sat 1: Zenith (Elevation ~90 deg)
-    line1: '1 99991U 26106A   26106.97180556  .00000000  00000-0  00000-0 0  9993'
-    line2: '2 99991  45.0000 270.0000 0001000   0.0000  90.0000 15.00000000    14'
+    #line1: '1 99991U 26106A   26106.97180556  .00000000  00000-0  00000-0 0  9993'
+    #line2: '2 99991  45.0000 270.0000 0001000   0.0000  90.0000 15.00000000    14'
     #    Sat 2: Rising (Elevation ~30 deg)
     # line1: '1 99992U 26106B   26106.97180556  .00000000  00000-0  00000-0 0  9995'
     # line2: '2 99992  45.0000 270.0000 0001000   0.0000  70.0000 15.00000000    12'
@@ -196,7 +196,7 @@ ntn:
 
   # minimum elevation angle (degrees) for the satellite to be considered 
   #   "visible" to the UE - used for CHO conditions
-  elevationMinDeg: 20
+  elevationMinDeg: 30
 
   # controls how SIB19 is configured/sent
   sib19:

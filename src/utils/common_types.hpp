@@ -241,6 +241,26 @@ Json ToJson(const PlmnSupport &v);
 Json ToJson(const EDeregCause &v);
 Json ToJson(const ECellCategory &v);
 Json ToJson(const EInitialRegCause &v);
+inline Json ToJson(const GeoPosition &position)
+{
+    return Json::Obj({
+        {"latitude", std::to_string(position.latitude)},
+        {"longitude", std::to_string(position.longitude)},
+        {"altitude", std::to_string(position.altitude)},
+        {"timestampMs", std::to_string(position.timestampMs)},
+        {"isValid", position.isValid},
+    });
+}
+
+// inline Json ToJsonLocWgs84(const GeoPosition &position)
+// {
+//     return Json::Obj({
+//         {"latitude", std::to_string(position.latitude)},
+//         {"longitude", std::to_string(position.longitude)},
+//         {"altitude", std::to_string(position.altitude)},
+//         {"timestampMs", std::to_string(position.timestampMs)},
+//     });
+// }
 
 namespace std
 {

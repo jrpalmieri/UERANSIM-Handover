@@ -14,7 +14,7 @@
 namespace nr::gnb
 {
 
-GnbAppTask::GnbAppTask(TaskBase *base) : m_base{base}, m_statusInfo{}
+GnbAppTask::GnbAppTask(TaskBase *base) : m_base{base}
 {
     m_logger = m_base->logBase->makeUniqueLogger("app");
 }
@@ -32,13 +32,13 @@ void GnbAppTask::onLoop()
     switch (msg->msgType)
     {
     case NtsMessageType::GNB_STATUS_UPDATE: {
-        auto& w = dynamic_cast<NmGnbStatusUpdate &>(*msg);
-        switch (w.what)
-        {
-        case NmGnbStatusUpdate::NGAP_IS_UP:
-            m_statusInfo.isNgapUp = w.isNgapUp;
-            break;
-        }
+        // auto& w = dynamic_cast<NmGnbStatusUpdate &>(*msg);
+        // switch (w.what)
+        // {
+        // case NmGnbStatusUpdate::NGAP_IS_UP:
+        //     m_statusInfo.isNgapUp = w.isNgapUp;
+        //     break;
+        // }
         break;
     }
     case NtsMessageType::GNB_CLI_COMMAND: {

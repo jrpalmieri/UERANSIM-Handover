@@ -84,11 +84,26 @@ user_plane_test:
   pad_byte_value: 0x20
 
 pcap:
-  enabled: true
-  interface: amf
-  output_file: trace_cond_%i.pcap
-  use_sudo: true
-  sudo_non_interactive: true
+  core:
+    enabled: true
+    # interface to capture on (e.g. "amf" for interface connected to AMF, "ue1-tun", "ue1-ran")
+    interface: amf
+    # output pcap file (stored in log directory)
+    output_file: core_trace_%i.pcap
+    # whether to use sudo for tcpdump (often required to capture on interfaces)
+    use_sudo: true
+    # whether to use non-interactive sudo (i.e. assume passwordless sudo) for tcpdump
+    sudo_non_interactive: true
+  ran:
+    enabled: true
+    # interface to capture on (e.g. "amf" for interface connected to AMF, "ue1-tun", "ue1-ran")
+    interface: lo
+    # output pcap file (stored in log directory)
+    output_file: ran_trace_%i.pcap
+    # whether to use sudo for tcpdump (often required to capture on interfaces)
+    use_sudo: true
+    # whether to use non-interactive sudo (i.e. assume passwordless sudo) for tcpdump
+    sudo_non_interactive: true
 
 run:
   stop_after_sec: 60

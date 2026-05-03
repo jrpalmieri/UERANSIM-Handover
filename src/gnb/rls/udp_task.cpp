@@ -43,7 +43,7 @@ RlsUdpTask::RlsUdpTask(TaskBase *base, uint64_t sti,
       m_cellId{static_cast<uint32_t>(base->config->getCellId())},
       m_phyLocation{phyLocation}, m_lastLoop{},
     m_stiToUe{}, m_ueMap{}, m_newIdCounter{},
-                m_fixedRsrp{base->config->rfLink.rsrpDbValue},
+//                m_fixedRsrp{base->getFixedRsrp()},
         m_loopCounter{base->config->rls.loopCounter},
         m_receiveTimeout{base->config->rls.receiveTimeout},
         m_heartbeatThreshold{base->config->rls.getHeartbeatThreshold()}
@@ -312,7 +312,7 @@ int RlsUdpTask::computeDbm(const GeoPosition &uePos, int ueId)
 
     // if configured for "fixed" mode, just return the fixed RSRP value
     if (cfg->rfLink.updateMode == EGnbRsrpMode::Fixed)
-        return m_base->fixedRsrp;
+        return m_base->getFixedRsrp();
 
     // get current gnb position
     GeoPosition gnbPos = m_base->getGnbPosition();;

@@ -40,7 +40,8 @@ class GnbCmdHandler
     void handleCmd(NmGnbCliCommand &msg);
 
   private:
-    void pauseTasks();
+    void requestPauseTasks();
+    bool pauseTasks();
     void unpauseTasks();
     bool isAllPaused();
 

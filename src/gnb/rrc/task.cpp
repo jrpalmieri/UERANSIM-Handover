@@ -30,6 +30,9 @@ static constexpr const int TIMER_PERIOD_SAT_CACHE_CALC = 15'000;
 static constexpr const int TIMER_ID_UPDATE_LOC = 4;
 static constexpr const int TIMER_PERIOD_UPDATE_LOC = 1000;  //ms
 
+static constexpr const int TIMER_ID_UPDATE_STATUS = 1001;
+static constexpr const int TIMER_PERIOD_UPDATE_STATUS = 500;  //ms
+
 
 namespace nr::gnb
 {
@@ -57,6 +60,7 @@ void GnbRrcTask::onStart()
 
         setTimer(TIMER_ID_UPDATE_LOC, TIMER_PERIOD_UPDATE_LOC);
         setTimer(TIMER_ID_SAT_CACHE_CALC, TIMER_PERIOD_SAT_CACHE_CALC);
+        setTimer(TIMER_ID_UPDATE_STATUS, TIMER_PERIOD_UPDATE_STATUS);
 
         if (m_config->ntn.sib19.sib19On)
         {
@@ -168,6 +172,11 @@ void GnbRrcTask::onLoop()
             setTimer(TIMER_ID_UPDATE_LOC, TIMER_PERIOD_UPDATE_LOC);
             onUpdateLocationTimerExpired();
         }
+        else if (w.timerId == TIMER_ID_UPDATE_STATUS)
+        {
+            setTimer(TIMER_ID_UPDATE_STATUS, TIMER_PERIOD_UPDATE_STATUS);
+            onUpdateGnbStatusTimerExpired();
+        }
         break;
     }
     default:
@@ -176,49 +185,7 @@ void GnbRrcTask::onLoop()
     }
 }
 
-// void GnbRrcTask::setTruePositionVelocity(const PositionVelocity &value)
-// {
-//     m_truePositionVelocity = value;
 
-//     if (!value.isValid)
-//         return;
-
-//     auto geo = EcefToGeo(EcefPosition{value.x, value.y, value.z});
-//     geo.isValid = true;
-//     m_base->setGnbPosition(geo);
-// }
-
-// void GnbRrcTask::setTrueGeoPosition(const GeoPosition &value)
-// {
-//     if (!std::isfinite(value.latitude) || !std::isfinite(value.longitude) || !std::isfinite(value.altitude))
-//         return;
-//     if (value.latitude < -90.0 || value.latitude > 90.0)
-//         return;
-//     if (value.longitude < -180.0 || value.longitude > 180.0)
-//         return;
-
-//     GeoPosition normalized = value;
-//     normalized.isValid = true;
-//     m_base->setGnbPosition(normalized);
-
-//     EcefPosition ecef = GeoToEcef(normalized);
-
-//     PositionVelocity pv{};
-//     pv.isValid = true;
-//     pv.x = ecef.x;
-//     pv.y = ecef.y;
-//     pv.z = ecef.z;
-//     pv.vx = 0.0;
-//     pv.vy = 0.0;
-//     pv.vz = 0.0;
-//     pv.epochMs = static_cast<int64_t>(utils::CurrentTimeMillis());
-//     m_truePositionVelocity = pv;
-// }
-
-// PositionVelocity GnbRrcTask::getTruePositionVelocity() const
-// {
-//     return m_truePositionVelocity;
-// }
 
 GeoPosition GnbRrcTask::getTrueGeoPosition() const
 {
@@ -266,5 +233,16 @@ void GnbRrcTask::onUpdateLocationTimerExpired()
     m_logger->info("Updated gNB location (satTime=%llu): lat=%.6f, lon=%.6f, alt=%.1f", satNow, gnbGeo.latitude, gnbGeo.longitude, gnbGeo.altitude);   
 
 }
+
+void GnbRrcTask::onUpdateGnbStatusTimerExpired()
+{
+    GnbStatusInfoUpdate update;
+    update.rrcConnectedUesIsPresent = true;
+    update.rrcConnectedUes = static_cast<int>(m_ueCtx.size());
+    
+    m_base->setGnbStatusInfo(update);
+}
+
+
 
 } // namespace nr::gnb

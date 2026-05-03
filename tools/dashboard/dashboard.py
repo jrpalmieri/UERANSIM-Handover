@@ -244,11 +244,17 @@ class WindowedDashboard:
         self.upt_pad_byte_value = 0x20
 
         # ── Config-derived: packet capture (PCAP) ────────────────────────────
-        self.pcap_enabled = False
-        self.pcap_interface = ""
-        self.pcap_output_file = "trace.pcap"
-        self.pcap_use_sudo = True
-        self.pcap_sudo_non_interactive = True
+        self.pcap_core_enabled = False
+        self.pcap_core_interface = ""
+        self.pcap_core_output_file = "core_trace.pcap"
+        self.pcap_core_use_sudo = True
+        self.pcap_core_sudo_non_interactive = True
+
+        self.pcap_ran_enabled = False
+        self.pcap_ran_interface = ""
+        self.pcap_ran_output_file = "ran_trace.pcap"
+        self.pcap_ran_use_sudo = True
+        self.pcap_ran_sudo_non_interactive = True
 
         # ── Config-derived: script ────────────────────────────────────────────
         self.script_entries: List[Dict[str, object]] = []
@@ -319,9 +325,9 @@ class WindowedDashboard:
         self.user_plane_route_last_check_time = 0.0
 
         # ── Packet capture runtime ────────────────────────────────────────────
-        self.pcap_proc: Optional[subprocess.Popen[str]] = None
-        self.pcap_thread: Optional[threading.Thread] = None
-        self.pcap_stop_event = threading.Event()
+        self.pcap_procs: Dict[str, subprocess.Popen[str]] = {}
+        self.pcap_threads: Dict[str, threading.Thread] = {}
+        self.pcap_stop_events: Dict[str, threading.Event] = {}
 
         # ── Tk root window ────────────────────────────────────────────────────
         # All tk.StringVar / ttk.Widget assignments must follow this line.
@@ -455,11 +461,21 @@ class WindowedDashboard:
         self.amf_log_file_template = str(amf_cfg.get("amf_log_file", ""))
 
         pcap_cfg = config.get("pcap", {})
-        self.pcap_enabled = bool(pcap_cfg.get("enabled", False))
-        self.pcap_interface = str(pcap_cfg.get("interface", ""))
-        self.pcap_output_file = str(pcap_cfg.get("output_file", "trace.pcap"))
-        self.pcap_use_sudo = bool(pcap_cfg.get("use_sudo", True))
-        self.pcap_sudo_non_interactive = bool(pcap_cfg.get("sudo_non_interactive", True))
+        pcap_core_cfg = pcap_cfg.get("core", {}) if isinstance(pcap_cfg, dict) else {}
+        self.pcap_core_enabled = bool(pcap_core_cfg.get("enabled", False))
+        self.pcap_core_interface = str(pcap_core_cfg.get("interface", ""))
+        self.pcap_core_output_file = str(pcap_core_cfg.get("output_file", "core_trace.pcap"))
+        self.pcap_core_use_sudo = bool(pcap_core_cfg.get("use_sudo", True))
+        self.pcap_core_sudo_non_interactive = bool(
+            pcap_core_cfg.get("sudo_non_interactive", True)
+        )
+
+        pcap_ran_cfg = pcap_cfg.get("ran", {}) if isinstance(pcap_cfg, dict) else {}
+        self.pcap_ran_enabled = bool(pcap_ran_cfg.get("enabled", False))
+        self.pcap_ran_interface = str(pcap_ran_cfg.get("interface", "lo"))
+        self.pcap_ran_output_file = str(pcap_ran_cfg.get("output_file", "ran_trace.pcap"))
+        self.pcap_ran_use_sudo = bool(pcap_ran_cfg.get("use_sudo", True))
+        self.pcap_ran_sudo_non_interactive = bool(pcap_ran_cfg.get("sudo_non_interactive", True))
 
         gnb_section = config.get("gnb", {})
         self.nr_gnb = str(gnb_section.get("gnb_command", "./build/nr-gnb"))
@@ -1728,18 +1744,59 @@ class WindowedDashboard:
         pcap_inner = _make_scroll_frame(pcap_tab)
         pcap_section = self.config.get("pcap", {})
         pcap_row = 0
+
+        # Core section header
+        ttk.Label(
+            pcap_inner,
+            text="Core (AMF Interface)",
+            font=("TkDefaultFont", 10, "bold"),
+        ).grid(row=pcap_row, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 6))
+        pcap_row += 1
+
+        core_cfg = pcap_section.get("core", {}) if isinstance(pcap_section, dict) else {}
         for field_key, label, default in [
-            ("enabled", "enabled", False),
-            ("interface", "interface (blank = auto-discover from AMF IP)", ""),
-            ("output_file", "output_file", "trace.pcap"),
-            ("use_sudo", "use_sudo", True),
-            ("sudo_non_interactive", "sudo_non_interactive", True),
+            ("enabled", "Enabled", False),
+            ("interface", "Interface (blank = auto-discover from AMF)", ""),
+            ("output_file", "Output file", "core_trace.pcap"),
+            ("use_sudo", "Use sudo", True),
+            ("sudo_non_interactive", "Sudo non-interactive", True),
         ]:
-            pcap_row = _add_field(pcap_inner, pcap_row, label, f"pcap.{field_key}", pcap_section.get(field_key, default))
+            pcap_row = _add_field(
+                pcap_inner, pcap_row, label, f"pcap.core.{field_key}", core_cfg.get(field_key, default)
+            )
+
+        # RAN section header
+        ttk.Separator(pcap_inner, orient="horizontal").grid(
+            row=pcap_row, column=0, columnspan=3, sticky="ew", pady=(10, 4)
+        )
+        pcap_row += 1
+        ttk.Label(
+            pcap_inner,
+            text="RAN (Loopback RLS)",
+            font=("TkDefaultFont", 10, "bold"),
+        ).grid(row=pcap_row, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 6))
+        pcap_row += 1
+
+        ran_cfg = pcap_section.get("ran", {}) if isinstance(pcap_section, dict) else {}
+        for field_key, label, default in [
+            ("enabled", "Enabled", False),
+            ("interface", "Interface (usually 'lo')", "lo"),
+            ("output_file", "Output file", "ran_trace.pcap"),
+            ("use_sudo", "Use sudo", True),
+            ("sudo_non_interactive", "Sudo non-interactive", True),
+        ]:
+            pcap_row = _add_field(
+                pcap_inner, pcap_row, label, f"pcap.ran.{field_key}", ran_cfg.get(field_key, default)
+            )
+
         tk.Label(
             pcap_inner,
-            text="Note: leaving 'interface' blank auto-discovers the interface\nby routing to the AMF IP address when the demo starts.",
-            fg="gray", justify="left",
+            text=(
+                "Note: Core and RAN captures can run simultaneously.\n"
+                "Core auto-discovers AMF interface when blank."
+            ),
+            fg="gray",
+            justify="left",
         ).grid(row=pcap_row, column=0, columnspan=3, sticky="w", padx=4, pady=(8, 2))
 
         # ── Satellites tab ────────────────────────────────────────────────────
@@ -3323,40 +3380,78 @@ class WindowedDashboard:
         return None
 
     def _start_pcap_capture(self) -> None:
-        if not self.pcap_enabled:
+        if not self.pcap_core_enabled and not self.pcap_ran_enabled:
             return
 
-        iface = self.pcap_interface.strip()
-        if not iface or iface.lower() == "amf":
+        if self.pcap_core_enabled:
+            self._start_one_pcap_capture(
+                capture_key="core",
+                iface=self.pcap_core_interface,
+                output_file=self.pcap_core_output_file,
+                filter_expr=[],
+                label="core",
+                use_sudo=self.pcap_core_use_sudo,
+                sudo_non_interactive=self.pcap_core_sudo_non_interactive,
+            )
+
+        if self.pcap_ran_enabled:
+            RLS_PORT = 4997
+            filter_expr = ["udp", "port", str(RLS_PORT), "and", "net", "127.0.0.0/24"]
+            self._start_one_pcap_capture(
+                capture_key="ran",
+                iface=self.pcap_ran_interface,
+                output_file=self.pcap_ran_output_file,
+                filter_expr=filter_expr,
+                label="ran",
+                use_sudo=self.pcap_ran_use_sudo,
+                sudo_non_interactive=self.pcap_ran_sudo_non_interactive,
+            )
+
+    def _start_one_pcap_capture(
+        self,
+        capture_key: str,
+        iface: str,
+        output_file: str,
+        filter_expr: List[str],
+        label: str,
+        use_sudo: bool = True,
+        sudo_non_interactive: bool = True,
+    ) -> None:
+        """Start one pcap capture (core or ran) identified by capture_key."""
+        iface = iface.strip()
+
+        # Auto-discover interface for core (AMF) capture if needed
+        if capture_key == "core" and (not iface or iface.lower() == "amf"):
             amf_ip = str(self.config.get("amf", {}).get("host", "")) if self.config else ""
             if amf_ip:
                 discovered = self._discover_iface_for_ip(amf_ip)
                 if discovered:
                     iface = discovered
-                    self._demo_log(f"[pcap] auto-discovered interface {iface} for AMF IP {amf_ip}")
+                    self._demo_log(f"[pcap:{label}] auto-discovered interface {iface}")
                 else:
-                    self._demo_log(f"[pcap] could not discover interface for AMF IP {amf_ip}; capture skipped")
+                    self._demo_log(f"[pcap:{label}] could not discover interface; capture skipped")
                     return
             else:
-                self._demo_log("[pcap] no interface configured and no AMF IP to discover from; capture skipped")
+                self._demo_log(f"[pcap:{label}] no interface configured; capture skipped")
                 return
 
         log_dir = self.run_log_dir if self.run_log_dir is not None else self.log_dir
-        out_path = str((log_dir / self._expand_log_name(self.pcap_output_file)).resolve())
+        out_path = str((log_dir / self._expand_log_name(output_file)).resolve())
 
         cmd: List[str] = []
-        if self.pcap_use_sudo:
+        if use_sudo:
             cmd.append("sudo")
-            if self.pcap_sudo_non_interactive:
+            if sudo_non_interactive:
                 cmd.append("-n")
         cmd.extend(["tcpdump", "-i", iface, "-w", out_path, "-U"])
+        cmd.extend(filter_expr)
 
-        self._demo_log(f"[pcap] starting capture on {iface} -> {out_path}")
+        self._demo_log(f"[pcap:{label}] starting capture on {iface} -> {out_path}")
         self._demo_log("$ " + " ".join(cmd))
 
-        self.pcap_stop_event.clear()
+        self.pcap_stop_events[capture_key] = threading.Event()
         try:
-            self.pcap_proc = subprocess.Popen(
+            self.pcap_procs[capture_key] = subprocess.Popen(
                 cmd,
                 cwd=str(self.workspace),
                 stdout=subprocess.PIPE,
@@ -3365,36 +3460,41 @@ class WindowedDashboard:
                 bufsize=1,
             )
         except (FileNotFoundError, OSError) as ex:
-            self._demo_log(f"[pcap] failed to start tcpdump: {ex}")
+            self._demo_log(f"[pcap:{label}] failed to start tcpdump: {ex}")
             return
 
         def _reader() -> None:
-            proc = self.pcap_proc
+            proc = self.pcap_procs.get(capture_key)
             if proc is None or proc.stdout is None:
                 return
             for line in proc.stdout:
-                self._demo_log("[pcap] " + line.rstrip())
+                self._demo_log(f"[pcap:{label}] " + line.rstrip())
             code = proc.wait()
-            if not self.pcap_stop_event.is_set():
-                self._demo_log(f"[pcap] tcpdump exited with code {code}")
+            if not self.pcap_stop_events.get(capture_key, threading.Event()).is_set():
+                self._demo_log(f"[pcap:{label}] tcpdump exited with code {code}")
 
-        self.pcap_thread = threading.Thread(target=_reader, daemon=True)
-        self.pcap_thread.start()
+        thread = threading.Thread(target=_reader, daemon=True)
+        self.pcap_threads[capture_key] = thread
+        thread.start()
 
     def _stop_pcap_capture(self) -> None:
-        self.pcap_stop_event.set()
-        if self.pcap_proc is not None:
-            if self.pcap_proc.poll() is None:
-                self._demo_log("[pcap] stopping capture")
-                self.pcap_proc.terminate()
-                try:
-                    self.pcap_proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    self.pcap_proc.kill()
-            self.pcap_proc = None
-        if self.pcap_thread is not None:
-            self.pcap_thread.join(timeout=2.0)
-            self.pcap_thread = None
+        for capture_key in ["core", "ran"]:
+            if capture_key in self.pcap_stop_events:
+                self.pcap_stop_events[capture_key].set()
+            if capture_key in self.pcap_procs:
+                proc = self.pcap_procs[capture_key]
+                if proc.poll() is None:
+                    self._demo_log(f"[pcap:{capture_key}] stopping capture")
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                del self.pcap_procs[capture_key]
+            if capture_key in self.pcap_threads:
+                thread = self.pcap_threads[capture_key]
+                thread.join(timeout=2.0)
+                del self.pcap_threads[capture_key]
 
     def _copy_amf_log(self) -> None:
         if not self.amf_log_file_template:

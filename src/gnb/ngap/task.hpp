@@ -75,6 +75,9 @@ class NgapTask : public NtsTask
     static constexpr int DEFERRED_QUEUE_INTERVAL_MS = 200;
     static constexpr int DEFERRED_MAX_RETRIES = 5;
 
+    static constexpr int TIMER_STATUS_UPDATE = 1002;
+    static constexpr int TIMER_STATUS_UPDATE_INTERVAL_MS = 500;
+
     std::deque<std::unique_ptr<NmGnbRrcToNgap>> m_deferredQueue;
 
     void enqueueDeferred(std::unique_ptr<NmGnbRrcToNgap> msg);
@@ -105,6 +108,7 @@ class NgapTask : public NtsTask
     void deleteUeContext(int ueId);
     void deleteAmfContext(int amfId);
     int64_t generateRanUeNgapId(int ueId);
+    void sendGnbStatusUpdate();
 
     /* Interface management */
     void handleAssociationSetup(int amfId, int ascId, int inCount, int outCount);

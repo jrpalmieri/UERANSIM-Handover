@@ -151,14 +151,14 @@ static Json ToJsonSatTimeStatus(const nr::sat::SatTime::Status &status)
     return json;
 }
 
-static Json ToJsonLocWgs84(const GeoPosition &position)
-{
-    return Json::Obj({
-        {"latitude", std::to_string(position.latitude)},
-        {"longitude", std::to_string(position.longitude)},
-        {"altitude", std::to_string(position.altitude)},
-    });
-}
+// static Json ToJsonLocWgs84(const GeoPosition &position)
+// {
+//     return Json::Obj({
+//         {"latitude", std::to_string(position.latitude)},
+//         {"longitude", std::to_string(position.longitude)},
+//         {"altitude", std::to_string(position.altitude)},
+//     });
+// }
 
 static std::string EscapeForLog(const std::string &value)
 {
@@ -481,7 +481,7 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
             break;
         }
 
-        sendResult(msg.address, ToJsonLocWgs84(uePosition).dumpYaml());
+        sendResult(msg.address, ToJson(uePosition).dumpYaml());
         break;
     }
     case app::UeCliCommand::CONFIG_INFO: {

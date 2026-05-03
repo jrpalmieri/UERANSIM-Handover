@@ -19,6 +19,7 @@ _deps
 *.iml
 */.idea
 */.settings
+tools/dashboard/logs/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

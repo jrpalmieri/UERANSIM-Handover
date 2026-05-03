@@ -1,4 +1,4 @@
-demo_name: 'Handover by conditional eventD1'
+demo_name: 'Conditional Handover by eventT1'
 
 amf:
   host: 172.22.0.10
@@ -53,12 +53,16 @@ gnb:
   gnb_command: ./build/nr-gnb
   gnbs:
   - node: GNB1
-    config: ./tools/dashboard/configs/gnb1_fixed_condD1.yaml
+    config: ./tools/dashboard/configs/gnb1_fixed_T1_2.yaml
     gnb_log_file: gnb1_%i.log
     args: []
   - node: GNB2
     config: ./tools/dashboard/configs/gnb2_fixed.yaml
     gnb_log_file: gnb2_%i.log
+    args: []
+  - node: GNB3
+    config: ./tools/dashboard/configs/gnb3_fixed.yaml
+    gnb_log_file: gnb3_%i.log
     args: []
 
 command_cli: ./build/nr-cli
@@ -106,18 +110,11 @@ run:
   run_log: demorun.log
   logging:
     log_dir: ./tools/dashboard/logs
-    run_log_dir_name: demo-condD1-%u-%t
+    run_log_dir_name: demo-cond-%u-%t
 
 script:
 - time: 20
   commands:
   - node: GNB2
     command: set-rsrp
-    args: [-80]
-- time: 30
-  commands:
-  - node: UE1
-    command: set-loc-wgs84
-    # format = lat:log:alt
-    args: [40.0000:-75.0200:0]
-
+    args: [-90]

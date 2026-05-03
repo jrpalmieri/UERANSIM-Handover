@@ -101,16 +101,6 @@ static Json ToJsonSatTimeStatus(const nr::sat::SatTime::Status &status)
     return json;
 }
 
-static Json ToJsonLocWgs84(const GeoPosition &position)
-{
-    return Json::Obj({
-        {"latitude", std::to_string(position.latitude)},
-        {"longitude", std::to_string(position.longitude)},
-        {"altitude", std::to_string(position.altitude)},
-        {"timestampMs", std::to_string(position.timestampMs)},
-    });
-}
-
 static Json ToJsonLocPvFromGeo(const GeoPosition &position)
 {
     auto ecef = GeoToEcef(position);
@@ -543,7 +533,7 @@ void GnbCmdHandler::logResponse(bool isError, const std::string &output)
     }
 }
 
-void GnbCmdHandler::pauseTasks()
+void GnbCmdHandler::requestPauseTasks()
 {
     m_base->gtpTask->requestPause();
     m_base->rlsTask->requestPause();
@@ -576,11 +566,9 @@ bool GnbCmdHandler::isAllPaused()
     return true;
 }
 
-void GnbCmdHandler::handleCmd(NmGnbCliCommand &msg)
+bool GnbCmdHandler::pauseTasks()
 {
-    logCommandReceived(msg);
-    pauseTasks();
-
+    requestPauseTasks();
     uint64_t currentTime = utils::CurrentTimeMillis();
     uint64_t endTime = currentTime + PAUSE_CONFIRM_TIMEOUT;
 
@@ -595,17 +583,25 @@ void GnbCmdHandler::handleCmd(NmGnbCliCommand &msg)
         }
         utils::Sleep(PAUSE_POLLING);
     }
+    return isPaused;
+}
 
-    if (!isPaused)
-    {
-        sendError(msg.address, "gNB is unable process command due to pausing timeout");
-    }
-    else
-    {
-        handleCmdImpl(msg);
-    }
+void GnbCmdHandler::handleCmd(NmGnbCliCommand &msg)
+{
+    logCommandReceived(msg);
+    handleCmdImpl(msg);
+    // bool isPaused = pauseTasks();
 
-    unpauseTasks();
+    // if (!isPaused)
+    // {
+    //     sendError(msg.address, "gNB is unable process command due to pausing timeout");
+    // }
+    // else
+    // {
+    //     handleCmdImpl(msg);
+    // }
+
+    //unpauseTasks();
     m_currentCommand.clear();
     m_currentSource.clear();
     m_suppressCurrentCommandLogs = false;
@@ -616,70 +612,136 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
 {
     switch (msg.cmd->present)
     {
-    case app::GnbCliCommand::STATUS: {
-        sendResult(msg.address, ToJson(m_base->appTask->m_statusInfo).dumpYaml());
-        break;
-    }
+    // use gnbStatus struct for UI status which is more lightweight and mutex protected, no pause needed
+    case app::GnbCliCommand::STATUS:
     case app::GnbCliCommand::UI_STATUS: {
-        Json json = Json::Obj({
-            {"nci", m_base->config->nci},
-            {"pci", m_base->config->getCellId()},
-            {"rrc-ue-count", static_cast<int>(m_base->rrcTask->m_ueCtx.size())},
-            {"ngap-ue-count", static_cast<int>(m_base->ngapTask->m_ueCtx.size())},
-            {"ngap-up", m_base->appTask->m_statusInfo.isNgapUp},
-        });
+        auto gnbStatus = m_base->getGnbStatusInfo();
+        Json json = ToJson(gnbStatus);
+        // Json json = Json::Obj({
+        //     {"nci", gnbStatus.nci},
+        //     {"pci", gnbStatus.pci},
+        //     {"rrc-ue-count", gnbStatus.rrcConnectedUes},
+        //     {"ngap-ue-count", gnbStatus.ngapConnectedUes},
+        //     {"ngap-ues-in-handover", gnbStatus.handoverInProgressUes},
+        //     {"ngap-up", gnbStatus.isNgapUp},
+        // });
+        // json.push(ToJsonLocWgs84(gnbStatus.gnbPosition));
+
         sendResult(msg.address, json.dumpYaml());
         break;
     }
+    // require pause for full config report
     case app::GnbCliCommand::CONFIG_INFO: {
-        sendResult(msg.address, ToJson(*m_base->config).dumpYaml());
+        bool isPaused = pauseTasks();
+        if (!isPaused)
+        {
+            sendError(msg.address, "gNB is unable process command due to pausing timeout");
+        }
+        else
+        {
+            sendResult(msg.address, ToJson(*m_base->config).dumpYaml());
+            unpauseTasks();
+        }
         break;
     }
-  case app::GnbCliCommand::AMF_LIST: {
-        Json json = Json::Arr({});
-        for (auto &amf : m_base->ngapTask->m_amfCtx)
-            json.push(Json::Obj({{"id", amf.first}}));
-        sendResult(msg.address, json.dumpYaml());
+    // require pause to getting AMF lists
+    case app::GnbCliCommand::AMF_LIST: {
+        bool isPaused = pauseTasks();
+        if (!isPaused)
+        {
+            sendError(msg.address, "gNB is unable process command due to pausing timeout");
+        }
+        else
+        {
+            Json json = Json::Arr({});
+            for (auto &amf : m_base->ngapTask->m_amfCtx)
+                json.push(Json::Obj({{"id", amf.first}}));
+            sendResult(msg.address, json.dumpYaml());
+            unpauseTasks();
+        }
         break;
     }
+    // require pause for getting specific AMF info
     case app::GnbCliCommand::AMF_INFO: {
-        if (m_base->ngapTask->m_amfCtx.count(msg.cmd->amfId) == 0)
-            sendError(msg.address, "AMF not found with given ID");
-        else
+        bool isPaused = pauseTasks();
+        if (!isPaused)
         {
-            auto amf = m_base->ngapTask->m_amfCtx[msg.cmd->amfId];
-            sendResult(msg.address, ToJson(*amf).dumpYaml());
+            sendError(msg.address, "gNB is unable process command due to pausing timeout");
+        }
+        else 
+        {
+            if (m_base->ngapTask->m_amfCtx.count(msg.cmd->amfId) == 0)
+                sendError(msg.address, "AMF not found with given ID");
+            else
+            {
+                auto amf = m_base->ngapTask->m_amfCtx[msg.cmd->amfId];
+                sendResult(msg.address, ToJson(*amf).dumpYaml());
+            }
+            unpauseTasks();
         }
         break;
     }
+    // require pause for getting UE lists
     case app::GnbCliCommand::UE_LIST: {
-        Json json = Json::Arr({});
-        for (auto &ue : m_base->ngapTask->m_ueCtx)
+        bool isPaused = pauseTasks();
+        if (!isPaused)
         {
-            json.push(Json::Obj({
-                {"ue-id", ue.first},
-                {"ran-ngap-id", ue.second->ranUeNgapId},
-                {"amf-ngap-id", ue.second->amfUeNgapId},
-            }));
+            sendError(msg.address, "gNB is unable process command due to pausing timeout");
         }
-        sendResult(msg.address, json.dumpYaml());
-        break;
-    }
-    case app::GnbCliCommand::UE_COUNT: {
-        sendResult(msg.address, std::to_string(m_base->ngapTask->m_ueCtx.size()));
-        break;
-    }
-    case app::GnbCliCommand::UE_RELEASE_REQ: {
-        if (m_base->ngapTask->m_ueCtx.count(msg.cmd->ueId) == 0)
-            sendError(msg.address, "UE not found with given ID");
         else
         {
-            auto ue = m_base->ngapTask->m_ueCtx[msg.cmd->ueId];
-            m_base->ngapTask->sendContextRelease(ue->ctxId, NgapCause::RadioNetwork_unspecified);
-            sendResult(msg.address, "Requesting UE context release");
+
+            Json json = Json::Arr({});
+            for (auto &ue : m_base->ngapTask->m_ueCtx)
+            {
+                json.push(Json::Obj({
+                    {"ue-id", ue.first},
+                    {"ran-ngap-id", ue.second->ranUeNgapId},
+                    {"amf-ngap-id", ue.second->amfUeNgapId},
+                }));
+            }
+            for (auto &ue : m_base->ngapTask->m_handoverPending)
+            {
+                json.push(Json::Obj({
+                    {"handover-pending-ue-id", ue.first},
+                    {"handover-pending-expire-time", ue.second->expireTime},
+                }));
+            }
+            sendResult(msg.address, json.dumpYaml());
+
+            unpauseTasks();
         }
         break;
     }
+    // no pause needed, gnbStatusInfo is mutex protected
+    case app::GnbCliCommand::UE_COUNT: {
+        auto gnbStatus = m_base->getGnbStatusInfo();
+        sendResult(msg.address, std::to_string(gnbStatus.ngapConnectedUes));
+        break;
+    }
+    // require pause for UE release instructions
+    case app::GnbCliCommand::UE_RELEASE_REQ: {
+        bool isPaused = pauseTasks();
+        if (!isPaused)
+        {
+            sendError(msg.address, "gNB is unable process command due to pausing timeout");
+        }
+        else
+        {
+
+            if (m_base->ngapTask->m_ueCtx.count(msg.cmd->ueId) == 0)
+                sendError(msg.address, "UE not found with given ID");
+            else
+            {
+                auto ue = m_base->ngapTask->m_ueCtx[msg.cmd->ueId];
+                m_base->ngapTask->sendContextRelease(ue->ctxId, NgapCause::RadioNetwork_unspecified);
+                sendResult(msg.address, "Requesting UE context release");
+            }
+            unpauseTasks();
+        }
+        break;
+    }
+    // fixed RSRP is mutex protected, no pause needed
     case app::GnbCliCommand::SET_RSRP: {
         // Set the global fixed RSRP value (dBm)
         int value = msg.cmd->rsrpValue;
@@ -693,12 +755,13 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
             errMsg = "RSRP value out of range (must be no higher than " + std::to_string(cons::MAX_RSRP) + " dBm. ";
             value = cons::MAX_RSRP;
         }
-        m_base->fixedRsrp = value;
+        m_base->setFixedRsrp(value);
         m_base->config->rfLink.updateMode = EGnbRsrpMode::Fixed;
         sendResult(msg.address, errMsg + "Updated fixed RSRP to " + std::to_string(value) + " dBm");
     
         break;
     }
+    // location is mutex protected, no pause needed
     case app::GnbCliCommand::SET_LOC_WGS84: {
         GeoPosition geo{};
         geo.isValid = true;
@@ -710,6 +773,7 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         sendResult(msg.address, "Updated current gNB WGS84 position");
         break;
     }
+    // location is mutex protected, no pause needed
     case app::GnbCliCommand::SET_LOC_PV: {
         EcefPosition position{};
         position.x = msg.cmd->locX;
@@ -728,6 +792,7 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         sendResult(msg.address, "Updated current gNB WGS84 position based on provided PV (ECEF) coordinates");
         break;
     }
+    // location is mutex protected, no pause needed
     case app::GnbCliCommand::GET_LOC_WGS84: {
         auto gnbPosition = m_base->getGnbPosition();
         if (!gnbPosition.isValid)
@@ -736,9 +801,10 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
             break;
         }
 
-        sendResult(msg.address, ToJsonLocWgs84(gnbPosition).dumpYaml());
+        sendResult(msg.address, ToJson(gnbPosition).dumpYaml());
         break;
     }
+    // location is mutex protected, no pause needed
     case app::GnbCliCommand::GET_LOC_PV: {
         auto gnbPosition = m_base->getGnbPosition();
         if (!gnbPosition.isValid)
@@ -784,111 +850,150 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         sendResult(msg.address, response.dumpYaml());
         break;
     }
+    // satStates not mutex protected, so pause tasks before altering
     case app::GnbCliCommand::SAT_TLE: {
-        std::vector<SatTleEntry> entries;
-        try
+        bool isPaused = pauseTasks();
+        if (!isPaused)
         {
-            entries = ParseSatTleRequest(msg.cmd->satTleJson);
+            sendError(msg.address, "gNB is unable process command due to pausing timeout");
         }
-        catch (const std::exception &e)
+        else
         {
-            sendError(msg.address, std::string("sat-tle payload error: ") + e.what());
-            break;
-        }
 
-        m_base->satStates->upsertAll(entries);
-
-        Json response = Json::Obj({
-            {"result", "ok"},
-            {"upsertedCount", static_cast<int>(entries.size())},
-        });
-        sendResult(msg.address, response.dumpYaml());
-        break;
-    }
-    case app::GnbCliCommand::SAT_TIME: {
-        if (m_base->satTime == nullptr)
-        {
-            sendError(msg.address, "sat-time is not available");
-            break;
-        }
-
-        try
-        {
-            switch (msg.cmd->satTime.action)
+            std::vector<SatTleEntry> entries;
+            try
             {
-            case app::SatTimeCliControl::EAction::Status:
-                break;
-            case app::SatTimeCliControl::EAction::Pause:
-                m_base->satTime->SetPaused(true);
-                break;
-            case app::SatTimeCliControl::EAction::Run:
-                m_base->satTime->SetPaused(false);
-                break;
-            case app::SatTimeCliControl::EAction::TickScale:
-                m_base->satTime->SetTickScaling(msg.cmd->satTime.tickScale);
-                break;
-            case app::SatTimeCliControl::EAction::StartEpoch: {
-                auto dt = ParseTleEpochDateTime(msg.cmd->satTime.startEpoch, "sat-time start-epoch");
-                m_base->satTime->SetStartEpochMillis(DateTimeToUnixMillis(dt));
+                entries = ParseSatTleRequest(msg.cmd->satTleJson);
+            }
+            catch (const std::exception &e)
+            {
+                sendError(msg.address, std::string("sat-tle payload error: ") + e.what());
                 break;
             }
-            case app::SatTimeCliControl::EAction::PauseAtWallclock:
-                m_base->satTime->SchedulePauseAtWallclockMillis(msg.cmd->satTime.pauseAtWallclock);
-                break;
-            case app::SatTimeCliControl::EAction::RunAtWallclock:
-                m_base->satTime->ScheduleRunAtWallclockMillis(msg.cmd->satTime.runAtWallclock);
-                break;
-            }
-        }
-        catch (const std::exception &e)
-        {
-            sendError(msg.address, std::string("sat-time command failed: ") + e.what());
-            break;
-        }
 
-        sendResult(msg.address, ToJsonSatTimeStatus(m_base->satTime->GetStatus()).dumpYaml());
+            m_base->satStates->upsertAll(entries);
+
+            Json response = Json::Obj({
+                {"result", "ok"},
+                {"upsertedCount", static_cast<int>(entries.size())},
+            });
+            sendResult(msg.address, response.dumpYaml());
+            unpauseTasks();
+        }
         break;
     }
+    // require pause for sat-time commands
+    case app::GnbCliCommand::SAT_TIME: {
+        bool isPaused = pauseTasks();
+        if (!isPaused)
+        {
+            sendError(msg.address, "gNB is unable process command due to pausing timeout");
+            break;
+        }
+        else
+        {
+            if (m_base->satTime == nullptr)
+            {
+                sendError(msg.address, "sat-time is not available");
+                unpauseTasks();
+                break;
+            }
+
+            try
+            {
+                switch (msg.cmd->satTime.action)
+                {
+                case app::SatTimeCliControl::EAction::Status:
+                    break;
+                case app::SatTimeCliControl::EAction::Pause:
+                    m_base->satTime->SetPaused(true);
+                    break;
+                case app::SatTimeCliControl::EAction::Run:
+                    m_base->satTime->SetPaused(false);
+                    break;
+                case app::SatTimeCliControl::EAction::TickScale:
+                    m_base->satTime->SetTickScaling(msg.cmd->satTime.tickScale);
+                    break;
+                case app::SatTimeCliControl::EAction::StartEpoch: {
+                    auto dt = ParseTleEpochDateTime(msg.cmd->satTime.startEpoch, "sat-time start-epoch");
+                    m_base->satTime->SetStartEpochMillis(DateTimeToUnixMillis(dt));
+                    break;
+                }
+                case app::SatTimeCliControl::EAction::PauseAtWallclock:
+                    m_base->satTime->SchedulePauseAtWallclockMillis(msg.cmd->satTime.pauseAtWallclock);
+                    break;
+                case app::SatTimeCliControl::EAction::RunAtWallclock:
+                    m_base->satTime->ScheduleRunAtWallclockMillis(msg.cmd->satTime.runAtWallclock);
+                    break;
+                }
+            }
+            catch (const std::exception &e)
+            {
+                sendError(msg.address, std::string("sat-time command failed: ") + e.what());
+                unpauseTasks();
+                break;
+
+            }
+
+            sendResult(msg.address, ToJsonSatTimeStatus(m_base->satTime->GetStatus()).dumpYaml());
+            unpauseTasks();
+        }
+        break;
+    }
+    // neighbors list not mutex protected, so pause tasks before altering
     case app::GnbCliCommand::NEIGHBORS: {
-        NeighborsUpdateRequest request{};
-        try
+        bool isPaused = pauseTasks();
+        if (!isPaused)
         {
-            request = ParseNeighborsRequest(msg.cmd->neighborsJson);
+            sendError(msg.address, "gNB is unable process command due to pausing timeout");
         }
-        catch (const std::exception &e)
+        else
         {
-            sendError(msg.address, std::string("neighbors payload error: ") + e.what());
-            break;
-        }
 
-        NeighborsUpdateResult result{};
-        try
-        {
-            result = ApplyNeighborsUpdate(*m_base->neighbors, *m_base->config, request);
-        }
-        catch (const std::exception &e)
-        {
-            sendError(msg.address, std::string("neighbors update failed: ") + e.what());
-            break;
-        }
+            NeighborsUpdateRequest request{};
+            try
+            {
+                request = ParseNeighborsRequest(msg.cmd->neighborsJson);
+            }
+            catch (const std::exception &e)
+            {
+                sendError(msg.address, std::string("neighbors payload error: ") + e.what());
+                unpauseTasks();
+                break;
+            }
 
-        Json warnings = Json::Arr({});
-        for (const auto &warning : result.warnings)
-            warnings.push(warning);
+            NeighborsUpdateResult result{};
+            try
+            {
+                result = ApplyNeighborsUpdate(*m_base->neighbors, *m_base->config, request);
+            }
+            catch (const std::exception &e)
+            {
+                sendError(msg.address, std::string("neighbors update failed: ") + e.what());
+                unpauseTasks();
+                break;
+            }
 
-        Json response = Json::Obj({
-            {"result", "ok"},
-            {"mode", request.modeText},
-            {"beforeCount", result.beforeCount},
-            {"afterCount", result.afterCount},
-            {"addedCount", result.addedCount},
-            {"removedCount", result.removedCount},
-            {"warnings", std::move(warnings)},
-            {"neighbors", ToJsonNeighborList(m_base->neighbors->getAll())},
-        });
-        sendResult(msg.address, response.dumpYaml());
+            Json warnings = Json::Arr({});
+            for (const auto &warning : result.warnings)
+                warnings.push(warning);
+
+            Json response = Json::Obj({
+                {"result", "ok"},
+                {"mode", request.modeText},
+                {"beforeCount", result.beforeCount},
+                {"afterCount", result.afterCount},
+                {"addedCount", result.addedCount},
+                {"removedCount", result.removedCount},
+                {"warnings", std::move(warnings)},
+                {"neighbors", ToJsonNeighborList(m_base->neighbors->getAll())},
+            });
+            sendResult(msg.address, response.dumpYaml());
+            unpauseTasks();
+        }
         break;
     }
+    // returning constants, no pause needed
     case app::GnbCliCommand::VERSION: {
         Json json = Json::Obj({
             {"gnb-version", std::string(GNB_VERSION)},

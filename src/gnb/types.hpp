@@ -91,7 +91,7 @@ struct NGAPHandoverPending
 {
     int id{};
     NgapUeContext* ctx{};
-    uint64_t expireTime{};
+    int64_t expireTime{};
     bool choCandidate{};
 };
 
@@ -438,10 +438,10 @@ struct PduSessionResource
     }
 };
 
-struct GnbStatusInfo
-{
-    bool isNgapUp{};
-};
+// struct GnbStatusInfo
+// {
+//     bool isNgapUp{};
+// };
 
 struct GtpUeContext
 {
@@ -698,6 +698,38 @@ struct GnbConfig
 
 };
 
+struct GnbStatusInfo
+{
+    int64_t nci{};
+    int pci{};
+    bool isNgapUp{};
+    int connectedAmfs{};
+    int rrcConnectedUes{};
+    int ngapConnectedUes{};
+    int handoverInProgressUes{};
+    GeoPosition gnbPosition{};
+};
+
+struct GnbStatusInfoUpdate
+{
+    bool nciIsPresent{false};
+    int64_t nci{};
+    bool pciIsPresent{false};
+    int pci{};
+    bool isNgapUpIsPresent{false    };
+    bool isNgapUp{};
+    bool connectedAmfsIsPresent{false};
+    int connectedAmfs{};
+    bool rrcConnectedUesIsPresent{false};
+    int rrcConnectedUes{};
+    bool ngapConnectedUesIsPresent{false};
+    int ngapConnectedUes{};
+    bool handoverInProgressUesIsPresent{false};
+    int handoverInProgressUes{};
+    bool gnbPositionIsPresent{false};
+    GeoPosition gnbPosition{};
+};
+
 struct TaskBase
 {
     GnbConfig *config{};
@@ -768,22 +800,39 @@ struct TaskBase
     // set lat/long/alt and timestamp together
     void setGnbPosition(const GeoPosition &position, int64_t timestampMs)
     {
-        std::unique_lock<std::shared_mutex> lock(gnbPositionMutex);
-        gnbPosition.latitude = position.latitude;
-        gnbPosition.longitude = position.longitude;
-        gnbPosition.altitude = position.altitude;
-        gnbPosition.timestampMs = timestampMs;
-        gnbPosition.isValid = true;
+        {
+            std::unique_lock<std::shared_mutex> lock(gnbPositionMutex);
+            gnbPosition.latitude = position.latitude;
+            gnbPosition.longitude = position.longitude;
+            gnbPosition.altitude = position.altitude;
+            gnbPosition.timestampMs = timestampMs;
+            gnbPosition.isValid = true;
+        }
+
+        // do this outside lock
+        GnbStatusInfoUpdate info{};
+        info.gnbPositionIsPresent = true;
+        info.gnbPosition = gnbPosition;
+        setGnbStatusInfo(info);
+        
     }
 
     // set lat/long/alt without updating timestamp
     void setGnbPosition(const GeoPosition &position)
     {
-        std::unique_lock<std::shared_mutex> lock(gnbPositionMutex);
-        gnbPosition.latitude = position.latitude;
-        gnbPosition.longitude = position.longitude;
-        gnbPosition.altitude = position.altitude;
-        gnbPosition.isValid = true;
+        {
+            std::unique_lock<std::shared_mutex> lock(gnbPositionMutex);
+            gnbPosition.latitude = position.latitude;
+            gnbPosition.longitude = position.longitude;
+            gnbPosition.altitude = position.altitude;
+            gnbPosition.isValid = true;
+        }
+        // do this outside lock
+        GnbStatusInfoUpdate info{};
+        info.gnbPositionIsPresent = true;
+        info.gnbPosition = gnbPosition;
+        setGnbStatusInfo(info);
+
     }
 
     [[nodiscard]] GeoPosition getGnbPosition() const
@@ -793,6 +842,51 @@ struct TaskBase
     }
 
     int fixedRsrp;
+    // mediating concurrent access to fixedRSRP
+    mutable std::shared_mutex fixedRsrpMutex{};
+
+    void setFixedRsrp(int rsrp)
+    {
+        std::unique_lock<std::shared_mutex> lock(fixedRsrpMutex);
+        fixedRsrp = rsrp;
+    }
+
+    [[nodiscard]] int getFixedRsrp() const
+    {
+        std::shared_lock<std::shared_mutex> lock(fixedRsrpMutex);
+        return fixedRsrp;
+    }
+
+    GnbStatusInfo gnbStatusInfo{}; 
+    mutable std::shared_mutex gnbStatusInfoMutex{};
+
+    // update GNB status info.  Set isPresent bool if info should be updated
+    void setGnbStatusInfo(const GnbStatusInfoUpdate &info)
+    {
+        std::unique_lock<std::shared_mutex> lock(gnbStatusInfoMutex);
+        if (info.nciIsPresent)
+            gnbStatusInfo.nci = info.nci;
+        if (info.pciIsPresent)
+            gnbStatusInfo.pci = info.pci;
+        if (info.isNgapUpIsPresent)
+            gnbStatusInfo.isNgapUp = info.isNgapUp;
+        if (info.connectedAmfsIsPresent)
+            gnbStatusInfo.connectedAmfs = info.connectedAmfs;
+        if (info.rrcConnectedUesIsPresent)
+            gnbStatusInfo.rrcConnectedUes = info.rrcConnectedUes;
+        if (info.ngapConnectedUesIsPresent)
+            gnbStatusInfo.ngapConnectedUes = info.ngapConnectedUes;
+        if (info.handoverInProgressUesIsPresent)
+            gnbStatusInfo.handoverInProgressUes = info.handoverInProgressUes;
+        if (info.gnbPositionIsPresent)
+            gnbStatusInfo.gnbPosition = info.gnbPosition;
+    }
+
+    [[nodiscard]] GnbStatusInfo getGnbStatusInfo() const
+    {
+        std::shared_lock<std::shared_mutex> lock(gnbStatusInfoMutex);
+        return gnbStatusInfo;
+    }
 };
 
 Json ToJson(const GnbStatusInfo &v);

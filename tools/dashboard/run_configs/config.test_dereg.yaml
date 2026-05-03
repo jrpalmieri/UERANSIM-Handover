@@ -1,5 +1,7 @@
 demo_name: 'Handover by De-Register then Register'
 
+command_cli: ./build/nr-cli
+
 amf:
   host: 172.22.0.10
   port: 38412
@@ -43,11 +45,16 @@ ue:
   config: ./tools/dashboard/configs/ue1.yaml
   ue_log_file: ue.log_%i
   create_db_profiles: false
+  start_delay_sec: 5.0
+  # latitude: 40.00
+  # longitude: -72.00
+  # altitude: 0.0
   auto_setcap: true
   run_with_sudo: true
   sudo_non_interactive: false
   cli_with_sudo: true
   cli_sudo_non_interactive: true
+  args: []
 
 gnb:
   gnb_command: ./build/nr-gnb
@@ -60,8 +67,6 @@ gnb:
     config: ./tools/dashboard/configs/gnb2_fixed.yaml
     gnb_log_file: gnb2_%i.log
     args: []
-
-command_cli: ./build/nr-cli
 
 user_plane_test:
   enabled: true
@@ -82,15 +87,26 @@ user_plane_test:
   pad_byte_value: 0x20
 
 pcap:
-  enabled: true
-  # interface to capture on (e.g. "amf" for interface connected to AMF, "ue1-tun", "ue1-ran")
-  interface: amf
-  # output pcap file (stored in log directory)
-  output_file: trace_dereg_%i.pcap
-  # whether to use sudo for tcpdump (often required to capture on interfaces)
-  use_sudo: true
-  # whether to use non-interactive sudo (i.e. assume passwordless sudo) for tcpdump
-  sudo_non_interactive: true
+  core:
+    enabled: true
+    # interface to capture on (e.g. "amf" for interface connected to AMF, "ue1-tun", "ue1-ran")
+    interface: amf
+    # output pcap file (stored in log directory)
+    output_file: core_trace_%i.pcap
+    # whether to use sudo for tcpdump (often required to capture on interfaces)
+    use_sudo: true
+    # whether to use non-interactive sudo (i.e. assume passwordless sudo) for tcpdump
+    sudo_non_interactive: true
+  ran:
+    enabled: true
+    # interface to capture on (e.g. "amf" for interface connected to AMF, "ue1-tun", "ue1-ran")
+    interface: lo
+    # output pcap file (stored in log directory)
+    output_file: ran_trace_%i.pcap
+    # whether to use sudo for tcpdump (often required to capture on interfaces)
+    use_sudo: true
+    # whether to use non-interactive sudo (i.e. assume passwordless sudo) for tcpdump
+    sudo_non_interactive: true
 
 run:
   stop_after_sec: 60
@@ -105,12 +121,12 @@ run:
 
 
 script:
-- time: 20
+- time: 25
   commands:
   - node: GNB2
     command: set-rsrp
     args: [-70]
-- time: 25
+- time: 30
   commands:
   - node: GNB1
     command: set-rsrp

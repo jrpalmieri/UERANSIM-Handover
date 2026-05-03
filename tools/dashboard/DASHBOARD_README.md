@@ -90,3 +90,17 @@ Use `OK` to start the program and `Cancel` to close the dialog without starting.
 - `user_plane.host_route_gateway` sets the gateway used for UE route injection.
 - `user_plane.host_route_subnet` sets the expected host subnet route (for warning visibility).
 - `user_plane.max_log_lines` controls retained lines for each user-plane demo pane.
+- **Packet Capture (pcap)** has two independent sections: `core` (AMF interface) and `ran` (loopback RLS)
+  - **Core section** (`pcap.core`):
+    - `enabled`: enables core (AMF) packet capture
+    - `interface`: interface to capture on; blank auto-discovers from AMF host route ("amf" keyword also works)
+    - `output_file`: output pcap filename
+    - `use_sudo`: whether to use sudo for tcpdump
+    - `sudo_non_interactive`: whether to use non-interactive sudo (`-n` flag)
+  - **RAN section** (`pcap.ran`):
+    - `enabled`: enables RAN (loopback RLS) packet capture
+    - `interface`: interface to capture on (typically "lo"); RLS packets identified via `udp port 4997 and net 127.0.0.0/24`
+    - `output_file`: output pcap filename
+    - `use_sudo`: whether to use sudo for tcpdump
+    - `sudo_non_interactive`: whether to use non-interactive sudo (`-n` flag)
+  - Core and RAN captures can run simultaneously with independent output files and sudo settings.

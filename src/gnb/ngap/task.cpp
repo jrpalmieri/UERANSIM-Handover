@@ -43,6 +43,7 @@ void NgapTask::onStart()
     }
 
     setTimer(TIMER_DEFERRED_QUEUE, DEFERRED_QUEUE_INTERVAL_MS);
+    setTimer(TIMER_STATUS_UPDATE, TIMER_STATUS_UPDATE_INTERVAL_MS);
 }
 
 void NgapTask::onLoop()
@@ -138,6 +139,11 @@ void NgapTask::onLoop()
             processDeferredQueue();
             setTimer(TIMER_DEFERRED_QUEUE, DEFERRED_QUEUE_INTERVAL_MS);
         }
+        else if (w.timerId == TIMER_STATUS_UPDATE)
+        {
+            sendGnbStatusUpdate();
+            setTimer(TIMER_STATUS_UPDATE, TIMER_STATUS_UPDATE_INTERVAL_MS);
+        }
         break;
     }
     default: {
@@ -175,6 +181,27 @@ void NgapTask::processDeferredQueue()
         }
     }
 }
+
+// periodically update global state to be used in CLI and status reporting
+//  avoids needing to pause tasks for CLI status requests
+void NgapTask::sendGnbStatusUpdate()
+{
+    GnbStatusInfoUpdate info{};
+    info.isNgapUpIsPresent = true;
+    info.isNgapUp = m_isInitialized;
+
+    info.connectedAmfsIsPresent = true;
+    info.connectedAmfs = static_cast<int>(m_amfCtx.size());
+
+    info.ngapConnectedUesIsPresent = true;
+    info.ngapConnectedUes = static_cast<int>(m_ueCtx.size());
+
+    info.handoverInProgressUesIsPresent = true;
+    info.handoverInProgressUes = static_cast<int>(m_handoverPending.size());
+
+    m_base->setGnbStatusInfo(info);
+}
+
 
 void NgapTask::onQuit()
 {

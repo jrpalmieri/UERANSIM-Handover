@@ -1,1 +1,43 @@
-now change the visualization UI.  the visualization should propagate all satellites in the TLE store.  It shoudl determine which sats are hosting a gnb.  satellites that are not associated with a GNB shoudl be displayed in the graphics as a small white dot.  satellites associated with a GNB shoudl be displayed as currently displayed - coloring, label and larger dot.  The unassociated sats shoudl only be listed in the location data pane if they are above the UE horizon.  In the location data pane, the enties shoudl be labelled as "entity key (gnb_name - sat name)" : example: GNB1 (gnb-0017 - STARLINK-1008).  If the entity is a sat that is unassociated with a GNB, then just use the sat name as the label.  For unassociated sata, only display the propagated location information.  For sats hosting a gnb, switch teh order of the "reported/propagated" values, so that propagated comes first (and thereby lines up with teh values of any sats that are unassociated with gnbs).  sats that are unassociated with a gnb shodul be propagated using the earliest of teh reported sat-time values from the gnbs.
+lets improve the handover measurement analysis to address multiple handover situations.  to do this, let's create little RRC state machines for each UE from teh RRC packets detected in the capture file.
+
+Discover new UEs in teh trace based on UDP ports other than 4997. For each new ue, create a state tracker.  Start in state RRC_Idle. set a prior_disconnect time to 0
+
+Registration:
+If an RRC SetupRequest is sent by the UE in RRC_Idle, move to state Registration_started, record the timestamp as registartion_start, and set teh UE's serving_gnb as teh dest ip address.
+IF an RRC Setup is received in Registration_started, move to state Registration_pending, record teh timestamp as registration_pending.
+If an RRC Setup Complete message is sent  by the UE in Registration_pending, move the state to RRC_conencted, record teh timestamp as registration_complete.  If the prior_disconnect time is not 0, record this as a D/R cycle and record the time delta.
+
+While in state RRC_Connected, read HandoverACKs from the connected gNB, and store the reported dbm.  If teh dbm falls below -140, set teh prior_disconnect time to teh packet timestamp
+
+Disconnect:
+if in state RRC_connected, PotentialHandoverStart, or HandoverPending, and an RRC Setup Request is sent by UE, move to state RRC_idle.
+
+Measurement configuration:
+If in RRC_connected, UE receives RRC Reconfiguration, then do not change state.
+
+Normal Handover cycle:
+If in RRC_connected, UE send an RRC Measurement Report, set teh state as PotentialHandoverStart, and record the timestamp as teh handover start.
+If an RRC ReconfigWithSync is received after that, move to state HandoverPending, and record teh tiemstamp as handover_received.
+If an RRC Reconfig Complete is sent after that, move to state RRC_connected, and record teh time as handover_complete.
+
+Errors:
+If another Measurement Report is received before an RRC ReconfigWithSync, stay in PotentialHandoverStart, re-record the hanodver start time, but count that as an unmatched measurement report.
+
+
+Conditional handover:
+If UE send an RRC ReconfigComplete while in RRC_connected, check the packet for a new gNB IP.  If new, this is a CHO.  record teh handover and teh packet timestamp.
+
+For reporting, do it this way:
+
+UE (port)    D/R#  HO#   CHO#  HO-MRtoRWS  HO-RWStoRC  D/Rms
+-------------------------------------------------------------
+where:
+
+D/R# = number of disconnect/connect cycles
+HO# = number of basic handover events
+CHO# = number of conditional handover events
+HO-MRtoRWS = time delta between Measreport and ReconfigWithSync message
+HO-RWStoRC = time delta between RecoinfigWith Sync message and ReconfigComplete message
+D/Rms = time delta between disconnect detection and RRC Setup Complete message
+
+

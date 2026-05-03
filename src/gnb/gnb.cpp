@@ -40,6 +40,14 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
 
     m_logger->info("GNodeB object created with gNB ID %u, Cell ID %d, TAC %d", config->getGnbId(), config->getCellId(), config->tac);
 
+    // put the ids in the status info so they are easily available for CLI commands
+    GnbStatusInfoUpdate update{};
+    update.nciIsPresent = true;
+    update.nci = config->nci;
+    update.pciIsPresent = true;
+    update.pci = cons::getPciFromNci(config->nci);
+    base->setGnbStatusInfo(update);
+
     // set initial gnb position from config
     // if ntn is enabled, the position will be updated later by satellite tracking 
     //     using TLE data
@@ -82,7 +90,12 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     base->rlsTask = new GnbRlsTask(base);
     base->xnTask = new XnTask(base);
 
-    base->fixedRsrp = config->rfLink.updateMode == EGnbRsrpMode::Fixed ? config->rfLink.rsrpDbValue : 0;
+    // set the fixed RSRP if in Fixed mode
+    if (config->rfLink.updateMode == EGnbRsrpMode::Fixed)
+        base->setFixedRsrp(config->rfLink.rsrpDbValue);
+    else
+        base->setFixedRsrp(0);
+
     m_logger->info("gNB RF Link Config: updateMode=%s, rsrpDbValue=%d, carrFrequencyHz=%.1fMHz, txPowerDbm=%.1f, txGainDbi=%.1f, ueRxGainDbi=%.1f",
                    config->rfLink.updateMode == EGnbRsrpMode::Fixed ? "Fixed" : "Calculated",
                    config->rfLink.rsrpDbValue,

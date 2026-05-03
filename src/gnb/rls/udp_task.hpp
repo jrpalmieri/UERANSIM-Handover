@@ -56,7 +56,7 @@ class RlsUdpTask : public NtsTask
     //std::unordered_map<int, int> m_ueIdToCrnti;
 
     int m_newIdCounter;
-    int m_fixedRsrp;
+    //int m_fixedRsrp;
     int m_loopCounter;
     int m_receiveTimeout;
     int m_heartbeatThreshold;

@@ -63,7 +63,16 @@ static std::string ToString(EHandoverInterface intf)
 
 Json ToJson(const GnbStatusInfo &v)
 {
-    return Json::Obj({{"is-ngap-up", v.isNgapUp}});
+    Json json = Json::Obj({
+            {"nci", v.nci},
+            {"pci", v.pci},
+            {"rrc-ue-count", v.rrcConnectedUes},
+            {"ngap-ue-count", v.ngapConnectedUes},
+            {"ngap-ues-in-handover", v.handoverInProgressUes},
+            {"ngap-up", v.isNgapUp},
+        });
+    json.push(ToJson(v.gnbPosition));
+    return json;
 }
 
 Json ToJson(const GnbConfig &v)

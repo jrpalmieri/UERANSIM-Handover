@@ -14,13 +14,16 @@ namespace nr::gnb
 double freespacePathLoss_base = 0.0;
 double uMaPathLoss_base = 0.0;
 double uMaPathLoss_far = 0.0;
+double uMaPathLoss_really_far = 0.0;
 double linkBudget_base = 0.0;
 
 /// Free-space path loss in dB.
 /// distance: meters,  frequencyHz: GHz.
 static inline double FastFreeSpacePathLossDb(double distanceM)
 {
-    distanceM += 1.0;  // ensure distance is non-zero
+    // min distance is 10m
+    if (distanceM <= 10.0)
+        distanceM = 10.0;
 
     // assumes freeSpacePathLoss_base has already been calculated
     return freespacePathLoss_base + 20.0 * std::log10(distanceM);
@@ -32,7 +35,9 @@ static inline double FastFreeSpacePathLossDb(double distanceM)
 static double FreeSpacePathLossDb(double distanceM,
                                   double frequencyHz)
 {
-    distanceM += 1.0;  // ensure distance is non-zero
+    // min distance is 10m
+    if (distanceM <= 10.0)
+        distanceM = 10.0;
 
     return 20.0 * std::log10(distanceM)
          + 20.0 * std::log10(frequencyHz)
@@ -46,13 +51,18 @@ static double FreeSpacePathLossDb(double distanceM,
 /// distance: meters,  frequencyHz: Hz.
 static inline double FastUrbanMacroPathLossDb(double distanceM)
 {
-    // min distance is 1m
-    distanceM += 1.0;
+    // min distance is 10m
+    if (distanceM <= 10.0)
+        distanceM = 10.0;
     
     if (distanceM < 1600.0)
        return uMaPathLoss_base + (22.0 * std::log10(distanceM));
+    if (distanceM <= 5000.0)
+        return uMaPathLoss_far + (40.0 * std::log10(distanceM));
 
-    return uMaPathLoss_far + (40.0 * std::log10(distanceM));
+    // This is not 3GPP, but ensures that by 8km, path loss makes signal effectively unusable for typical
+    //  link budgets (15dbm TxPower, 15dBi TxGain, 0dBi RxGain)
+    return uMaPathLoss_really_far + (100.0 * std::log10(distanceM));
 
 }
 
@@ -62,17 +72,21 @@ static inline double FastUrbanMacroPathLossDb(double distanceM)
 static double UrbanMacroPathLossDb(double distanceM,
                                   double frequencyHz)
 {
-    // min distance is 1m
-    distanceM += 1.0;
+    // min distance is 10m
+    if (distanceM <= 10.0)
+        distanceM = 10.0;
 
     // convert to GHz
     double freqGHz = frequencyHz / 1e9;
     
     if (distanceM < 1600.0)
        return 28.0 + (22.0 * std::log10(distanceM)) + (20.0 * std::log10(freqGHz));
+    if (distanceM <= 5000.0)
+        return 28.0 + (40.0 * std::log10(distanceM)) + (20.0 * std::log10(freqGHz)) - 32.04;
 
-    return 28.0 + (40.0 * std::log10(distanceM)) + (20.0 * std::log10(freqGHz)) - (9.0 * std::log10(1600.0 * 1600.0));
-
+    // This is not 3GPP, but ensures that by 8km, path loss makes signal effectively unusable for typical
+    //  link budgets (15dbm TxPower, 15dBi TxGain, 0dBi RxGain)
+    return 28.0 + (100.0 * std::log10(distanceM)) + (20.0 * std::log10(freqGHz)) - 254.0;
 }
 
 
@@ -223,8 +237,10 @@ void pre_calculations(double carrierFrequencyHz, double txPowerDbm, double txGai
     uMaPathLoss_base = 28.0 + (20.0 * std::log10(carrierFrequencyHz / 1e9));
     umaBase = uMaPathLoss_base;
 
-    uMaPathLoss_far = uMaPathLoss_base - (9.0 * std::log10(1600.0 * 1600.0));
+    uMaPathLoss_far = uMaPathLoss_base - 32.04;
     umaFar = uMaPathLoss_far;
+
+    uMaPathLoss_really_far = uMaPathLoss_base - 254.0;
 
     linkBudget_base = txPowerDbm + txGainDbi + ueRxGainDbi;
     lBudget_base = linkBudget_base;

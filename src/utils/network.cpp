@@ -95,7 +95,26 @@ int InetAddress::getIpVersion() const
 
 std::string InetAddress::getIpAddrString() const
 {
-    return std::string{reinterpret_cast<const char *>(&storage), static_cast<size_t>(len)};
+    char buffer[INET6_ADDRSTRLEN] = {};
+
+    if (storage.ss_family == AF_INET)
+    {
+        const auto &sin = reinterpret_cast<const sockaddr_in &>(storage);
+        if (inet_ntop(AF_INET, &sin.sin_addr, buffer, INET_ADDRSTRLEN) == nullptr)
+            return "";
+    }
+    else if (storage.ss_family == AF_INET6)
+    {
+        const auto &sin6 = reinterpret_cast<const sockaddr_in6 &>(storage);
+        if (inet_ntop(AF_INET6, &sin6.sin6_addr, buffer, INET6_ADDRSTRLEN) == nullptr)
+            return "";
+    }
+    else
+    {
+        return "";
+    }
+
+    return std::string(buffer);
 }
 
 InetAddress::InetAddress(const OctetString &address, uint16_t port) : InetAddress(OctetStringToIpString(address), port)
