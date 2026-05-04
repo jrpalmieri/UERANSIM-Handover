@@ -16,6 +16,8 @@ This tool is used to control satellite simulations using UERANSIM-Handover and O
 - Build UERANSIM first so `nr-ue`, `nr-gnb`, and `nr-cli` exist.
 - See requirements.txt for python dependencies
 
+- Running instances of Open5GS network functions (config files should be edited to point to the correct IP addresses)
+
 ## Run
 
 
