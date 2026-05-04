@@ -1,14 +1,18 @@
 mcc: '001'          # Mobile Country Code value
 mnc: '01'           # Mobile Network Code value (2 or 3 digits)
 
-nci: '0x000000011'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
+nci: '0x000000033'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
 idLength: 32        # portion of NCI that is used for the gNB ID, in bits [22...32]
                     # Note: The remaining low order bits of NCI (36-idLength) are used for the Cell ID.
 tac: 1              # Tracking Area Code
 
-linkIp: 127.0.0.2   # gNB's local IP address for Radio Link Simulation (must match UE gnbSearchList)
-ngapIp: 172.22.0.202   # gNB's local IP address for N2 Interface (Usually same with local IP)
-gtpIp: 172.22.0.202    # gNB's local IP address for N3 Interface (Usually same with local IP)
+# Optional staged node name template (preview only, not active yet):
+# Supported gNB token: {pci}
+# nodeNameTemplate: 'gnb-{pci}'
+
+linkIp: 127.0.0.4   # gNB's local IP address for Radio Link Simulation (must match UE gnbSearchList)
+ngapIp: 172.22.0.204   # gNB's local IP address for N2 Interface (Usually same with local IP)
+gtpIp: 172.22.0.204    # gNB's local IP address for N3 Interface (Usually same with local IP)
 
 # List of AMF address information
 amfConfigs:
@@ -23,14 +27,11 @@ slices:
 # Indicates whether or not SCTP stream number errors should be ignored.
 ignoreStreamIds: true
 
-# rf link parameters to calculate RSRP values sent to UEs
-#   if updateMode is "Fixed", only the provided rsrpDbValue is used and the other parameters are ignored.
-#     Note: this value can be manually changed during operation through the command interface to simulate changes in RF conditions.
-#   if updateMode is "Calculated", the RSRP is calculated  using the carrier frequency, tx power, and antenna gains.
+# RF link configuration.
 rfLink:
-  #updateMode: Fixed
-  rsrpDbValue: -80
-  updateMode: Calculated
+  updateMode: Fixed
+  rsrpDbValue: -150
+  #updateMode: Calculated
 
   # typical values for a LEO satellite gNB (Ku-Band)
   # carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
@@ -51,8 +52,6 @@ rfLink:
   ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi)
 
 # RLS loop/timer settings (ms).
-#   TIMER_PERIOD_ACK_SEND: - period for timer that triggers sending ACKs to PDUs from UE
-#   TIMER_PERIOD_ACK_CONTROL: - time threshold for receiving ACKs from UE for PDUs sent by gNB
 #  If these are omitted, default values will be used:
 #   LOOP_COUNTER: 1000
 #   RECEIVE_TIMEOUT: 200
@@ -67,15 +66,15 @@ rls:
 
 # Neighbor cells for handover
 neighborList:
+  - nci: '0x000000011'
+    idLength: 32
+    tac: 1
+    ipAddress: 127.0.0.2
+    handoverInterface: N2
   - nci: '0x000000022'
     idLength: 32
     tac: 1
     ipAddress: 127.0.0.3
-    handoverInterface: N2
-  - nci: '0x000000033'
-    idLength: 32
-    tac: 1
-    ipAddress: 127.0.0.4
     handoverInterface: N2
   - nci: '0x000000044'
     idLength: 32
@@ -87,10 +86,10 @@ neighborList:
 # Used as the static terrestrial position or as fallback
 # when no TLE has been received in satellite mode
 position:
-  latitude: 45.000     # degrees North
-  longitude: 90.000    # degrees East
+  latitude: 40.0000     # degrees North
+  longitude: -75.0300   # degrees East
   altitude: 550000.0    # meters above ellipsoid (LEO orbit)
-  #altitude: 100.0      # meters above ellipsoid (typical for terrestrial gNB)
+#  altitude: 50.0      # meters above ellipsoid (typical for terrestrial gNB)
 
 # Xn interface configuration (used for handover signaling with neighbor cells that support Xn handover)
 xn:
@@ -126,8 +125,8 @@ handover:
 
   - eventId: 2
     eventType: condT1
-    threhsoldSecTS: 30
-    durationSec: 600
+    threhsoldSecTS: 0
+    durationSec: 6000
 
   - eventId: 3
     eventType: condA3
@@ -135,21 +134,9 @@ handover:
     a3hysteresisDb: 1
     ttt: ms100
 
-  - eventId: 4
-    eventType: condT1
-    threhsoldSecTS: 0
-    durationSec: 600
-
-  - eventId: 5
-    eventType: A3
-    a3OffsetDb: 3
-    a3hysteresisDb: 1
-    ttt: ms100
-
   basicHandoverMeasIdentities: []
-
   choEnabled: false
-  choActiveProfileIds: [5]
+  choActiveProfileIds: [1]
   choCandidateProfiles:
     - candidateProfileId: 1
       targetCellId: '0x000000022'
@@ -157,7 +144,7 @@ handover:
       conditions: [1]
 
     - candidateProfileId: 2
-      targetCellId: '0x000000022'
+      targetCellId: calculated
       maxTargets: 1
       conditions: [2]
 
@@ -169,35 +156,32 @@ handover:
     - candidateProfileId: 4
       targetCellId: calculated
       maxTargets: 1
-      conditions: [4, 3]
+      conditions: [2, 3]
 
-    - candidateProfileId: 5
-      targetCellId: calculated
-      maxTargets: 1
-      conditions: [4]
 
 # NTN (non-Terrestrial Network) configuration
 ntn:
 
   # setting ntnEnabled to false will ignore all other ntn parameters and cause gnb to 
   #   operate in regular (terrestrial) mode
-  ntnEnabled: true
+  ntnEnabled: false
 
   # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
   #tle:
     # Samples - same epoch, nadir: lat=45N, lon=90W
     #  Sat 1: Zenith (Elevation ~90 deg)
-    #line1: '1 99991U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0008'
-    #line2: '2 99991  45.0000 280.4606 0001000   0.0000  90.0000 15.00000000    11'
-    #line1: '1 44714U 19074B   26117.00002315  .00123192  00000+0  24714-2 0  9996'
-    #line2: '2 44714  53.1543 312.8389 0000942  66.9226 117.3748 15.45800594  5831'
-    #    Sat 2: Rising (Lagging by 20 deg Mean Anomaly)
+    # line1: '1 99991U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0008'
+    # line2: '2 99991  45.0000 280.4606 0001000   0.0000  90.0000 15.00000000    11'
+    # #    Sat 2: Rising (Lagging by 20 deg Mean Anomaly)
     # line1: '1 99992U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0009'
     # line2: '2 99992  45.0000 280.4606 0001000   0.0000  70.0000 15.00000000    10'
-    # #    Sat 3: Trailing
-    # line1: '1 99993U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0000'
-    # line2: '2 99993  45.0000 280.4606 0001000   0.0000  50.0000 15.00000000    19'
-    # # Sat 4: Distant 1 
+    #    Sat 3: Trailing
+    #line1: '1 99993U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0000'
+    #line2: '2 99993  45.0000 280.4606 0001000   0.0000  50.0000 15.00000000    19'
+    # Starlink
+    #line1: '1 44725U 19074N   26117.33334491  .00218751  00000+0  39116-2 0  9995'
+    #line2: '2 44725  53.1609 336.9206 0001460  92.8773  76.3071 15.48722716  5882'
+    # Sat 4: Distant 1 
     # line1: '1 99994U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0001'
     # line2: '2 99994  45.0000 280.4606 0001000   0.0000  30.0000 15.00000000    18'
     # # Sat 5: Distant 2 (Below Horizon)
@@ -208,7 +192,7 @@ ntn:
   timeWarp:
     # startEpoch must be in TLE epoch format YYDDD.DDDDDDDD
     startEpoch: "26001.00000000"   # lines up with the TLE epoch
-    #startEpoch: "26117.00002315"   # lines up with the TLE epoch
+    #startEpoch: "26117.33334491"   # lines up with the TLE epoch
     # startCondition controls whether the satellite time starts immediately (moving) 
     #   or waits for a trigger (paused).
     startCondition: paused

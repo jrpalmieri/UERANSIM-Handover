@@ -83,9 +83,11 @@ Json ToJson(const GnbConfig &v)
             : "moving";
 
     auto handoverEvents = Json::Arr({});
-    for (const auto &event : v.handover.events)
+    for (const auto &kv : v.handover.eventsById)
     {
+        const auto &event = kv.second;
         Json eventJson = Json::Obj({
+            {"event-id", event.eventId},
             {"event-type", event.eventType},
             {"event-kind", nr::rrc::common::HandoverEventTypeToString(event.eventKind)},
             {"ttt", std::string{E_TTT_ms_to_string(event.ttt)}},
@@ -124,53 +126,21 @@ Json ToJson(const GnbConfig &v)
     auto handoverCandidateProfiles = Json::Arr({});
     for (const auto &profile : v.handover.candidateProfiles)
     {
-        auto conditionEntries = Json::Arr({});
-        for (const auto &event : profile.conditions)
-        {
-            Json eventJson = Json::Obj({
-                {"event-type", event.eventType},
-                {"event-kind", nr::rrc::common::HandoverEventTypeToString(event.eventKind)},
-                {"ttt", std::string{E_TTT_ms_to_string(event.ttt)}},
-                {"a2-threshold-dbm", event.a2_thresholdDbm},
-                {"a3-offset-db", event.a3_offsetDb},
-                {"a5-threshold1-dbm", event.a5_threshold1Dbm},
-                {"a5-threshold2-dbm", event.a5_threshold2Dbm},
-                {"d1-distance-threshold1", event.d1_distanceThreshFromReference1},
-                {"d1-distance-threshold2", event.d1_distanceThreshFromReference2},
-                {"cond-t1-threshold-sec-ts", event.condT1_thresholdSecTS},
-                {"cond-t1-duration-sec", event.condT1_durationSec},
-                {"cond-d1-distance-threshold1", event.condD1_distanceThreshFromReference1},
-                {"cond-d1-distance-threshold2", event.condD1_distanceThreshFromReference2},
-                {"a3-hysteresis-db", event.a3_hysteresisDb},
-                {"a5-hysteresis-db", event.a5_hysteresisDb},
-                {"d1-hysteresis-m", event.d1_hysteresisLocation},
-                {"cond-d1-hysteresis-m", event.condD1_hysteresisLocation},
-            });
+        auto conditionEventIds = Json::Arr({});
+        for (int evId : profile.conditionEventIds)
+            conditionEventIds.push(evId);
 
-            eventJson.put("d1-reference-location1",
-                          Json::Obj({{"latitude", std::to_string(event.d1_referenceLocation1.latitudeDeg)},
-                                     {"longitude", std::to_string(event.d1_referenceLocation1.longitudeDeg)}}));
-            eventJson.put("d1-reference-location2",
-                          Json::Obj({{"latitude", std::to_string(event.d1_referenceLocation2.latitudeDeg)},
-                                     {"longitude", std::to_string(event.d1_referenceLocation2.longitudeDeg)}}));
-            eventJson.put("cond-d1-reference-location1",
-                          Json::Obj({{"latitude", std::to_string(event.condD1_referenceLocation1.latitudeDeg)},
-                                     {"longitude", std::to_string(event.condD1_referenceLocation1.longitudeDeg)}}));
-            eventJson.put("cond-d1-reference-location2",
-                          Json::Obj({{"latitude", std::to_string(event.condD1_referenceLocation2.latitudeDeg)},
-                                     {"longitude", std::to_string(event.condD1_referenceLocation2.longitudeDeg)}}));
-
-            conditionEntries.push(std::move(eventJson));
-        }
+        auto targetCellIds = Json::Arr({});
+        for (auto id : profile.targetCellIds)
+            targetCellIds.push(id);
 
         Json profileJson = Json::Obj({
             {"candidate-profile-id", profile.candidateProfileId},
             {"target-cell-calculated", profile.targetCellCalculated},
-            {"conditions", std::move(conditionEntries)},
+            {"target-cell-ids", std::move(targetCellIds)},
+            {"max-targets", profile.maxTargets},
+            {"condition-event-ids", std::move(conditionEventIds)},
         });
-
-        if (profile.targetCellId)
-            profileJson.put("target-cell-id", *profile.targetCellId);
 
         handoverCandidateProfiles.push(std::move(profileJson));
     }
@@ -245,7 +215,8 @@ Json ToJson(const GnbConfig &v)
         })},
         {"handover", Json::Obj({
             {"cho-enabled", v.handover.choEnabled},
-            {"cho-default-profile-id", v.handover.choDefaultProfileId},
+            {"cho-active-profile-ids", [&]{ auto a = Json::Arr({}); for (int id : v.handover.choActiveProfileIds) a.push(id); return a; }()},
+            {"basic-handover-meas-identities", [&]{ auto a = Json::Arr({}); for (int id : v.handover.basicHandoverMeasIdentities) a.push(id); return a; }()},
             {"events", std::move(handoverEvents)},
             {"cho-candidate-profiles", std::move(handoverCandidateProfiles)},
             {"xn", Json::Obj({

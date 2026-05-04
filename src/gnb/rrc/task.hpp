@@ -170,22 +170,17 @@ class GnbRrcTask : public NtsTask
     void handleNgapHandoverFailure(int ueId, int targetPci, bool hoForChoPreparation);
     void handoverContextRelease(int ueId);
     void completeConditionalHandover(RrcUeContext *ue, const OctetString &rrcContainer);
-    void calculateTriggerConditions(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
-                    int ownPci,
-                    RrcUeContext *ue);
     std::vector<ScoredNeighbor> prioritizeNeighbors(
       const std::vector<GnbNeighborConfig> &neighborList,
       int servingPci,
       const nr::sat::EcefPosition &ueEcef,
       int tExitSec);
-    void clearChoPendingState(RrcUeContext *ue);
+    void clearChoPendingState(RrcUeContext *ue, int profileIdx);
     std::vector<long> createMeasConfig(
       ASN_RRC_MeasConfig *&mc,
       RrcUeContext *ue,
-      std::vector<nr::rrc::common::ReportConfigEvent> selectedEvents,
-      const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
-      long choProfileId
-      ); 
+      std::vector<std::pair<nr::rrc::common::ReportConfigEvent, int>> taggedEvents
+      );
 
 };
 

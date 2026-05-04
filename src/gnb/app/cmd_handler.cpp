@@ -382,10 +382,14 @@ static std::vector<std::string> CollectStaleTargetWarnings(const GnbConfig &conf
     for (size_t i = 0; i < config.handover.candidateProfiles.size(); i++)
     {
         const auto &profile = config.handover.candidateProfiles[i];
-        if (!profile.targetCellCalculated && profile.targetCellId.has_value() && !hasNeighborNci(*profile.targetCellId))
+        if (!profile.targetCellCalculated)
         {
-            warnings.push_back("handover.choCandidateProfiles[" + std::to_string(i) + "] targetCellId=" +
-                               std::to_string(*profile.targetCellId) + " does not exist in neighbor list");
+            for (int64_t nci : profile.targetCellIds)
+            {
+                if (!hasNeighborNci(nci))
+                    warnings.push_back("handover.choCandidateProfiles[" + std::to_string(i) + "] targetCellId=" +
+                                       std::to_string(nci) + " does not exist in neighbor list");
+            }
         }
     }
 

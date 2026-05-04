@@ -97,64 +97,84 @@ xn:
 #   per CHO profile.
 
 handover:
-  # events:
-  #   - eventType: A3
-  #     a3OffsetDb: 3
-  #     a3hysteresisDb: 1
-  #     ttt: ms100
+  events:
+  - eventId: 1
+    eventType: A3
+    a3OffsetDb: 3
+    a3hysteresisDb: 1
+    ttt: ms100
+
+  - eventId: 2
+    eventType: condT1
+    # T1 logic: trigger when curr time > threhsoldSecTS and less than threhsoldSecTS + durationSec
+    threhsoldSecTS: 30   # this value is set by the gnb based on current time
+    durationSec: 600
+
+  - eventId: 3
+    eventType: condD1
+    # D1 logic: trigger when UE is outside distance threshold1 and inside distance threshold2
+    condD1DistanceThreshold1: 1200
+    condD1DistanceThreshold2: 2000
+    condD1ReferenceLocation1:
+      latitude: 37.7749
+      longitude: -122.4194
+    condD1ReferenceLocation2:
+      latitude: 37.7749
+      longitude: -122.4194
+    condD1HysteresisM: 100
+    ttt: ms100
+
+  - eventId: 4
+    eventType: condA3
+    a3OffsetDb: 3
+    a3hysteresisDb: 1
+    ttt: ms100
+
+  - eventId: 5
+    eventType: condT1
+    # T1 logic: trigger when curr time > threhsoldSecTS and less than threhsoldSecTS + durationSec
+    threhsoldSecTS: 70   # this value is set by the gnb based on current time
+    durationSec: 600
+
+  # identifies which events should be used for basic (non-CHO) handover measurements.  
+  #  any eventIds in this list will be included in measurement reports from the UE.
+  #  leave empty to disable measurement reports for basic handover
+  basicHandoverMeasIdentities: []
 
   choEnabled: true
-  choDefaultProfileId: 2  # default profile ID to use for CHO candidates if not overridden
+  choActiveProfileIds: [2,5]  # default profile ID to use for CHO candidates if not overridden
   choCandidateProfiles:
     - candidateProfileId: 1
       # targetCellId is either a specific cell ID (e.g. '0x000000020') which must be on the neighbor list
       #   or "calculated", which causes the gNB to use the cell ID of the best candidate neighbor cell based on distance
-      targetCellId: '0x000000022'
-      conditions:
-        - eventType: condD1
-          # D1 logic: trigger when UE is outside distance threshold1 and inside distance threshold2
-          condD1DistanceThreshold1: 1200
-          condD1DistanceThreshold2: 2000
-          condD1ReferenceLocation1:
-            latitude: 37.7749
-            longitude: -122.4194
-          condD1ReferenceLocation2:
-            latitude: 37.7749
-            longitude: -122.4194
-          condD1HysteresisM: 100
-          ttt: ms100
+      targetCellId: ['0x000000022']
+      maxTargets: 1
+      conditions: [3]
 
     - candidateProfileId: 2
       #   for NTN, this always be calculated, since the target cell will change based on satellite movement
-      targetCellId: '0x000000022'
-      conditions:
-        - eventType: condT1
-          # T1 logic: trigger when curr time > threhsoldSecTS and less than threhsoldSecTS + durationSec
-          threhsoldSecTS: 30   # this value is set by the gnb based on current time
-          durationSec: 600
+      targetCellId: ['0x000000022']
+      maxTargets: 1
+      conditions: [2]
 
     - candidateProfileId: 3
       #   for NTN, this always be calculated, since the target cell will change based on satellite movement
-      targetCellId: calculated
-      conditions:
-        - eventType: condA3
-          # A3 logic: trigger when neighbor cell RSRP is better than serving cell RSRP by a3OffsetDb (with hysteresisM in meters and TTT)
-          a3OffsetDb: 3
-          a3hysteresisDb: 1
-          ttt: ms100
+      targetCellId: ['calculated']
+      maxTargets: 1
+      conditions: [4]
 
     - candidateProfileId: 4
       #   for NTN, this always be calculated, since the target cell will change based on satellite movement
       targetCellId: calculated
-      conditions:
-        - eventType: condT1
-          threhsoldSecTS: 0   # this value is set by the gnb based on current time
-          durationSec: 600
+      maxTargets: 1
+      # use condT1 and condA3 together
+      conditions: [2,3]
 
-        - eventType: condA3
-          a3OffsetDb: 3
-          a3hysteresisDb: 1
-          ttt: ms100
+    - candidateProfileId: 5
+      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
+      targetCellId: ['0x000000033']
+      maxTargets: 1
+      conditions: [5]
 
 # NTN (non-Terrestrial Network) configuration
 ntn:
@@ -164,11 +184,11 @@ ntn:
   ntnEnabled: false
 
   # Two Line Element (TLE) set for the satellite, used to calculate satellite position for NTN mode.
-  tle:
+  #tle:
     # Samples - same epoch, nadir: lat=45N, lon=90W
     #  Sat 1: Zenith (Elevation ~90 deg)
-    line1: '1 99991U 26106A   26106.97180556  .00000000  00000-0  00000-0 0  9993'
-    line2: '2 99991  45.0000 270.0000 0001000   0.0000  90.0000 15.00000000    14'
+    #line1: '1 99991U 26106A   26106.97180556  .00000000  00000-0  00000-0 0  9993'
+    #line2: '2 99991  45.0000 270.0000 0001000   0.0000  90.0000 15.00000000    14'
     #    Sat 2: Rising (Elevation ~30 deg)
     # line1: '1 99992U 26106B   26106.97180556  .00000000  00000-0  00000-0 0  9995'
     # line2: '2 99992  45.0000 270.0000 0001000   0.0000  70.0000 15.00000000    12'

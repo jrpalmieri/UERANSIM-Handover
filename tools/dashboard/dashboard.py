@@ -104,7 +104,7 @@ class ManagedProcess:
         self.log_file: Optional[TextIO] = None
 
     def _write_log_file(self, line: str) -> None:
-        if self.log_file is None:
+        if self.log_file is None or self.log_file.closed:
             return
         self.log_file.write(line)
         self.log_file.flush()
@@ -154,6 +154,8 @@ class ManagedProcess:
                 self._write_log_file("[terminate timeout, killing process]\n")
                 self.proc.kill()
 
+        if self.reader_thread is not None:
+            self.reader_thread.join(timeout=5)
         self._close_log_file()
 
     def _close_log_file(self) -> None:
@@ -4499,12 +4501,42 @@ class WindowedDashboard:
             else:
                 lines.append("  (no location)")
 
-            ue_pci = ue_scalars.get("PCI", "N/A")
+            def _normalize_pci(pci_raw: str) -> Optional[str]:
+                value = pci_raw.strip()
+                if not value or value in ("N/A", "NONE"):
+                    return None
+                try:
+                    return str(int(value, 0))
+                except ValueError:
+                    return value
+
+            def _pci_from_nci(nci_raw: str) -> Optional[str]:
+                value = nci_raw.strip()
+                if not value:
+                    return None
+                try:
+                    nci_val = int(value, 0)
+                except ValueError:
+                    return None
+                return str(nci_val & 0x3FF)
+
+            gnb_pci_map: Dict[str, str] = {}
+            for gnb_key in self.gnb_keys:
+                gnb_scalars, _ = self.panes[gnb_key].snapshot()
+                pci_val = _normalize_pci(gnb_scalars.get("PCI", ""))
+                if pci_val is None:
+                    nci_raw = gnb_scalars.get("NCI", "")
+                    if not nci_raw:
+                        nci_raw = self.gnb_ncis.get(gnb_key, "")
+                    pci_val = _pci_from_nci(nci_raw)
+                if pci_val is not None:
+                    gnb_pci_map[gnb_key] = pci_val
+
+            ue_pci = _normalize_pci(ue_scalars.get("PCI", "N/A"))
             connected_gnb = "N/A"
-            if ue_pci not in ("N/A", ""):
-                for gnb_key in self.gnb_keys:
-                    gnb_scalars, _ = self.panes[gnb_key].snapshot()
-                    if gnb_scalars.get("PCI", "") == ue_pci:
+            if ue_pci is not None:
+                for gnb_key, pci_val in gnb_pci_map.items():
+                    if pci_val == ue_pci:
                         connected_gnb = self.node_names.get(gnb_key, gnb_key)
                         break
             lines.append(f"  Connected:  {connected_gnb}")
@@ -4524,11 +4556,8 @@ class WindowedDashboard:
 
             # Build PCI → gNB name from gNB pane scalars
             pci_to_name: Dict[str, str] = {}
-            for gnb_key in self.gnb_keys:
-                gnb_scalars, _ = self.panes[gnb_key].snapshot()
-                pci_val = gnb_scalars.get("PCI", "")
-                if pci_val and pci_val != "N/A":
-                    pci_to_name[pci_val] = self.node_names.get(gnb_key, gnb_key)
+            for gnb_key, pci_val in gnb_pci_map.items():
+                pci_to_name[pci_val] = self.node_names.get(gnb_key, gnb_key)
 
             col = 22
             lines.append("  Signal Measurements:")
@@ -4537,7 +4566,8 @@ class WindowedDashboard:
             if cell_meas:
                 for pci_s, dbm in sorted(cell_meas.items(),
                                          key=lambda x: int(x[0]) if x[0].isdigit() else 0):
-                    gnb_name = pci_to_name.get(pci_s, f"Cell {pci_s}")
+                    pci_key = _normalize_pci(pci_s) or pci_s
+                    gnb_name = pci_to_name.get(pci_key, f"Cell {pci_s}")
                     lines.append(f"  {gnb_name:<{col}} {dbm} dBm")
             else:
                 for gnb_key in self.gnb_keys:

@@ -1,4 +1,4 @@
-demo_name: 'Conditional Handover by eventT1'
+demo_name: 'Conditional Handover by eventT1 - 2 targets'
 
 amf:
   host: 172.22.0.10
@@ -110,11 +110,14 @@ run:
   run_log: demorun.log
   logging:
     log_dir: ./tools/dashboard/logs
-    run_log_dir_name: demo-cond-%u-%t
+    run_log_dir_name: demo-condT1-2-%u-%t
 
 script:
 - time: 20
   commands:
   - node: GNB2
+    command: set-rsrp
+    args: [-90]
+  - node: GNB3
     command: set-rsrp
     args: [-90]

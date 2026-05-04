@@ -153,24 +153,66 @@ static void ReadTargetCellSelector(
         return;
 
     auto node = entry["targetCellId"];
-    if (!node.IsScalar())
-        throw std::runtime_error(pathForErrors + ".targetCellId must be a scalar value");
 
-    auto textValue = node.as<std::string>();
-    auto lowered = textValue;
-    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    // Helper: parse one string entry — returns nullopt for "calculated"
+    auto parseOne = [&](const std::string &raw) -> std::optional<int64_t> {
+        std::string lowered = raw;
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        if (lowered == "calculated")
+            return std::nullopt;
+        try {
+            return static_cast<int64_t>(std::stoull(raw, nullptr, 0));
+        } catch (...) {
+            throw std::runtime_error(pathForErrors + ".targetCellId: invalid value '" + raw + "'");
+        }
+    };
 
-    if (lowered == "calculated")
+    if (node.IsScalar())
     {
-        item.targetCellCalculated = true;
-        item.targetCellId.reset();
-        return;
+        auto result = parseOne(node.as<std::string>());
+        if (!result.has_value())
+        {
+            item.targetCellCalculated = true;
+            item.targetCellIds.clear();
+        }
+        else
+        {
+            item.targetCellCalculated = false;
+            item.targetCellIds = {*result};
+        }
+    }
+    else if (node.IsSequence())
+    {
+        item.targetCellIds.clear();
+        bool anyCalculated = false;
+        for (const auto &elem : node)
+        {
+            auto result = parseOne(elem.as<std::string>());
+            if (!result.has_value())
+                anyCalculated = true;
+            else
+                item.targetCellIds.push_back(*result);
+        }
+        // "calculated" anywhere in the list means calculated mode; explicit IDs are ignored
+        if (anyCalculated)
+        {
+            item.targetCellCalculated = true;
+            item.targetCellIds.clear();
+        }
+        else
+        {
+            item.targetCellCalculated = false;
+        }
+    }
+    else
+    {
+        throw std::runtime_error(pathForErrors + ".targetCellId must be a scalar or sequence");
     }
 
-    item.targetCellCalculated = false;
-    item.targetCellId = yaml::GetInt64(entry, "targetCellId", 0, 0xFFFFFFFFFll);
+    if (yaml::HasField(entry, "maxTargets"))
+        item.maxTargets = yaml::GetInt32(entry, "maxTargets", 1, std::nullopt);
 }
 
 static std::string ReadHandoverEventType(const YAML::Node &node)
@@ -253,6 +295,9 @@ static nr::rrc::common::ReportConfigEvent ReadHandoverEvent(
         throw std::runtime_error("Each " + pathForErrors + " entry must be a map");
 
     nr::rrc::common::ReportConfigEvent item = defaults;
+    if (!yaml::HasField(entry, "eventId"))
+        throw std::runtime_error("Each " + pathForErrors + " entry must define eventId");
+    item.eventId = yaml::GetInt32(entry, "eventId", 1, std::nullopt);
     if (!yaml::HasField(entry, "eventType"))
         throw std::runtime_error("Each " + pathForErrors + " entry must define eventType");
     item.eventType = ReadHandoverEventType(entry["eventType"]);
@@ -348,30 +393,32 @@ static nr::rrc::common::ReportConfigEvent ReadHandoverEvent(
 }
 
 
-static std::vector<nr::rrc::common::ReportConfigEvent>
+static std::map<int, nr::rrc::common::ReportConfigEvent>
 ReadHandoverEvents(const YAML::Node &handoverNode,
     const nr::rrc::common::ReportConfigEvent &defaults,
     const std::string &basePath)
 {
-    std::vector<nr::rrc::common::ReportConfigEvent> events{};
+    std::map<int, nr::rrc::common::ReportConfigEvent> eventsById{};
     auto eventsNode = handoverNode["events"];
     if (!eventsNode)
-        return events;
-        
+        return eventsById;
+
     if (!eventsNode.IsSequence())
         throw std::runtime_error("Field " + basePath + ".events must be a YAML sequence");
 
     for (const auto &entry : eventsNode)
     {
-        events.push_back(ReadHandoverEvent(entry, defaults, basePath + ".events[]"));
+        auto event = ReadHandoverEvent(entry, defaults, basePath + ".events[]");
+        if (eventsById.count(event.eventId))
+            throw std::runtime_error(basePath + ".events[]: duplicate eventId=" + std::to_string(event.eventId));
+        eventsById.emplace(event.eventId, std::move(event));
     }
 
-    return events;
+    return eventsById;
 }
 
 static std::vector<nr::gnb::GnbChoCandidateProfileConfig>
 ReadChoCandidateProfiles(const YAML::Node &handoverNode,
-    const nr::rrc::common::ReportConfigEvent &defaults,
     const std::string &basePath)
 {
     std::vector<nr::gnb::GnbChoCandidateProfileConfig> out{};
@@ -402,33 +449,20 @@ ReadChoCandidateProfiles(const YAML::Node &handoverNode,
 
         ReadTargetCellSelector(entry, profile, profilesPath + "[]");
 
-        YAML::Node conditionsNode{};
-        std::string conditionsPath{};
-        if (yaml::HasField(entry, "conditions"))
-        {
-            conditionsNode = entry["conditions"];
-            conditionsPath = profilesPath + "[].conditions";
-        }
-        else if (yaml::HasField(entry, "events"))
-        {
-            // Backward-compatible alias for older configs.
-            conditionsNode = entry["events"];
-            conditionsPath = profilesPath + "[].events";
-        }
-
-        if (!conditionsNode)
+        if (!yaml::HasField(entry, "conditions"))
             throw std::runtime_error("Each " + profilesPath + "[] entry must define a conditions list");
+
+        auto conditionsNode = entry["conditions"];
+        auto conditionsPath = profilesPath + "[].conditions";
+
         if (!conditionsNode.IsSequence())
-            throw std::runtime_error("Field " + conditionsPath + " must be a YAML sequence");
+            throw std::runtime_error("Field " + conditionsPath + " must be a YAML sequence of event IDs");
 
-        for (const auto &conditionEvent : conditionsNode)
-        {
-            profile.conditions.push_back(
-                ReadHandoverEvent(conditionEvent, defaults, conditionsPath + "[]"));
-        }
+        for (const auto &elem : conditionsNode)
+            profile.conditionEventIds.push_back(elem.as<int>());
 
-        if (profile.conditions.empty())
-            throw std::runtime_error("Each " + profilesPath + "[] entry must define one or more conditions");
+        if (profile.conditionEventIds.empty())
+            throw std::runtime_error("Each " + profilesPath + "[] entry must define one or more condition event IDs");
 
         out.push_back(std::move(profile));
     }
@@ -467,14 +501,32 @@ static void ReadHandoverConfigSection(
     if (yaml::HasField(handover, "choEnabled"))
         out.choEnabled = yaml::GetBool(handover, "choEnabled");
 
-    if (yaml::HasField(handover, "choDefaultProfileId"))
-        out.choDefaultProfileId = yaml::GetInt32(handover, "choDefaultProfileId", 0, std::nullopt);
+    if (yaml::HasField(handover, "choActiveProfileIds"))
+    {
+        auto node = handover["choActiveProfileIds"];
+        if (!node.IsSequence())
+            throw std::runtime_error(basePath + ".choActiveProfileIds must be a YAML sequence");
+        for (const auto &elem : node)
+            out.choActiveProfileIds.push_back(elem.as<int>());
+    }
+    else if (yaml::HasField(handover, "choDefaultProfileId"))
+    {
+        // backward-compat: treat scalar choDefaultProfileId as a single-element active list
+        out.choActiveProfileIds = {yaml::GetInt32(handover, "choDefaultProfileId", 0, std::nullopt)};
+    }
 
-    auto events = ReadHandoverEvents(handover, defaults, basePath);
-    if (!events.empty())
-        out.events = std::move(events);
+    out.eventsById = ReadHandoverEvents(handover, defaults, basePath);
 
-    auto candidateProfiles = ReadChoCandidateProfiles(handover, defaults, basePath);
+    if (yaml::HasField(handover, "basicHandoverMeasIdentities"))
+    {
+        auto node = handover["basicHandoverMeasIdentities"];
+        if (!node.IsSequence())
+            throw std::runtime_error(basePath + ".basicHandoverMeasIdentities must be a YAML sequence");
+        for (const auto &elem : node)
+            out.basicHandoverMeasIdentities.push_back(elem.as<int>());
+    }
+
+    auto candidateProfiles = ReadChoCandidateProfiles(handover, basePath);
     if (!candidateProfiles.empty())
         out.candidateProfiles = std::move(candidateProfiles);
 }

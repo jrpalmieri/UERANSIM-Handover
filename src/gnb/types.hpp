@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <map>
 #include <set>
 #include <string>
 #include <mutex>
@@ -238,6 +239,16 @@ enum UE_RRC_CONNECTION_STATE {
     RRC_CONNECTED
 };
 
+struct ChoPreparationState
+{
+    bool pending{false};
+    std::vector<int> candidatePcis{};
+    std::unordered_map<int, int> candidateScores{};
+    std::vector<long> measIds{};
+    int triggerTimerSec{};
+    int distanceThreshold{};
+};
+
 struct RrcUeContext
 {
 
@@ -275,7 +286,7 @@ struct RrcUeContext
         long reportConfigId{};
         nr::rrc::common::HandoverEventType eventKind{};
         std::string eventType{};
-        long choProfileId{};
+        long choProfileId{-1};
     };
 
     // list of measurement identities currently configured for this UE, along with their associated object and report config IDs and event types
@@ -308,18 +319,11 @@ struct RrcUeContext
     int lastMeasReportRsrp{-140};
     int lastServingRsrp{-140};
     bool handoverDecisionPending{};
-    bool choPreparationPending{};
-    
-    /* CHO State Tracking */
 
-    std::vector<int> choPreparationCandidatePcis{};
-    std::unordered_map<int, int> choPreparationCandidateScores{};
-    std::vector<long> choPreparationMeasIds{};
+    /* CHO State Tracking — one ChoPreparationState entry per active profile index */
+
+    std::unordered_map<int, ChoPreparationState> choPreparations{};
     std::unordered_set<long> usedCondReconfigIds{};
-    std::optional<long> choPreparationCandidateProfileId{};
-    int choPreparationTriggerTimerSec{};
-    int choPreparationDistanceThreshold{};
-    ASN_RRC_MeasConfig* choPreparationMeasConfig{};
     
     explicit RrcUeContext(const int cRnti) : cRnti(cRnti)
     {
@@ -582,8 +586,9 @@ struct GnbChoCandidateProfileConfig
 {
     int candidateProfileId{0};
     bool targetCellCalculated{true};
-    std::optional<int64_t> targetCellId{};
-    std::vector<nr::rrc::common::ReportConfigEvent> conditions{};
+    std::vector<int64_t> targetCellIds{};
+    int maxTargets{1};
+    std::vector<int> conditionEventIds{};
 };
 
 
@@ -601,8 +606,9 @@ struct GnbXnConfig
 struct GnbHandoverConfig
 {
     bool choEnabled{false};
-    int choDefaultProfileId{0};
-    std::vector<nr::rrc::common::ReportConfigEvent> events{};
+    std::vector<int> choActiveProfileIds{};
+    std::map<int, nr::rrc::common::ReportConfigEvent> eventsById{};
+    std::vector<int> basicHandoverMeasIdentities{};
     std::vector<GnbChoCandidateProfileConfig> candidateProfiles{};
     GnbXnConfig xn{};
 };

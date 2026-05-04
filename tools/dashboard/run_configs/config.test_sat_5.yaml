@@ -1,4 +1,6 @@
-demo_name: 'Sat Simulation using eventT1'
+demo_name: '5-Sat Simulation using CHO eventT1'
+
+command_cli: ./build/nr-cli
 
 amf:
   host: 172.22.0.10
@@ -64,12 +66,30 @@ gnb:
     args: []
   - node: GNB2
     nci: '0x000000022'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
-    config: ./tools/dashboard/configs/gnb2_sat.yaml
+    config: ./tools/dashboard/configs/gnb2_sat_T1.yaml
     gnb_log_file: gnb2_%i.log
     gnb_host_sat_name: 'SYNTH-1-02'
     args: []
+  - node: GNB3
+    nci: '0x000000033'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
+    config: ./tools/dashboard/configs/gnb3_sat_T1.yaml
+    gnb_log_file: gnb3_%i.log
+    gnb_host_sat_name: 'SYNTH-1-03'
+    args: []
+  - node: GNB4
+    nci: '0x000000044'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
+    config: ./tools/dashboard/configs/gnb4_sat_T1.yaml
+    gnb_log_file: gnb4_%i.log
+    gnb_host_sat_name: 'SYNTH-1-04'
+    args: []
+  - node: GNB5
+    nci: '0x000000055'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
+    config: ./tools/dashboard/configs/gnb5_sat.yaml
+    gnb_log_file: gnb5_%i.log
+    gnb_host_sat_name: 'SYNTH-1-05'
+    args: []
 
-command_cli: ./build/nr-cli
+
 
 user_plane_test:
   enabled: true
@@ -106,15 +126,15 @@ pcap:
     sudo_non_interactive: true
 
 run:
-  stop_after_sec: 60
-  iterations: 5
+  stop_after_sec: 300
+  iterations: 1
   reset_core: true
   reset_command: ./tools/reset_core.sh
   reset_command_args: [--save-logs=%i]
   run_log: demorun.log
   logging:
     log_dir: ./tools/dashboard/logs
-    run_log_dir_name: demo-sat-%u-%t
+    run_log_dir_name: demo-sat5-%u-%t
 
 satellite:
   tle_source_file: ./tle_data/synth_three_plane.txt
@@ -145,7 +165,7 @@ satellite:
   #   line1: '1 99995U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0002'
   #   line2: '2 99995  45.0000 280.4606 0001000   0.0000  10.0000 15.00000000    17'
 
-script:
+# script:
 # send sat TLEs
 #- time: 1
   #commands:
@@ -185,8 +205,11 @@ script:
 #     command: sat-time
 #     args: ['run']
 
-- time: 20
-  commands:
-  - node: GNB2
-    command: set-rsrp
-    args: [-90]
+# - time: 20
+#   commands:
+#   - node: GNB2
+#     command: set-rsrp
+#     args: [-90]
+#   - node: GNB3
+#     command: set-rsrp
+#     args: [-90]

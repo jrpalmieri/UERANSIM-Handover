@@ -239,7 +239,7 @@ class UEStateMachine:
             elif msg == "rrc_reconfig" and downlink:
                 pass  # measurement config update — no state change
 
-            elif msg == "rrc_release" and downlink:
+            elif msg == "rrc_release" and downlink and pkt.src_ip == self.serving_gnb:
                 self.state = _IDLE
 
         elif self.state == _POTENTIAL_HO:

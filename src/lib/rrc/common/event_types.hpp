@@ -216,6 +216,7 @@ class ReportConfigEvent
 {
     public:
 
+        int eventId{0};       // config-file event ID (set at load time, used as map key)
         int reportConfigId{0};
 
         nr::rrc::common::HandoverEventType eventKind{nr::rrc::common::HandoverEventType::UNKNOWN};
@@ -381,6 +382,7 @@ class ReportConfigEvent
             };
 
             return Json::Obj({
+                {"eventId", eventId},
                 {"eventKind", HandoverEventTypeToString(eventKind)},
                 {"eventType", eventType},
                 {"ttt", std::string(E_TTT_ms_to_string(ttt))},

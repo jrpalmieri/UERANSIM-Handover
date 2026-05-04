@@ -142,76 +142,38 @@ static int normalizeCrntiForRrc(int crnti)
 }
 
 
-/**
- * @brief Compute the conditional-handover trigger conditions for the serving gNB.
- *
- */
-void GnbRrcTask::calculateTriggerConditions(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, const int ownPci, RrcUeContext *ue)
-{
 
-    // if in NTN mode, we use the TLE of our own satellite to calculate the trigger conditions.
-    if (m_config->ntn.ntnEnabled)
-    {
-        satHandoverTriggerCalc(dynTriggerParams, ownPci, ue);
-
-        return;
-    }
-
-    // for non-NTN mode, we use gnb location and a fixed distance threshold to calculate the trigger conditions.
-
-    // for timer, use config values as deltas, add to current time
-    dynTriggerParams.condT1_thresholdSec +=  utils::CurrentTimeMillis() / 1000;
-
-    // for distance use values set in config, which are already populated 
-
-    m_logger->debug("UE[%d]: Calculating dynamic trigger conditions for non-NTN. T_thresh=[%llu], " 
-        "D1_thresh=[%d], D1_ref=[%.4f,%.4f], D2_thresh=[%d], D2_ref=[%.4f,%.4f]",
-                        ue->ueId, dynTriggerParams.condT1_thresholdSec,
-                        dynTriggerParams.condD1_distanceThresholdFromReference1,
-                        dynTriggerParams.condD1_referenceLocation1.latitudeDeg, dynTriggerParams.condD1_referenceLocation1.longitudeDeg,
-                        dynTriggerParams.condD1_distanceThresholdFromReference2,
-                        dynTriggerParams.condD1_referenceLocation2.latitudeDeg, dynTriggerParams.condD1_referenceLocation2.longitudeDeg);
-
-    return;
-
-}
-
-
-static int selectChoCandidateProfile(
+static std::vector<int> getActiveChoProfileIndices(
     const GnbHandoverConfig &config, Logger *logger)
 {
+    std::vector<int> result{};
     if (!config.choEnabled)
-        return -1;
+        return result;
 
-    // Find the profile whose candidateProfileId matches choDefaultProfileId
-    for (size_t i = 0; i < config.candidateProfiles.size(); ++i)
+    for (int id : config.choActiveProfileIds)
     {
-        if (config.candidateProfiles[i].candidateProfileId == config.choDefaultProfileId)
-            return static_cast<int>(i);
+        bool found = false;
+        for (size_t i = 0; i < config.candidateProfiles.size(); ++i)
+        {
+            if (config.candidateProfiles[i].candidateProfileId == id)
+            {
+                result.push_back(static_cast<int>(i));
+                found = true;
+                break;
+            }
+        }
+        if (!found && logger)
+            logger->warn("CHO active profile id=%d not found in candidateProfiles; skipping.", id);
     }
-    if (!config.candidateProfiles.empty()) {
-        if (logger)
-            logger->warn("CHO profile with candidateProfileId=%d not found; using first profile.", config.choDefaultProfileId);
-        return 0;
-    }
-    if (logger)
-        logger->warn("No CHO candidate profiles defined.");
-    return -1;
+
+    if (result.empty() && logger)
+        logger->warn("No active CHO profiles resolved from choActiveProfileIds.");
+
+    return result;
 }
 
 
 
-
-static const ReportConfigEvent *findEventConfigByKind(
-    const GnbHandoverConfig &config, HandoverEventType eventType)
-{
-    for (const auto &event : config.events)
-    {
-        if (event.eventKind == eventType)
-            return &event;
-    }
-    return nullptr;
-}
 
 
 static const GnbNeighborConfig *findNeighborByNci(const std::vector<GnbNeighborConfig> &neighborList, int64_t nci)
@@ -772,19 +734,15 @@ void clearMeasConfig(RrcUeContext *ue)
  * the Conditional Handover ASN types.  Otherwise, a default MeasConfig will be created 
  * using normal "eventTriggered" reporting events.
  * 
- * @param ue The UE RRC context
- * @param selectedEvents The list of selected handover events
- * @param dynTriggerParams allows the caller to override certain event trigger parameters when building the event.
- * @param isChoRequest if true, creates a MeasConfig suitable for a Conditional Handover procedure, using the CHO-specific ASN types.  If false, creates a default MeasConfig using normal "eventTriggered" reporting events.
- * @param choProfileId if isChoRequest is true, the CHO candidate profile ID to use when building the CHO-specific MeasConfig.  Ignored if isChoRequest is false.
+ * @param[in/out] mc Output pointer to the created MeasConfig.
+ * @param[in] ue The UE RRC context
+ * @param[in] taggedEvents The list of selected handover events
  * @return ASN_RRC_MeasConfig* 
  */
 std::vector<long> GnbRrcTask::createMeasConfig(
     ASN_RRC_MeasConfig *&mc,
     RrcUeContext *ue,
-    std::vector<ReportConfigEvent> selectedEvents,
-    const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
-    long choProfileId
+    std::vector<std::pair<ReportConfigEvent, int>> taggedEvents
 )
 {
     std::vector<long> usedMeasIds{};
@@ -835,9 +793,10 @@ std::vector<long> GnbRrcTask::createMeasConfig(
     mc->reportConfigToAddModList = asn::New<ASN_RRC_ReportConfigToAddModList>();
     mc->measIdToAddModList = asn::New<ASN_RRC_MeasIdToAddModList>();
     
-    for (size_t i = 0; i < selectedEvents.size(); i++)
+    for (size_t i = 0; i < taggedEvents.size(); i++)
     {
-        const auto &event = selectedEvents[i];
+        const auto &event = taggedEvents[i].first;
+        const int eventChoProfileId = taggedEvents[i].second;
         bool cho_event = !IsMeasurementEvent(event.eventKind);
         const auto eventKind = event.eventKind;
         const auto eventType = nr::rrc::common::HandoverEventTypeToString(eventKind);
@@ -939,24 +898,23 @@ std::vector<long> GnbRrcTask::createMeasConfig(
 
                 auto *d1 = et->eventId.choice.eventD1_r17;
 
-                // use dynamic trigger params for D1 since distance values can change with movement
                 d1->distanceThreshFromReference1_r17 =
-                    distanceThresholdToASNValue(dynTriggerParams.d1_distanceThresholdFromReference1);
+                    distanceThresholdToASNValue(event.d1_distanceThreshFromReference1);
                 d1->distanceThreshFromReference2_r17 =
-                    distanceThresholdToASNValue(dynTriggerParams.d1_distanceThresholdFromReference2);
+                    distanceThresholdToASNValue(event.d1_distanceThreshFromReference2);
 
-                referenceLocationToAsnValue(dynTriggerParams.d1_referenceLocation1, d1->referenceLocation1_r17);
-                referenceLocationToAsnValue(dynTriggerParams.d1_referenceLocation2, d1->referenceLocation2_r17);
-                d1->hysteresisLocation_r17 = nr::rrc::common::hysteresisLocationToASNValue(dynTriggerParams.d1_hysteresisLocation);
+                referenceLocationToAsnValue(event.d1_referenceLocation1, d1->referenceLocation1_r17);
+                referenceLocationToAsnValue(event.d1_referenceLocation2, d1->referenceLocation2_r17);
+                d1->hysteresisLocation_r17 = nr::rrc::common::hysteresisLocationToASNValue(event.d1_hysteresisLocation);
 
                 d1->reportOnLeave_r17 = true;
                 d1->timeToTrigger = tttMsToASNValue(event.ttt);
 
-                reportConfig.d1_distanceThreshFromReference1 = dynTriggerParams.d1_distanceThresholdFromReference1;
-                reportConfig.d1_distanceThreshFromReference2 = dynTriggerParams.d1_distanceThresholdFromReference2;
-                reportConfig.d1_referenceLocation1 = dynTriggerParams.d1_referenceLocation1;
-                reportConfig.d1_referenceLocation2 = dynTriggerParams.d1_referenceLocation2;
-                reportConfig.d1_hysteresisLocation = dynTriggerParams.d1_hysteresisLocation;
+                reportConfig.d1_distanceThreshFromReference1 = event.d1_distanceThreshFromReference1;
+                reportConfig.d1_distanceThreshFromReference2 = event.d1_distanceThreshFromReference2;
+                reportConfig.d1_referenceLocation1 = event.d1_referenceLocation1;
+                reportConfig.d1_referenceLocation2 = event.d1_referenceLocation2;
+                reportConfig.d1_hysteresisLocation = event.d1_hysteresisLocation;
                 reportConfig.ttt = event.ttt;
 
                 m_logger->debug("UE[%d] MeasConfig measId=%ld event=D1 distThresh1=%dm distThresh2=%dm "
@@ -964,9 +922,9 @@ std::vector<long> GnbRrcTask::createMeasConfig(
                                 "ttt=%s",
                                 ue->ueId,
                                 measId,
-                                dynTriggerParams.d1_distanceThresholdFromReference1,
-                                dynTriggerParams.d1_distanceThresholdFromReference2,
-                                dynTriggerParams.d1_hysteresisLocation,
+                                reportConfig.d1_distanceThreshFromReference1,
+                                reportConfig.d1_distanceThreshFromReference2,
+                                reportConfig.d1_hysteresisLocation,
                                 nr::rrc::common::E_TTT_ms_to_string(event.ttt));
             }
             else 
@@ -1022,20 +980,20 @@ std::vector<long> GnbRrcTask::createMeasConfig(
                 auto *d1 = ctc->condEventId.choice.condEventD1_r17;
 
                 // set trigger params from provided Trigger object
-                d1->distanceThreshFromReference1_r17 = distanceThresholdToASNValue(dynTriggerParams.condD1_distanceThresholdFromReference1);
-                d1->distanceThreshFromReference2_r17 = distanceThresholdToASNValue(dynTriggerParams.condD1_distanceThresholdFromReference2);
-                referenceLocationToAsnValue(dynTriggerParams.condD1_referenceLocation1, d1->referenceLocation1_r17);
-                referenceLocationToAsnValue(dynTriggerParams.condD1_referenceLocation2, d1->referenceLocation2_r17);
-                d1->hysteresisLocation_r17 = nr::rrc::common::hysteresisLocationToASNValue(dynTriggerParams.condD1_hysteresisLocation);
+                d1->distanceThreshFromReference1_r17 = distanceThresholdToASNValue(event.condD1_distanceThreshFromReference1);
+                d1->distanceThreshFromReference2_r17 = distanceThresholdToASNValue(event.condD1_distanceThreshFromReference2);
+                referenceLocationToAsnValue(event.condD1_referenceLocation1, d1->referenceLocation1_r17);
+                referenceLocationToAsnValue(event.condD1_referenceLocation2, d1->referenceLocation2_r17);
+                d1->hysteresisLocation_r17 = nr::rrc::common::hysteresisLocationToASNValue(event.condD1_hysteresisLocation);
 
                 // use config for ttt
                 d1->timeToTrigger_r17 = tttMsToASNValue(event.ttt);
 
-                reportConfig.condD1_distanceThreshFromReference1 = dynTriggerParams.condD1_distanceThresholdFromReference1;
-                reportConfig.condD1_distanceThreshFromReference2 = dynTriggerParams.condD1_distanceThresholdFromReference2;
-                reportConfig.condD1_referenceLocation1 = dynTriggerParams.condD1_referenceLocation1;
-                reportConfig.condD1_referenceLocation2 = dynTriggerParams.condD1_referenceLocation2;
-                reportConfig.condD1_hysteresisLocation = dynTriggerParams.condD1_hysteresisLocation;
+                reportConfig.condD1_distanceThreshFromReference1 = event.condD1_distanceThreshFromReference1;
+                reportConfig.condD1_distanceThreshFromReference2 = event.condD1_distanceThreshFromReference2;
+                reportConfig.condD1_referenceLocation1 = event.condD1_referenceLocation1;
+                reportConfig.condD1_referenceLocation2 = event.condD1_referenceLocation2;
+                reportConfig.condD1_hysteresisLocation = event.condD1_hysteresisLocation;
                 reportConfig.ttt = event.ttt;
                 
                 m_logger->debug("UE[%d] MeasConfig measId=%ld event=condEventD1 distThresh1=%dm distThresh2=%dm "
@@ -1043,9 +1001,9 @@ std::vector<long> GnbRrcTask::createMeasConfig(
                                 "ttt=%s",
                                 ue->ueId,
                                 measId,
-                                dynTriggerParams.condD1_distanceThresholdFromReference1,
-                                dynTriggerParams.condD1_distanceThresholdFromReference2,
-                                dynTriggerParams.condD1_hysteresisLocation,
+                                reportConfig.condD1_distanceThreshFromReference1,
+                                reportConfig.condD1_distanceThreshFromReference2,
+                                reportConfig.condD1_hysteresisLocation,
                                 nr::rrc::common::E_TTT_ms_to_string(event.ttt));
             }
             else if (eventKind == HandoverEventType::CondT1)
@@ -1055,14 +1013,14 @@ std::vector<long> GnbRrcTask::createMeasConfig(
 
                 auto *t1 = ctc->condEventId.choice.condEventT1_r17;
                 // set trigger params from provided Trigger object
-                t1->t1_Threshold_r17 = nr::rrc::common::t1ThresholdToASNValue(dynTriggerParams.condT1_thresholdSec);
-                t1->duration_r17 = nr::rrc::common::durationToASNValue(dynTriggerParams.condT1_durationSec);
+                t1->t1_Threshold_r17 = nr::rrc::common::t1ThresholdToASNValue(event.condT1_thresholdSecTS);
+                t1->duration_r17 = nr::rrc::common::durationToASNValue(event.condT1_durationSec);
 
-                reportConfig.condT1_thresholdSecTS = dynTriggerParams.condT1_thresholdSec;
-                reportConfig.condT1_durationSec = dynTriggerParams.condT1_durationSec;
+                reportConfig.condT1_thresholdSecTS = event.condT1_thresholdSecTS;
+                reportConfig.condT1_durationSec = event.condT1_durationSec;
 
                 m_logger->debug("UE[%d] MeasConfig measId=%ld event=condEventT1 threshold=%dsec duration=%dsec",
-                                ue->ueId, measId, dynTriggerParams.condT1_thresholdSec, dynTriggerParams.condT1_durationSec);
+                                ue->ueId, measId, reportConfig.condT1_thresholdSecTS, reportConfig.condT1_durationSec);
             }
             else
             {
@@ -1087,7 +1045,7 @@ std::vector<long> GnbRrcTask::createMeasConfig(
 
         // update ue's MeasConfig trackers
         ue->measIdentities[measId] = {measId, DUMMY_MEAS_OBJECT_ID, reportConfigId, eventKind, eventType,
-                                      cho_event ? choProfileId : 0};
+                                      cho_event ? static_cast<long>(eventChoProfileId) : -1L};
 
         usedMeasIds.push_back(measId);
 
@@ -1122,64 +1080,96 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
         clearMeasConfig(ue);
     }
 
-    // find all the events that need to be included in the reportConfig
-
-    auto selectedEvents = m_config->handover.events;
-    if (selectedEvents.empty())
+    // Resolve basic (non-CHO) measurement events from basicHandoverMeasIdentities
+    std::vector<ReportConfigEvent> basicEvents{};
+    for (int evId : m_config->handover.basicHandoverMeasIdentities)
     {
-        m_logger->warn("UE[%d] No non-CHO handover events configured", ue->ueId);
-       
+        auto it = m_config->handover.eventsById.find(evId);
+        if (it == m_config->handover.eventsById.end())
+        {
+            m_logger->warn("UE[%d] basicHandoverMeasIdentities: eventId=%d not found in events; skipping", ueId, evId);
+            continue;
+        }
+        if (!IsMeasurementEvent(it->second.eventKind))
+        {
+            m_logger->warn("UE[%d] basicHandoverMeasIdentities: eventId=%d type=%s is not a measurement event; skipping",
+                           ueId, evId, it->second.eventStr());
+            continue;
+        }
+        basicEvents.push_back(it->second);
     }
+    if (basicEvents.empty())
+        m_logger->warn("UE[%d] No basic handover measurement events configured", ue->ueId);
 
-    // check for CHO enabled, and add CHO events to the event list
+    // Resolve CHO condition events from active profile conditionEventIds
     bool do_cho = m_config->handover.choEnabled;
-    int choProfileIdx = -1;
+    std::vector<int> activeChoProfileIndices{};
     if (do_cho)
     {
-        choProfileIdx = selectChoCandidateProfile(m_config->handover, m_logger.get());
-        if (choProfileIdx < 0)
+        activeChoProfileIndices = getActiveChoProfileIndices(m_config->handover, m_logger.get());
+        if (activeChoProfileIndices.empty())
         {
-            m_logger->warn("UE[%d] CHO enabled but no CHO candidate profiles index found; skipping", 
-                        ueId);
+            m_logger->warn("UE[%d] CHO enabled but no active CHO profiles resolved; skipping CHO", ueId);
             do_cho = false;
-        }
-
-        // get the conditiuons
-        auto choProfile = m_config->handover.candidateProfiles[choProfileIdx];
-        if (choProfile.conditions.empty())
-        {
-            m_logger->warn("UE[%d] CHO enabled but selected profile has no events; skipping CHO", 
-                        ueId);
-            do_cho = false;
-        }
-        else
-        {
-            // add the CHO events to the list of events to configure in the MeasConfig
-            selectedEvents.insert(selectedEvents.end(), choProfile.conditions.begin(), choProfile.conditions.end());
         }
     }
 
-    if (selectedEvents.empty())
+    // Build tagged event list: basic events use profile index -1; each CHO profile's
+    // conditions carry that profile's index so measIdentities can be keyed per-profile.
+    std::vector<std::pair<ReportConfigEvent, int>> taggedEvents{};
+    for (const auto &ev : basicEvents)
+        taggedEvents.emplace_back(ev, -1);
+    if (do_cho)
     {
-        m_logger->warn("UE[%d] No handover events to configure after checking CHO conditions, exiting MeasConfig",
-             ue->ueId);
+        for (int profileIdx : activeChoProfileIndices)
+        {
+            const auto &choProfile = m_config->handover.candidateProfiles[profileIdx];
+            if (choProfile.conditionEventIds.empty())
+            {
+                m_logger->warn("UE[%d] CHO profile idx=%d has no condition event IDs; skipping it", ueId, profileIdx);
+                continue;
+            }
+            for (int evId : choProfile.conditionEventIds)
+            {
+                auto it = m_config->handover.eventsById.find(evId);
+                if (it == m_config->handover.eventsById.end())
+                {
+                    m_logger->warn("UE[%d] CHO profile idx=%d: conditionEventId=%d not found in events; skipping",
+                                   ueId, profileIdx, evId);
+                    continue;
+                }
+                if (!IsConditionalEvent(it->second.eventKind))
+                {
+                    m_logger->warn("UE[%d] CHO profile idx=%d: conditionEventId=%d type=%s is not a conditional event; skipping",
+                                   ueId, profileIdx, evId, it->second.eventStr());
+                    continue;
+                }
+                taggedEvents.emplace_back(it->second, profileIdx);
+            }
+        }
+    }
+
+    if (taggedEvents.empty())
+    {
+        m_logger->warn("UE[%d] No handover events to configure after resolving IDs, exiting MeasConfig", ue->ueId);
         return;
     }
 
     bool need_location = false;
     bool need_time = false;
     std::string eventList{};
-    for (size_t i = 0; i < selectedEvents.size(); i++)
+    for (size_t i = 0; i < taggedEvents.size(); i++)
     {
-        if (selectedEvents[i].eventKind == HandoverEventType::CondD1 || selectedEvents[i].eventKind == HandoverEventType::D1)
+        const auto &ev = taggedEvents[i].first;
+        if (ev.eventKind == HandoverEventType::CondD1 || ev.eventKind == HandoverEventType::D1)
             need_location = true;
 
-        if (selectedEvents[i].eventKind == HandoverEventType::CondT1)
+        if (ev.eventKind == HandoverEventType::CondT1)
             need_time = true;
 
         if (i != 0)
             eventList += ",";
-        eventList += nr::rrc::common::HandoverEventTypeToString(selectedEvents[i].eventKind);
+        eventList += std::to_string(ev.eventId) + "-" + nr::rrc::common::HandoverEventTypeToString(ev.eventKind);
     }
 
     m_logger->info("UE[%d] Creating MeasConfig, eventType(s)=%s", ue->ueId, eventList.c_str());
@@ -1192,37 +1182,71 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
 
     const int ownPci = cons::getPciFromNci(m_config->nci);
 
-    // create the dynamic trigger parameters object and load with config values
-    //   as defaults
     nr::rrc::common::DynamicEventTriggerParams dynTriggerParams{};
-    for (const auto &event : selectedEvents)
+    // only run the dynamic parameters if we need location of time triggers
+    //   and in NTN mode
+    if ((need_location || need_time) && m_config->ntn.ntnEnabled)
     {
-        if (event.eventKind == HandoverEventType::D1)
+        satHandoverTriggerCalc(dynTriggerParams, ownPci, ue);
+    }
+
+    // update each event with calculated values as needed
+    for (auto &[event, profileIdx] : taggedEvents)
+    {
+        switch (event.eventKind)
         {
-            dynTriggerParams.d1_distanceThresholdFromReference1 = event.d1_distanceThreshFromReference1;
-            dynTriggerParams.d1_distanceThresholdFromReference2 = event.d1_distanceThreshFromReference2;
-            dynTriggerParams.d1_referenceLocation1 = event.d1_referenceLocation1;
-            dynTriggerParams.d1_referenceLocation2 = event.d1_referenceLocation2;
-            dynTriggerParams.d1_hysteresisLocation = event.d1_hysteresisLocation;
-        }
-        else if (event.eventKind == HandoverEventType::CondD1)
-        {
-            dynTriggerParams.condD1_distanceThresholdFromReference1 = event.condD1_distanceThreshFromReference1;
-            dynTriggerParams.condD1_distanceThresholdFromReference2 = event.condD1_distanceThreshFromReference2;
-            dynTriggerParams.condD1_referenceLocation1 = event.condD1_referenceLocation1;
-            dynTriggerParams.condD1_referenceLocation2 = event.condD1_referenceLocation2;
-            dynTriggerParams.condD1_hysteresisLocation = event.condD1_hysteresisLocation;
-        }
-        else if (event.eventKind == HandoverEventType::CondT1)
-        {
-            dynTriggerParams.condT1_thresholdSec = event.condT1_thresholdSecTS;
-            dynTriggerParams.condT1_durationSec = event.condT1_durationSec;
+            case HandoverEventType::A2:{
+                break;
+            }
+            case HandoverEventType::A3: {
+                break;
+            }
+            case HandoverEventType::A5: {
+                break;
+            }
+            case HandoverEventType::D1: {
+                // in satellite mode, use the calculated distance values
+                if (m_config->ntn.ntnEnabled) {
+                    event.d1_distanceThreshFromReference1 = dynTriggerParams.d1_distanceThresholdFromReference1;
+                    event.d1_distanceThreshFromReference2 = dynTriggerParams.d1_distanceThresholdFromReference2;
+                    event.d1_referenceLocation1 = dynTriggerParams.d1_referenceLocation1;
+                    event.d1_referenceLocation2 = dynTriggerParams.d1_referenceLocation2;
+                    event.d1_hysteresisLocation = dynTriggerParams.d1_hysteresisLocation;
+                }
+                // in terrestrial mode, just use event's provided values
+                break;
+            }
+            case HandoverEventType::CondA3:{
+                break;
+            }
+            case HandoverEventType::CondD1: {
+                // in NTN-mode, use calculated values
+                if (m_config->ntn.ntnEnabled) {
+                    event.condD1_distanceThreshFromReference1 = dynTriggerParams.condD1_distanceThresholdFromReference1;
+                    event.condD1_distanceThreshFromReference2 = dynTriggerParams.condD1_distanceThresholdFromReference2;
+                    event.condD1_referenceLocation1 = dynTriggerParams.condD1_referenceLocation1;
+                    event.condD1_referenceLocation2 = dynTriggerParams.condD1_referenceLocation2;
+                    event.condD1_hysteresisLocation = dynTriggerParams.condD1_hysteresisLocation;
+                }
+                // in terrestrial mode, just use event's provided values
+                break;
+            }
+            case HandoverEventType::CondT1:{
+                // in NTN-mode, use calculated values
+                if (m_config->ntn.ntnEnabled) {
+                    event.condT1_thresholdSecTS = dynTriggerParams.condT1_thresholdSec;
+                    event.condT1_durationSec = dynTriggerParams.condT1_durationSec;
+                }
+                // in terrestrial mode, use event value as offset to current time
+                else {
+                    // for timer, use config values as deltas, add to current time
+                    event.condT1_thresholdSecTS += utils::CurrentTimeMillis() / 1000;
+                }
+                break;
+            }
+
         }
     }
-    
-    // only run the dynamic parameters if we need location of time triggers
-    if (need_location || need_time)
-        calculateTriggerConditions(dynTriggerParams, ownPci, ue);
 
     // Build RRCReconfiguration with measConfig
     auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
@@ -1249,12 +1273,12 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
         ASN_RRC_RRCReconfiguration_v1530_IEs__fullConfig_true;
 
     clearMeasConfig(ue);
-    
+
     // Build MeasConfig
     ASN_RRC_MeasConfig *mc = nullptr;
     auto *mc_saved = asn::New<ASN_RRC_MeasConfig>();
 
-    auto usedMeasIds = createMeasConfig(mc, ue, selectedEvents, dynTriggerParams, choProfileIdx);
+    auto usedMeasIds = createMeasConfig(mc, ue, taggedEvents);
     ies->measConfig = mc;
     
     if (!asn::DeepCopy(asn_DEF_ASN_RRC_MeasConfig, *mc, mc_saved))
@@ -1277,9 +1301,12 @@ void GnbRrcTask::sendMeasConfig(int ueId, bool forceResend)
     m_logger->info("UE[%d] RRCReconfiguration sent with MeasConfig (%zu measId entries), txId=%ld",
                    ue->ueId, usedMeasIds.size(), txId);
 
-    // if conditional handover enabled, see if we need to generate a CHO RRC message
+    // if conditional handover enabled, kick off CHO preparation for each active profile
     if (do_cho)
-        processConditionalHandover(ue->ueId, dynTriggerParams, choProfileIdx);
+    {
+        for (int profileIdx : activeChoProfileIndices)
+            processConditionalHandover(ue->ueId, dynTriggerParams, profileIdx);
+    }
 }
 
 /**
@@ -1420,13 +1447,13 @@ void GnbRrcTask::processConditionalHandover(int ueId, const nr::rrc::common::Dyn
     if (!ue)
         return;
 
-    // if we're still waiting to complete a prior CHO process, don't start another one
-    if (ue->choPreparationPending)
+    // per-profile pending guard: don't restart preparation for a profile already in flight
+    auto &prepState = ue->choPreparations[choProfileIdx];
+    if (prepState.pending)
         return;
-    
+
     const int ownPci = cons::getPciFromNci(m_config->nci);
-    
-    // identify neighbor cells that are possible handover targets.
+    const auto &profile = m_config->handover.candidateProfiles[choProfileIdx];
 
     // Take a snapshot of the runtime neighbor store once; all pointer lookups below
     // remain valid for the lifetime of this stack frame.
@@ -1448,77 +1475,75 @@ void GnbRrcTask::processConditionalHandover(int ueId, const nr::rrc::common::Dyn
     //   (higher score = higher priority = longer transit time above theta_e)
     auto prioritizedNeighbors = prioritizeNeighbors(neighborSnapshot, ownPci, ueEcefPos, dynTriggerParams.condT1_thresholdSec);
 
-    // If the profile has a specific targetCellId, filter to that cell.
-    std::optional<int64_t> explicitTargetPci{};
-    if (m_config->handover.candidateProfiles[choProfileIdx].targetCellId.has_value())
-        explicitTargetPci = cons::getPciFromNci(m_config->handover.candidateProfiles[choProfileIdx].targetCellId.value());
-
-    if (explicitTargetPci.has_value())
+    // Build the candidate list from explicit targetCellIds or from the calculated priority list.
+    if (!profile.targetCellCalculated && !profile.targetCellIds.empty())
     {
-        const auto *targetNeighbor = findNeighborByNci(neighborSnapshot, *explicitTargetPci);
-        if (!targetNeighbor)
-        {
-            m_logger->warn("UE[%d] CHO prepare skipped: targetCellId=0x%llx not in neighborList",
-                           ueId,
-                           static_cast<long long>(*explicitTargetPci));
-            return;
-        }
-
+        // Explicit mode: use the listed NCIs in order, capped to maxTargets.
         prioritizedNeighbors.clear();
-        prioritizedNeighbors.emplace_back(targetNeighbor, 1);
+        int added = 0;
+        for (int64_t nci : profile.targetCellIds)
+        {
+            if (added >= profile.maxTargets)
+                break;
+            int64_t pci = cons::getPciFromNci(nci);
+            const auto *nbr = findNeighborByNci(neighborSnapshot, pci);
+            if (!nbr)
+            {
+                m_logger->warn("UE[%d] CHO profile %d: targetCellId=0x%llx not in neighborList; skipping",
+                               ueId, choProfileIdx, static_cast<long long>(nci));
+                continue;
+            }
+            prioritizedNeighbors.emplace_back(nbr, 1);
+            ++added;
+        }
+    }
+    else
+    {
+        // Calculated mode: cap the prioritized list to maxTargets.
+        if (profile.maxTargets > 0 && static_cast<int>(prioritizedNeighbors.size()) > profile.maxTargets)
+            prioritizedNeighbors.erase(
+                prioritizedNeighbors.begin() + profile.maxTargets, prioritizedNeighbors.end());
     }
 
     if (prioritizedNeighbors.empty())
     {
-        m_logger->warn("UE[%d] CHO prepare skipped: neighbor list is empty", ueId);
+        m_logger->warn("UE[%d] CHO profile %d: no valid target neighbors; skipping preparation",
+                       ueId, choProfileIdx);
         return;
     }
 
-    // go for CHO message preparation - set the pending flag
-    
-    ue->choPreparationPending = true;
-    ue->choPreparationCandidateProfileId = choProfileIdx;
-    
-    // Step 3 - store the CHO target PCIs in UE RRC context
+    // mark this profile's preparation as pending and store candidates
+    prepState.pending = true;
+    prepState.candidatePcis.clear();
+    prepState.candidateScores.clear();
 
-    ue->choPreparationCandidatePcis.clear();
-    ue->choPreparationCandidateScores.clear();
-    //for (const auto &[neighbor, score] : prioritizedNeighbors)
-    for (const auto n : prioritizedNeighbors)
+    for (const auto &n : prioritizedNeighbors)
     {
         const int pci = n.neighbor->getPci();
-        ue->choPreparationCandidatePcis.push_back(pci);
-        ue->choPreparationCandidateScores[pci] = n.score;
+        prepState.candidatePcis.push_back(pci);
+        prepState.candidateScores[pci] = n.score;
     }
 
-    if (ue->choPreparationCandidatePcis.empty())
+    if (prepState.candidatePcis.empty())
     {
-        ue->choPreparationPending = false;
-        ue->choPreparationMeasIds.clear();
-        ue->choPreparationCandidateScores.clear();
-        ue->choPreparationCandidateProfileId.reset();
-        ue->choPreparationDistanceThreshold = 0;
-        ue->choPreparationTriggerTimerSec = 0;
-        m_logger->warn("UE[%d] CHO prepare skipped: prioritized neighbors have no valid score", ueId);
+        prepState.pending = false;
+        m_logger->warn("UE[%d] CHO profile %d: candidate list empty after filtering; skipping", ueId, choProfileIdx);
         return;
     }
 
-    // loop through MeadIds to extract ones associated with the CHO events, and store those in the 
-    //  UE context for reference when we get the CHO response from NGAP
+    // collect the measIds associated with this profile's CHO conditions
     std::vector<long> usedMeasIds{};
     for (const auto &measIdEntry : ue->measIdentities)
     {
-        if (measIdEntry.second.choProfileId == choProfileIdx)
-        {
+        if (measIdEntry.second.choProfileId == static_cast<long>(choProfileIdx))
             usedMeasIds.push_back(measIdEntry.first);
-        }
     }
-    ue->choPreparationMeasIds = usedMeasIds;
+    prepState.measIds = usedMeasIds;
 
     // Send handover required to NGAP with CHO preparation flag for each candidate,
     // so NGAP can prepare each target gNB and reply with CHO commands independently.
 
-    for (int targetPci : ue->choPreparationCandidatePcis)
+    for (int targetPci : prepState.candidatePcis)
     {
         auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_REQUIRED);
         w->ueId = ue->ueId;
@@ -1529,19 +1554,20 @@ void GnbRrcTask::processConditionalHandover(int ueId, const nr::rrc::common::Dyn
     }
 
     std::string measIdsStr;
-    for (size_t i = 0; i < ue->choPreparationMeasIds.size(); ++i) {
+    for (size_t i = 0; i < prepState.measIds.size(); ++i) {
         if (i > 0) measIdsStr += ", ";
-        measIdsStr += std::to_string(ue->choPreparationMeasIds[i]);
+        measIdsStr += std::to_string(prepState.measIds[i]);
     }
     std::string pcisStr;
-    for (size_t i = 0; i < ue->choPreparationCandidatePcis.size(); ++i) {
+    for (size_t i = 0; i < prepState.candidatePcis.size(); ++i) {
         if (i > 0) pcisStr += ", ";
-        pcisStr += std::to_string(ue->choPreparationCandidatePcis[i]);
+        pcisStr += std::to_string(prepState.candidatePcis[i]);
     }
-    m_logger->info("UE[%d] CHO prepare send to NGAP: measIds=[%s] total_candidates=%zu targetPCIs=[%s]",
+    m_logger->info("UE[%d] CHO profile %d: prepare sent to NGAP measIds=[%s] total_candidates=%zu targetPCIs=[%s]",
                    ue->ueId,
+                   choProfileIdx,
                    measIdsStr.c_str(),
-                   ue->choPreparationCandidatePcis.size(),
+                   prepState.candidatePcis.size(),
                    pcisStr.c_str()
     );
 }
@@ -1619,26 +1645,27 @@ void GnbRrcTask::handleNgapHandoverFailure(int ueId, int targetPci, bool fromCho
     {
         m_logger->info("UE[%d] Received NGAP Handover Failure for CHO preparation targetPCI=%d", ueId, targetPci);
 
-        // remove targetPci from pending candidate list and if it was the last one, clear the CHO pending state
-        auto itPci = std::find(ue->choPreparationCandidatePcis.begin(),
-                                ue->choPreparationCandidatePcis.end(),
-                                targetPci);
-        if (itPci != ue->choPreparationCandidatePcis.end())
+        // find which profile owns this targetPci
+        int owningProfile = -1;
+        for (auto &[profileIdx, prepState] : ue->choPreparations)
         {
-            ue->choPreparationCandidatePcis.erase(itPci);
-            m_logger->debug("UE[%d] Removed target PCI %d from CHO preparation candidates", ueId, targetPci);
+            auto it = std::find(prepState.candidatePcis.begin(), prepState.candidatePcis.end(), targetPci);
+            if (it != prepState.candidatePcis.end())
+            {
+                prepState.candidatePcis.erase(it);
+                prepState.candidateScores.erase(targetPci);
+                owningProfile = profileIdx;
+                m_logger->debug("UE[%d] Removed targetPCI=%d from CHO profile %d candidates", ueId, targetPci, profileIdx);
+                if (prepState.candidatePcis.empty())
+                {
+                    clearChoPendingState(ue, profileIdx);
+                    m_logger->debug("UE[%d] CHO profile %d: no further candidates; cleared state", ueId, profileIdx);
+                }
+                break;
+            }
         }
-        else {
-            m_logger->warn("UE[%d] Received CHO preparation failure for targetPCI=%d which is not in pending candidate list",
-                            ueId, targetPci);
-        }
-
-        if (ue->choPreparationCandidatePcis.empty())
-        {
-            clearChoPendingState(ue);
-            m_logger->debug("UE[%d] No further CHO preparation candidates; cleared CHO state", ueId);
-
-        }
+        if (owningProfile < 0)
+            m_logger->warn("UE[%d] CHO failure for targetPCI=%d not found in any pending profile", ueId, targetPci);
 
         return;
     }
@@ -1665,21 +1692,11 @@ void GnbRrcTask::handleNgapHandoverFailure(int ueId, int targetPci, bool fromCho
  * 
  * @param ue The ue Rrc context
  */
-void GnbRrcTask::clearChoPendingState(RrcUeContext *ue)
+void GnbRrcTask::clearChoPendingState(RrcUeContext *ue, int profileIdx)
 {
-    ue->choPreparationPending = false;
-    ue->choPreparationMeasIds.clear();
-    ue->choPreparationCandidateScores.clear();
-    ue->choPreparationCandidateProfileId.reset();
-
-    ue->choPreparationCandidatePcis.clear();
-
-    // free measconfig if not sent and clear
-    if (ue->choPreparationMeasConfig)
-    {
-        asn::Free(asn_DEF_ASN_RRC_MeasConfig, ue->choPreparationMeasConfig);
-        ue->choPreparationMeasConfig = nullptr;
-    }
+    auto it = ue->choPreparations.find(profileIdx);
+    if (it != ue->choPreparations.end())
+        ue->choPreparations.erase(it);
 }
 
 /**
@@ -1692,17 +1709,12 @@ void GnbRrcTask::clearChoPendingState(RrcUeContext *ue)
  */
 void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString &rrcContainer)
 {
-    // sanity check - cho prep must be pending
-    if (!ue->choPreparationPending)
+    // find the profile whose candidatePcis contains the responding target PCI —
+    // we don't yet know candidatePci, so we defer the lookup until after extraction.
+    // First confirm at least one profile has pending state.
+    if (ue->choPreparations.empty())
     {
         m_logger->warn("UE[%d] CHO prepare response arrived with no pending CHO state; ignoring", ue->ueId);
-        return;
-    }
-
-    if (ue->choPreparationCandidatePcis.empty())
-    {
-        clearChoPendingState(ue);
-        m_logger->warn("UE[%d] CHO prepare response arrived with no pending CHO candidates; ignoring", ue->ueId);
         return;
     }
 
@@ -1724,21 +1736,29 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString
         return;
     }
 
-    // locate the candidate PCI in the pending CHO list
-
-    auto itPendingPci = std::find(ue->choPreparationCandidatePcis.begin(),
-                                    ue->choPreparationCandidatePcis.end(),
-                                    candidatePci);
-    if (itPendingPci == ue->choPreparationCandidatePcis.end())
+    // locate the candidate PCI across all pending profiles
+    //   NOTE: key limitation - if the same candidate PCI is present in multiple profiles, we will match it to the first profile and ignore the others.
+    //   So currently we cannot send multiple CHO preparations with the same candidate PCI per UE.  In practice this should not happen,
+    //   but relevant for testing.
+    int owningProfileIdx = -1;
+    ChoPreparationState *prepState = nullptr;
+    for (auto &[profileIdx, state] : ue->choPreparations)
     {
-        m_logger->warn("UE[%d] CHO prepare response targetPCI=%d not found in pending candidate list; ignoring",
-                        ue->ueId,
-                        candidatePci);
+        auto it = std::find(state.candidatePcis.begin(), state.candidatePcis.end(), candidatePci);
+        if (it != state.candidatePcis.end())
+        {
+            state.candidatePcis.erase(it);
+            owningProfileIdx = profileIdx;
+            prepState = &state;
+            break;
+        }
+    }
+    if (!prepState)
+    {
+        m_logger->warn("UE[%d] CHO prepare response targetPCI=%d not found in any pending profile; ignoring",
+                        ue->ueId, candidatePci);
         return;
     }
-
-    // remove it from the pending list
-    ue->choPreparationCandidatePcis.erase(itPendingPci);
 
     
     // Create RRCReconfiguration message with the nested RRCReconfiguration from the target gNB, 
@@ -1783,9 +1803,9 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString
                       MIN_COND_RECONFIG_ID,
                       MAX_COND_RECONFIG_ID);
 
-        ue->choPreparationCandidateScores.erase(candidatePci);
-        if (ue->choPreparationCandidatePcis.empty())
-            clearChoPendingState(ue);
+        prepState->candidateScores.erase(candidatePci);
+        if (prepState->candidatePcis.empty())
+            clearChoPendingState(ue, owningProfileIdx);
         return;
     }
 
@@ -1795,7 +1815,7 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString
     //  It will be the MeasId(s) created as part of the earlier MeasConfig
     addMod->condExecutionCond =
         asn::New<ASN_RRC_CondReconfigToAddMod::ASN_RRC_CondReconfigToAddMod__condExecutionCond>();
-    for (long measId : ue->choPreparationMeasIds)
+    for (long measId : prepState->measIds)
     {
         auto *entry = asn::New<ASN_RRC_MeasId_t>();
         *entry = measId;
@@ -1817,30 +1837,25 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, const OctetString
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
 
     std::string measIdsStr;
-    for (size_t i = 0; i < ue->choPreparationMeasIds.size(); ++i) {
+    for (size_t i = 0; i < prepState->measIds.size(); ++i) {
         if (i > 0) measIdsStr += ", ";
-        measIdsStr += std::to_string(ue->choPreparationMeasIds[i]);
+        measIdsStr += std::to_string(prepState->measIds[i]);
     }
 
-
-    m_logger->info("UE[%d] CHO RRCReconfiguration sent to UE with 1 candidate targetPCI=%d condReconfigId=%d "
+    m_logger->info("UE[%d] CHO profile %d: RRCReconfiguration sent targetPCI=%d condReconfigId=%d "
                     "measIds=[%s] pendingCandidates=%zu txId=%d",
                     ue->ueId,
+                    owningProfileIdx,
                     candidatePci,
                     condReconfigId,
                     measIdsStr.c_str(),
-                    ue->choPreparationCandidatePcis.size(),
+                    prepState->candidatePcis.size(),
                     txId);
 
-    // remove this candidate from the pending list; if empty, clear the pending state
-    ue->choPreparationCandidateScores.erase(candidatePci);
-    if (ue->choPreparationCandidatePcis.empty())
-    {
-        ue->choPreparationPending = false;
-        ue->choPreparationCandidateScores.clear();
-        ue->choPreparationMeasIds.clear();
-        ue->choPreparationCandidateProfileId.reset();
-    }
+    // if this profile has no more candidates, clear its state
+    prepState->candidateScores.erase(candidatePci);
+    if (prepState->candidatePcis.empty())
+        clearChoPendingState(ue, owningProfileIdx);
 
     return;
 

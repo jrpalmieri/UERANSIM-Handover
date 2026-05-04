@@ -60,19 +60,19 @@ gnb:
   gnbs:
   - node: GNB1
     nci: '0x000000011'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
-    config: ./tools/dashboard/configs/gnb1_sat.yaml
+    config: ./tools/dashboard/configs/gnb1_sat_T1.yaml
     gnb_log_file: gnb1_%i.log
     gnb_host_sat_name: 'SYNTH-1-01'
     args: []
   - node: GNB2
     nci: '0x000000022'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
-    config: ./tools/dashboard/configs/gnb2_sat.yaml
+    config: ./tools/dashboard/configs/gnb2_sat_T1.yaml
     gnb_log_file: gnb2_%i.log
     gnb_host_sat_name: 'SYNTH-1-02'
     args: []
   - node: GNB3
     nci: '0x000000033'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
-    config: ./tools/dashboard/configs/gnb3_sat.yaml
+    config: ./tools/dashboard/configs/gnb3_sat_T1.yaml
     gnb_log_file: gnb3_%i.log
     gnb_host_sat_name: 'SYNTH-1-03'
     args: []
@@ -80,7 +80,7 @@ gnb:
     nci: '0x000000044'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
     config: ./tools/dashboard/configs/gnb4_sat.yaml
     gnb_log_file: gnb4_%i.log
-    gnb_host_sat_name: 'SYNTH-2-02'
+    gnb_host_sat_name: 'SYNTH-1-04'
     args: []
 
 
@@ -136,6 +136,7 @@ satellite:
   # or a relative indicator: 'latest' or 'earliest' to use the latest or earliest epoch from the 
   # TLE file as the base time for the simulation
   epoch_base: 'latest'
+  tick_scaling: 3.0
   # - gnb: GNB1
   #   line1: '1 99991U 26001A   26001.00000000  .00000000  00000-0  00000-0 0  0008'
   #   line2: '2 99991  45.0000 280.4606 0001000   0.0000  90.0000 15.00000000    11'

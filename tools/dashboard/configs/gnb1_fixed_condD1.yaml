@@ -97,65 +97,59 @@ xn:
 #   per CHO profile.
 
 handover:
-  # events:
-  #   - eventType: A3
-  #     a3OffsetDb: 3
-  #     a3hysteresisDb: 1
-  #     ttt: ms100
+  events:
+  - eventId: 1
+    eventType: condD1
+    condD1DistanceThreshold1: 1500
+    condD1DistanceThreshold2: 1500
+    condD1ReferenceLocation1:
+      latitude: 40.0000
+      longitude: -75.0000
+    condD1ReferenceLocation2:
+      latitude: 40.0000
+      longitude: -75.0300
+    condD1HysteresisM: 100
+    ttt: ms100
 
+  - eventId: 2
+    eventType: condT1
+    threhsoldSecTS: 30
+    durationSec: 600
+
+  - eventId: 3
+    eventType: condA3
+    a3OffsetDb: 3
+    a3hysteresisDb: 1
+    ttt: ms100
+
+  - eventId: 4
+    eventType: condT1
+    threhsoldSecTS: 0
+    durationSec: 600
+
+  basicHandoverMeasIdentities: []
   choEnabled: true
-  choDefaultProfileId: 1  # default profile ID to use for CHO candidates if not overridden
+  choActiveProfileIds: [1]
   choCandidateProfiles:
     - candidateProfileId: 1
-      # targetCellId is either a specific cell ID (e.g. '0x000000020') which must be on the neighbor list
-      #   or "calculated", which causes the gNB to use the cell ID of the best candidate neighbor cell based on distance
       targetCellId: '0x000000022'
-      conditions:
-        - eventType: condD1
-          # D1 logic: trigger when UE is outside distance threshold1 and inside distance threshold2
-          condD1DistanceThreshold1: 1500
-          condD1DistanceThreshold2: 1500
-          condD1ReferenceLocation1:
-            latitude: 40.0000
-            longitude: -75.0000
-          # target gNB
-          condD1ReferenceLocation2:
-            latitude: 40.0000
-            longitude: -75.0300
-          condD1HysteresisM: 100
-          ttt: ms100
+      maxTargets: 1
+      conditions: [1]
 
     - candidateProfileId: 2
-      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
       targetCellId: '0x000000022'
-      conditions:
-        - eventType: condT1
-          # T1 logic: trigger when curr time > threhsoldSecTS and less than threhsoldSecTS + durationSec
-          threhsoldSecTS: 30   # this value is set by the gnb based on current time
-          durationSec: 600
+      maxTargets: 1
+      conditions: [2]
 
     - candidateProfileId: 3
-      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
       targetCellId: calculated
-      conditions:
-        - eventType: condA3
-          # A3 logic: trigger when neighbor cell RSRP is better than serving cell RSRP by a3OffsetDb (with hysteresisM in meters and TTT)
-          a3OffsetDb: 3
-          a3hysteresisDb: 1
-          ttt: ms100
+      maxTargets: 1
+      conditions: [3]
 
     - candidateProfileId: 4
-      #   for NTN, this always be calculated, since the target cell will change based on satellite movement
       targetCellId: calculated
-      conditions:
-        - eventType: condT1
-          threhsoldSecTS: 0   # this value is set by the gnb based on current time
-          durationSec: 600
-
-        - eventType: condA3
-          a3OffsetDb: 3
-          a3hysteresisDb: 1
-          ttt: ms100
+      maxTargets: 1
+      conditions: [4, 3]
 
 # NTN (non-Terrestrial Network) configuration
 ntn:
