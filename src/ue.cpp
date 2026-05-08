@@ -38,8 +38,6 @@ static ConcurrentMap<std::string, nr::ue::UserEquipment *> g_ueMap{};
 static app::CliResponseTask *g_cliRespTask = nullptr;
 
 
-nr::ue::AllCellMeasurements *g_allCellMeasurements{};
-
 static struct Options
 {
     std::string configFile{};
@@ -871,16 +869,10 @@ int main(int argc, char **argv)
         g_cliRespTask = new app::CliResponseTask(g_cliServer);
     }
 
-    // initialize the global set of all received cell RF measurements
-    //   This is disabled
-    g_allCellMeasurements = new nr::ue::AllCellMeasurements();
-    g_allCellMeasurements->cellMeasurements =
-        std::set<nr::ue::CellMeasurement, nr::ue::CompareBySignalStrength>();
-
     for (int i = 0; i < g_options.count; i++)
     {
         auto *config = GetConfigByUe(i);
-        auto *ue = new nr::ue::UserEquipment(config, &g_ueController, nullptr, g_cliRespTask, g_allCellMeasurements);
+        auto *ue = new nr::ue::UserEquipment(config, &g_ueController, nullptr, g_cliRespTask);
         g_ueMap.put(config->getNodeName(), ue);
     }
 

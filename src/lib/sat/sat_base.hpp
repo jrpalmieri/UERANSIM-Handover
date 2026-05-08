@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -106,7 +107,29 @@ EcefPosition GeoToEcef(const GeoPosition &geo);
 GeoPosition EcefToGeo(const EcefPosition &ecef);
 
 /// Compute Euclidean distance (meters) between two ECEF points.
-double EcefDistance(const EcefPosition &a, const EcefPosition &b);
+inline double EcefDistance(const EcefPosition &a, const EcefPosition &b)
+{
+    double dx = a.x - b.x;
+    double dy = a.y - b.y;
+    double dz = a.z - b.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+/**
+ * @brief Computes the squared Euclidian distance between two ECEF positions.
+ * (Avoids doing a Sqrt when only relative comparisons are needed.)
+ * 
+ * @param a 
+ * @param b 
+ * @return distance in meters
+ */
+inline double EcefDistanceSquared(const EcefPosition &a, const EcefPosition &b)
+{
+    double dx = a.x - b.x;
+    double dy = a.y - b.y;
+    double dz = a.z - b.z;
+    return dx * dx + dy * dy + dz * dz;
+}
 
 /// Compute the elevation angle in degrees from an observer to a target in ECEF.
 double ElevationAngleDeg(const EcefPosition &observer, const EcefPosition &target);

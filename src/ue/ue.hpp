@@ -29,7 +29,7 @@ class UserEquipment
 
   public:
     UserEquipment(UeConfig *config, app::IUeController *ueController, app::INodeListener *nodeListener,
-                  NtsTask *cliCallbackTask, AllCellMeasurements *g_allCellMeasurements);
+                  NtsTask *cliCallbackTask);
     virtual ~UserEquipment();
 
   public:

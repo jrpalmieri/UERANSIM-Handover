@@ -231,19 +231,6 @@ struct CellSelectionReport
     int weakSignalCells{};
 };
 
-/**
- *  Struct to represent an individual cell measurement (from OOB provider)
- */
-struct CellMeasurement
-{
-    int     cellId{};           // Cell ID
-    int64_t nci{};              // NR Cell Identity (from SIB1)
-    int     rsrp{-140};         // dBm, range ~ -156 .. -44
-    int     rsrq{-20};          // dB  (optional, default -20)
-    int     sinr{-23};          // dB  (optional, default -23)
-    std::string ip{};           // IP address of the cell
-    uint64_t last_report_time{}; // timestamp of when this measurement was reported by the OOB provider (ms)
-};
 
 /**
  * @brief Struct to store measurement events for a cellId.
@@ -252,28 +239,6 @@ struct TriggeredNeighbor
 {
     int cellId;
     int rsrp;
-};
-
-
-/**
- * @brief comparator for the CellMeasurement set, so that it can stay sorted by rsrp in 
- *  descending order (stronger signals first if rsrp is negative)
- * 
- */
-struct CompareBySignalStrength {
-    bool operator()(const CellMeasurement& a, const CellMeasurement b) const {
-        return a.rsrp > b.rsrp;  // sort descending (stronger signals first if rsrp is negative)
-    }
-};
-
-struct AllCellMeasurements
-{
-    // Global set to store the most recent measurement for each cellId, updated by RLS meas task 
-    //   and read by each UE's RRC for measurement reporting
-    std::set<CellMeasurement, CompareBySignalStrength> cellMeasurements;
-    // mutex to protect access to allCellMeasurements set, since it is updated by RLS meas task and 
-    //  read by each UE's RRC for measurement reporting
-    std::shared_mutex cellMeasurementsMutex;
 };
 
 
@@ -409,8 +374,6 @@ struct TaskBase
     NtsTask *cliCallbackTask{};
 
     UeSharedContext shCtx{};
-
-    AllCellMeasurements *g_allCellMeasurements{};
 
     // cell RF strength measurements
     std::map<int, int> cellDbMeas;
@@ -868,7 +831,5 @@ Json ToJson(const ERegUpdateCause &v);
 Json ToJson(const EPsState &v);
 Json ToJson(const EServiceReqCause &v);
 Json ToJson(const ERrcState &v);
-Json ToJson(const CellMeasurement &v);
-
 
 } // namespace nr::ue

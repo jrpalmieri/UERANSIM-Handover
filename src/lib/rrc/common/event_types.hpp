@@ -36,8 +36,6 @@ inline std::string HandoverEventTypeToString(HandoverEventType value)
 {
     switch (value)
     {
-    case HandoverEventType::UNKNOWN:
-        return "UNKNOWN";
     case HandoverEventType::A2:
         return "A2";
     case HandoverEventType::A3:
@@ -52,9 +50,11 @@ inline std::string HandoverEventTypeToString(HandoverEventType value)
         return "condD1";
     case HandoverEventType::CondT1:
         return "condT1";
+    case HandoverEventType::UNKNOWN:
+        return "UNKNOWN";
     }
 
-    return "A3";
+    return "UNKNOWN";
 }
 
 inline bool IsMeasurementEvent(HandoverEventType value)
@@ -430,6 +430,14 @@ struct MeasObject
 
 };
 
+
+struct ReportConfig
+{
+    int reportConfigId{};
+    ReportConfigEvent event{};
+    int maxReportCells{8};
+
+};
 
 /**
  * @brief Struct to represent a Measurement Identity, which binds together:

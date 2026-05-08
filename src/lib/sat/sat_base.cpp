@@ -13,10 +13,10 @@ static constexpr double DEG2RAD = M_PI / 180.0;
 static constexpr double RAD2DEG = 180.0 / M_PI;
 
 
+// Constructor that converts passed GeoPosition parameter to EcefPosition
 EcefPosition::EcefPosition(const GeoPosition &geo) : EcefPosition(GeoToEcef(geo))
 {
 };
-
 
 
 /**
@@ -83,21 +83,6 @@ GeoPosition EcefToGeo(const EcefPosition &ecef)
     double alt = p / std::cos(lat) - n;
 
     return {lat * RAD2DEG, lon * RAD2DEG, alt, ecef.timestampMs};
-}
-
-/**
- * @brief Computes the euclidian distance between two ECEF positions.
- * 
- * @param a 
- * @param b 
- * @return distance in meters
- */
-double EcefDistance(const EcefPosition &a, const EcefPosition &b)
-{
-    double dx = a.x - b.x;
-    double dy = a.y - b.y;
-    double dz = a.z - b.z;
-    return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 /**

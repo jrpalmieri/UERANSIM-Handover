@@ -275,18 +275,6 @@ Json ToJson(const EPsState &state)
     }
 }
 
-Json ToJson(const CellMeasurement &v)
-{
-    return Json::Obj({
-        {"cellId", v.cellId},
-        {"nci",    static_cast<int32_t>(v.nci)},
-        {"ip",     v.ip},
-        {"rsrp",   v.rsrp},
-        {"rsrq",   v.rsrq},
-        {"sinr",   v.sinr},
-    });
-}
-
 
 bool ActiveCellInfo::hasValue() const
 {

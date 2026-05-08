@@ -60,7 +60,7 @@ class UeRrcTask : public NtsTask
     bool m_handoverInProgress{};  // flag to indicate a handover is in progress
     long m_hoTxId{};             // RRC transaction ID of the pending handover
     int  m_hoTargetPci{};        // Target cell PCI from ReconfigurationWithSync
-    bool m_measurementEvalSuspended{};  // Phase 3: measurements paused during handover
+    bool m_measurementEvalSuspended{};  // measurements paused during handover
 
     /* Conditional Handover (CHO) state */
     std::vector<ChoCandidate> m_choCandidates{};  // Active CHO candidates
