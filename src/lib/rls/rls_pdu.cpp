@@ -58,8 +58,6 @@ void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream)
     stream.appendOctet(cons::Patch);
     stream.appendOctet(static_cast<uint8_t>(msg.msgType));
     stream.appendOctet8(msg.sti);
-    stream.appendOctet4(msg.senderId);
-    stream.appendOctet4(msg.senderId2);
 
     if (msg.msgType == EMessageType::HEARTBEAT)
     {
@@ -109,13 +107,11 @@ std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream)
     auto msgType = static_cast<EMessageType>(stream.readI());
     // sti: simulation temp identifier (randomly generated)
     uint64_t sti = stream.read8UL();
-    uint32_t senderId = stream.read4UI();
-    uint32_t senderId2 = stream.read4UI();
 
     // heartbeat messages contain the simulated position of the UE 
     if (msgType == EMessageType::HEARTBEAT)
     {
-        auto res = std::make_unique<RlsHeartBeat>(sti, senderId, senderId2);
+        auto res = std::make_unique<RlsHeartBeat>(sti);
         res->simPos.latitude = ReadDouble(stream);
         res->simPos.longitude = ReadDouble(stream);
         res->simPos.altitude = ReadDouble(stream);
@@ -124,7 +120,7 @@ std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream)
     // heartbeat ack messages contain the signal strength in dBm
     else if (msgType == EMessageType::HEARTBEAT_ACK)
     {
-        auto res = std::make_unique<RlsHeartBeatAck>(sti, senderId, senderId2);
+        auto res = std::make_unique<RlsHeartBeatAck>(sti);
         res->dbm = stream.read4I();
         return res;
     }
@@ -135,7 +131,7 @@ std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream)
     //  8: RRC Release, 9: RRC Release Complete
     else if (msgType == EMessageType::PDU_TRANSMISSION)
     {
-        auto res = std::make_unique<RlsPduTransmission>(sti, senderId, senderId2);
+        auto res = std::make_unique<RlsPduTransmission>(sti);
         res->pduType = static_cast<EPduType>((uint8_t)stream.read());
         res->pduId = stream.read4UI();
         res->payload = stream.read4UI();
@@ -150,7 +146,7 @@ std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream)
     // pdu transmission ack messages contain a vector of acknowledged pdu ids
     else if (msgType == EMessageType::PDU_TRANSMISSION_ACK)
     {
-        auto res = std::make_unique<RlsPduTransmissionAck>(sti, senderId, senderId2);
+        auto res = std::make_unique<RlsPduTransmissionAck>(sti);
         auto count = stream.read4UI();
         res->pduIds.reserve(count);
         for (uint32_t i = 0; i < count; i++)

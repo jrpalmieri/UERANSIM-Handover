@@ -36,6 +36,7 @@
 #include <utils/logger.hpp>
 #include <utils/nts.hpp>
 #include <utils/octet_string.hpp>
+#include <utils/constants.hpp>
 
 namespace nr::sat
 {
@@ -54,6 +55,7 @@ class UserEquipment;
 struct UeCellDesc
 {
     int dbm{};
+    int64_t nci;
 
     struct
     {
@@ -237,14 +239,14 @@ struct CellSelectionReport
  */
 struct TriggeredNeighbor
 {
-    int cellId;
+    int64_t cellId;
     int rsrp;
 };
 
 
 struct ActiveCellInfo
 {
-    int cellId{};
+    int64_t cellId{};
     ECellCategory category{};
     Plmn plmn{};
     int tac{};
@@ -328,7 +330,7 @@ struct UeMeasConfig
 struct ChoCandidate
 {
     int candidateId{};          // condReconfigId
-    int targetPci{};            // Target cell PCI
+    int targetNci{};            // Target cell NCI
     int newCRNTI{};             // C-RNTI assigned by target cell
     int t304Ms{1000};           // T304 supervision timer (ms)
     int txId{0};              // ASN.1 transactionId for the ReconfigurationWithSync message to apply on trigger
@@ -364,6 +366,21 @@ struct RlsSharedContext
     std::atomic<uint32_t> cRnti{};
 };
 
+class CellDbMeasurements
+{
+    private:
+        // cell RF strength measurements
+        std::vector<int64_t> ncis;
+        std::vector<int> dbms;
+        mutable std::shared_mutex cellDbMeasMutex;
+
+    public:
+        void upsertMeasurement(const int64_t nci, const int dbm);
+        int getMeasurement(const int64_t nci);
+        std::vector<std::pair<int64_t, int>> getMeasurements() const;
+        bool removeMeasurement(const int64_t nci);
+};
+
 struct TaskBase
 {
     UserEquipment *ue{};
@@ -376,8 +393,7 @@ struct TaskBase
     UeSharedContext shCtx{};
 
     // cell RF strength measurements
-    std::map<int, int> cellDbMeas;
-    std::shared_mutex cellDbMeasMutex;
+    CellDbMeasurements cellDbMeas;
 
     UeAppTask *appTask{};
     NasTask *nasTask{};

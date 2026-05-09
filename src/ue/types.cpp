@@ -305,4 +305,61 @@ RrcTimers::RrcTimers() : t300(300, false, 1)
 {
 }
 
+
+void CellDbMeasurements::upsertMeasurement(const int64_t nci, const int dbm)
+{
+    std::unique_lock lk(cellDbMeasMutex);
+    for (size_t i = 0; i < ncis.size(); i++)
+    {
+        if (ncis[i] == nci)
+        {
+            dbms[i] = dbm;
+            return;
+        }
+    }
+    ncis.push_back(nci);
+    dbms.push_back(dbm);
+}
+
+std::vector<std::pair<int64_t, int>> CellDbMeasurements::getMeasurements() const
+{
+    std::shared_lock lk(cellDbMeasMutex);
+    std::vector<std::pair<int64_t, int>> measurements;
+    for (size_t i = 0; i < ncis.size(); i++)
+    {
+        measurements.push_back({ncis[i], dbms[i]});
+    }
+    return measurements;
+}
+
+int CellDbMeasurements::getMeasurement(const int64_t nci)
+{
+    std::shared_lock lk(cellDbMeasMutex);
+    for (size_t i = 0; i < ncis.size(); i++)
+    {
+        if (ncis[i] == nci)
+        {
+            return dbms[i];
+        }
+    }
+    return cons::MIN_RSRP - 1; // default to minimum RSRP if not found
+}
+
+bool CellDbMeasurements::removeMeasurement(const int64_t nci)
+{
+    std::unique_lock lk(cellDbMeasMutex);
+    for (size_t i = 0; i < ncis.size(); i++)
+    {
+        if (ncis[i] == nci)
+        {
+            ncis[i] = ncis.back();
+            dbms[i] = dbms.back();
+            ncis.pop_back();
+            dbms.pop_back();
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace nr::ue

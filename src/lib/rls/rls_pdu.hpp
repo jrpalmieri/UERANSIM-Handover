@@ -44,11 +44,9 @@ struct RlsMessage
 {
     const EMessageType msgType;
     const uint64_t sti{};
-    const uint32_t senderId{};
-    const uint32_t senderId2{};
 
-    explicit RlsMessage(EMessageType msgType, uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
-        : msgType(msgType), sti(sti), senderId(senderId), senderId2(senderId2)
+    explicit RlsMessage(EMessageType msgType, uint64_t sti)
+        : msgType(msgType), sti(sti)
     {
     }
 };
@@ -57,8 +55,8 @@ struct RlsHeartBeat : RlsMessage
 {
     GeoPosition simPos;
 
-    explicit RlsHeartBeat(uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
-        : RlsMessage(EMessageType::HEARTBEAT, sti, senderId, senderId2)
+    explicit RlsHeartBeat(uint64_t sti)
+        : RlsMessage(EMessageType::HEARTBEAT, sti)
     {
     }
 };
@@ -67,8 +65,8 @@ struct RlsHeartBeatAck : RlsMessage
 {
     int dbm{};
 
-    explicit RlsHeartBeatAck(uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
-        : RlsMessage(EMessageType::HEARTBEAT_ACK, sti, senderId, senderId2)
+    explicit RlsHeartBeatAck(uint64_t sti)
+        : RlsMessage(EMessageType::HEARTBEAT_ACK, sti)
     {
     }
 };
@@ -80,8 +78,8 @@ struct RlsPduTransmission : RlsMessage
     uint32_t payload{};
     OctetString pdu{};
 
-    explicit RlsPduTransmission(uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
-        : RlsMessage(EMessageType::PDU_TRANSMISSION, sti, senderId, senderId2)
+    explicit RlsPduTransmission(uint64_t sti)
+        : RlsMessage(EMessageType::PDU_TRANSMISSION, sti)
     {
     }
 };
@@ -90,8 +88,8 @@ struct RlsPduTransmissionAck : RlsMessage
 {
     std::vector<uint32_t> pduIds;
 
-    explicit RlsPduTransmissionAck(uint64_t sti, uint32_t senderId = 0, uint32_t senderId2 = 0)
-        : RlsMessage(EMessageType::PDU_TRANSMISSION_ACK, sti, senderId, senderId2)
+    explicit RlsPduTransmissionAck(uint64_t sti)
+        : RlsMessage(EMessageType::PDU_TRANSMISSION_ACK, sti)
     {
     }
 };

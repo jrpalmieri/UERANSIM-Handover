@@ -271,7 +271,7 @@ struct Sib19Info
     int64_t receivedTime{};
 
     /* All decoded SIB19 records in the last received payload, keyed by PCI. */
-    struct PciEntry
+    struct CellEntry
     {
         NtnConfig ntnConfig{};
         std::optional<int32_t> cellSpecificKoffset{};
@@ -280,7 +280,7 @@ struct Sib19Info
         int64_t receivedTime{};
     };
 
-    std::unordered_map<int, PciEntry> entriesByPci{};
+    std::unordered_map<int, CellEntry> entriesByNci{};
 };
 
 /* ------------------------------------------------------------------ */
@@ -295,7 +295,7 @@ Json ToJson(const EphemerisInfo &v);
 Json ToJson(const TaInfo &v);
 Json ToJson(const NtnConfig &v);
 Json ToJson(ENtnPolarization v);
-Json ToJson(const Sib19Info::PciEntry &v);
+Json ToJson(const Sib19Info::CellEntry &v);
 Json ToJson(const Sib19Info &v);
 
 /* ------------------------------------------------------------------ */

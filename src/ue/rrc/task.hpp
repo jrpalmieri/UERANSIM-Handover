@@ -59,7 +59,7 @@ class UeRrcTask : public NtsTask
     UeMeasConfig m_measConfig{};  // Current list of measurement identities from network
     bool m_handoverInProgress{};  // flag to indicate a handover is in progress
     long m_hoTxId{};             // RRC transaction ID of the pending handover
-    int  m_hoTargetPci{};        // Target cell PCI from ReconfigurationWithSync
+    int64_t m_hoTargetPci{};        // Target cell PCI from ReconfigurationWithSync
     bool m_measurementEvalSuspended{};  // measurements paused during handover
 
     /* Conditional Handover (CHO) state */
@@ -112,17 +112,17 @@ class UeRrcTask : public NtsTask
     bool lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionReport &report);
 
     /* Cell Management */
-    void handleCellSignalChange(int cellId, int dbm);
-    void notifyCellDetected(int cellId, int dbm);
-    void notifyCellLost(int cellId, int dbm);
-    bool hasSignalToCell(int cellId);
-    bool isActiveCell(int cellId);
+    void handleCellSignalChange(int64_t cellId, int dbm);
+    void notifyCellDetected(int64_t cellId, int dbm);
+    void notifyCellLost(int64_t cellId, int dbm);
+    bool hasSignalToCell(int64_t cellId);
+    bool isActiveCell(int64_t cellId);
     void updateAvailablePlmns();
 
     /* System Information and Broadcast */
-    void receiveMib(int cellId, const ASN_RRC_MIB &msg);
-    void receiveSib1(int cellId, const ASN_RRC_SIB1 &msg);
-    void receiveSib19(int cellId, const OctetString &pdu);
+    void receiveMib(int64_t cellId, const ASN_RRC_MIB &msg);
+    void receiveSib1(int64_t cellId, const ASN_RRC_SIB1 &msg);
+    void receiveSib19(int64_t cellId, const OctetString &pdu);
 
     /* NAS Transport */
     void deliverUplinkNas(uint32_t pduId, OctetString &&nasPdu);
@@ -131,29 +131,29 @@ class UeRrcTask : public NtsTask
     /* Connection Control */
     void startConnectionEstablishment(OctetString &&nasPdu);
     void handleEstablishmentFailure();
-    void receiveRrcSetup(int cellId, const ASN_RRC_RRCSetup &msg);
-    void receiveRrcReject(int cellId, const ASN_RRC_RRCReject &msg);
+    void receiveRrcSetup(int64_t cellId, const ASN_RRC_RRCSetup &msg);
+    void receiveRrcReject(int64_t cellId, const ASN_RRC_RRCReject &msg);
     void receiveRrcRelease(const ASN_RRC_RRCRelease &msg);
 
     /* Failures */
     // void declareRadioLinkFailure(rls::ERlfCause cause);
-    void handleRadioLinkFailure(rls::ERlfCause cause, int cellId, int dbm);
+    void handleRadioLinkFailure(rls::ERlfCause cause, int64_t cellId, int dbm);
 
     /* Access Control */
     void performUac(std::shared_ptr<LightSync<UacInput, UacOutput>> &uacCtl);
 
     /* Measurement framework */
-    void evaluateMeasurements(int servingCellId, const std::map<int, int> &allMeas);
-    void measurementReporting(int servingCellId, int servingRsrp);
+    void evaluateMeasurements(int64_t servingCellId, int servingCellRsrp, const std::vector<std::pair<int64_t,int>> &allMeas);
+    void measurementReporting(int64_t servingCellId, int servingCellRsrp);
     void applyMeasConfig(const UeMeasConfig &cfg);
     void resetMeasurements();
-    void sendMeasurementReport(int measId, int servingCellId, int servingRsrp,
+    void sendMeasurementReport(int measId, int64_t servingCellId, int servingCellRsrp,
                                const std::vector<struct TriggeredNeighbor> &neighbors);
-    int getServingCellRsrp(int servingCellId, const std::map<int, int> &allMeas) const;
+    //int getServingCellRsrp(int servingCellId, const std::map<int, int> &allMeas) const;
     void receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg);
 
     /* Handover execution */
-    void performHandover(long txId, int targetPhysCellId, int newCRNTI,
+    void performHandover(long txId, int64_t targetCellId, int newCRNTI,
                          int t304Ms, bool hasRachConfig = false);
     int  findCellByPci(int physCellId);
     void handleT304Expiry();
@@ -164,10 +164,10 @@ class UeRrcTask : public NtsTask
     /* Conditional Handover (CHO) */
     void handleChoConfiguration(const OctetString &pdu);
     void parseConditionalReconfiguration(const ASN_RRC_ConditionalReconfiguration *condReconfig);
-    bool evaluateChoCandidates(int servingCellId, const std::map<int, int> &allMeas);
+    bool evaluateChoCandidates(int64_t servingCellId, const std::vector<std::pair<int64_t,int>> &allMeas);
     std::vector<nr::sat::SatPriorityScore> selectBestSatellite(
-      int servingCellId,
-      const std::unordered_set<int> &satPcis);
+      int64_t servingCellId,
+      const std::unordered_set<int64_t> &satNcis);
     void executeChoCandidate(ChoCandidate &candidate);
     void cancelAllChoCandidates();
     void resetChoRuntimeState();

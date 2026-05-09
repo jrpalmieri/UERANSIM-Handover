@@ -14,7 +14,7 @@
 namespace nr::ue
 {
 
-void UeRrcTask::handleCellSignalChange(int cellId, int dbm)
+void UeRrcTask::handleCellSignalChange(int64_t cellId, int dbm)
 {
     
     // no longer participating = below min RSRP
@@ -39,28 +39,22 @@ void UeRrcTask::handleCellSignalChange(int cellId, int dbm)
             handleRadioLinkFailure(rls::ERlfCause::SIGNAL_LOST_TO_CONNECTED_CELL, cellId, dbm);
     }
 
-    // {
-    //     if (considerLost)
-    //         notifyCellLost(cellId);
-    //     else
-    //         m_cellDesc[cellId].dbm = dbm;
-    // }
 }
 
-void UeRrcTask::notifyCellDetected(int cellId, int dbm)
+void UeRrcTask::notifyCellDetected(int64_t cellId, int dbm)
 {
     m_cellDesc[cellId] = {};
     // we don;t care about dbm in this struct, it is tracked in the separate cellDbMeas map
     m_cellDesc[cellId].dbm = dbm;
 
-    m_logger->debug("New signal detected for cell[%d], total [%d] cells in coverage", cellId,
+    m_logger->debug("New signal detected for cell[%ld], total [%d] cells in coverage", cellId,
                     static_cast<int>(m_cellDesc.size()));
 
     // update the PLMN list
     updateAvailablePlmns();
 }
 
-void UeRrcTask::notifyCellLost(int cellId, int dbm)
+void UeRrcTask::notifyCellLost(int64_t cellId, int dbm)
 {
     if (!m_cellDesc.count(cellId))
         return;
@@ -69,7 +63,7 @@ void UeRrcTask::notifyCellLost(int cellId, int dbm)
     // remove cell infomation
     m_cellDesc.erase(cellId);
 
-    m_logger->debug("RLS connection lost for cell[%d], total [%d] cells in coverage", cellId,
+    m_logger->debug("RLS connection lost for cell[%ld], total [%d] cells in coverage", cellId,
                     static_cast<int>(m_cellDesc.size()));
 
     // update the PLMN list
@@ -79,14 +73,14 @@ void UeRrcTask::notifyCellLost(int cellId, int dbm)
     handleRadioLinkFailure(rls::ERlfCause::SIGNAL_LOST_TO_CONNECTED_CELL, cellId, dbm);
 }
 
-bool UeRrcTask::hasSignalToCell(int cellId)
+bool UeRrcTask::hasSignalToCell(int64_t cellId)
 {
     return m_cellDesc.count(cellId);
 }
 
-bool UeRrcTask::isActiveCell(int cellId)
+bool UeRrcTask::isActiveCell(int64_t cellId)
 {
-    return m_base->shCtx.currentCell.get<int>([](auto &value) { return value.cellId; }) == cellId;
+    return m_base->shCtx.currentCell.get<int64_t>([](auto &value) { return value.cellId; }) == cellId;
 }
 
 // scans the cell info list looking for SIB1 information to populate the available PLMN list
@@ -108,7 +102,7 @@ void UeRrcTask::updateAvailablePlmns()
 //     handleRadioLinkFailure(cause);
 // }
 
-void UeRrcTask::handleRadioLinkFailure(rls::ERlfCause cause, int cellId, int dbm)
+void UeRrcTask::handleRadioLinkFailure(rls::ERlfCause cause, int64_t cellId, int dbm)
 {
 
     // check if this is the active cell
@@ -132,7 +126,7 @@ void UeRrcTask::handleRadioLinkFailure(rls::ERlfCause cause, int cellId, int dbm
             // in RRC_CONNECTED, losing the active cell means radio link failure
             if (m_state != ERrcState::RRC_IDLE) {
 
-                m_logger->info("Radio Link failure detected for active cell[%d], dbm=%d", cellId, dbm);
+                m_logger->info("Radio Link failure detected for active cell[%ld], dbm=%d", cellId, dbm);
 
                 cancelAllChoCandidates();
                 m_state = ERrcState::RRC_IDLE;
@@ -145,7 +139,7 @@ void UeRrcTask::handleRadioLinkFailure(rls::ERlfCause cause, int cellId, int dbm
             else
             {
                 // in RRC_IDLE, notify NAS
-                m_logger->info("RRC_IDLE mode radio link failure detected for active cell[%d], dbm=%d", cellId, dbm);
+                m_logger->info("RRC_IDLE mode radio link failure detected for active cell[%ld], dbm=%d", cellId, dbm);
                 auto w = std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::ACTIVE_CELL_CHANGED);
                 w->previousTai = Tai{lastActiveCell.plmn, lastActiveCell.tac};
                 m_base->nasTask->push(std::move(w));
@@ -153,7 +147,7 @@ void UeRrcTask::handleRadioLinkFailure(rls::ERlfCause cause, int cellId, int dbm
         }
         else
         {
-            m_logger->info("Radio Link failure detected for active cell[%d], cause=%s.  Ignoring.", 
+            m_logger->info("Radio Link failure detected for active cell[%ld], cause=%s.  Ignoring.", 
                 cellId, std::to_string(static_cast<int>(cause)).c_str());
 
         }

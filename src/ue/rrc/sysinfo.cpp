@@ -22,7 +22,7 @@
 namespace nr::ue
 {
 
-void UeRrcTask::receiveMib(int cellId, const ASN_RRC_MIB &msg)
+void UeRrcTask::receiveMib(int64_t cellId, const ASN_RRC_MIB &msg)
 {
     auto &desc = m_cellDesc[cellId];
 
@@ -36,7 +36,7 @@ void UeRrcTask::receiveMib(int cellId, const ASN_RRC_MIB &msg)
     updateAvailablePlmns();
 }
 
-void UeRrcTask::receiveSib1(int cellId, const ASN_RRC_SIB1 &msg)
+void UeRrcTask::receiveSib1(int64_t cellId, const ASN_RRC_SIB1 &msg)
 {
     auto &desc = m_cellDesc[cellId];
 
@@ -44,6 +44,7 @@ void UeRrcTask::receiveSib1(int cellId, const ASN_RRC_SIB1 &msg)
 
     auto *plmnIdentityInfo = msg.cellAccessRelatedInfo.plmn_IdentityList.list.array[0];
     desc.sib1.nci = asn::GetBitStringLong<36>(plmnIdentityInfo->cellIdentity);
+    desc.nci = desc.sib1.nci; // cache nci to cellDesc for easier access in other places
 
     desc.sib1.isReserved &=
         plmnIdentityInfo->cellReservedForOperatorUse == ASN_RRC_PLMN_IdentityInfo__cellReservedForOperatorUse_reserved;

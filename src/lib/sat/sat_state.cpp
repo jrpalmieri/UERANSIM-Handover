@@ -28,12 +28,12 @@ void SatStates::upsert(const SatTleEntry &entry, int64_t timestampMs)
 void SatStates::upsert(const SatTleEntry &entry, std::shared_ptr<Propagator> sgp4)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_store[entry.pci] = entry;
+    m_store[entry.nci] = entry;
     // free old SGP4 object if exists (to release memory), then store the new one
-    auto it = m_sgp4.find(entry.pci);
+    auto it = m_sgp4.find(entry.nci);
     if (it != m_sgp4.end())
         m_sgp4.erase(it);
-    m_sgp4[entry.pci] = std::move(sgp4);
+    m_sgp4[entry.nci] = std::move(sgp4);
 }
 
 void SatStates::upsertAll(const std::vector<SatTleEntry> &entries)
@@ -54,10 +54,10 @@ void SatStates::upsertAll(const std::vector<SatTleEntry> &entries, int64_t times
     }
 }
 
-std::optional<SatTleEntry> SatStates::getTle(int pci) const
+std::optional<SatTleEntry> SatStates::getTle(int64_t nci) const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    auto it = m_store.find(pci);
+    auto it = m_store.find(nci);
     if (it == m_store.end())
         return std::nullopt;
     return it->second;
@@ -68,7 +68,7 @@ std::vector<SatTleEntry> SatStates::getAllTles() const
     std::lock_guard<std::mutex> lock(m_mutex);
     std::vector<SatTleEntry> result;
     result.reserve(m_store.size());
-    for (const auto &[pci, entry] : m_store)
+    for (const auto &[nci, entry] : m_store)
         result.push_back(entry);
     return result;
 }
@@ -79,10 +79,10 @@ size_t SatStates::size() const
     return m_store.size();
 }
 
-std::shared_ptr<Propagator> SatStates::getSgp4(int pci) const
+std::shared_ptr<Propagator> SatStates::getSgp4(int64_t nci) const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    auto it = m_sgp4.find(pci);
+    auto it = m_sgp4.find(nci);
     if (it == m_sgp4.end())
         return nullptr;
     return it->second;
@@ -122,7 +122,7 @@ void SatStates::clear()
  * @return std::vector<SatPriorityScore> 
  */
 std::vector<SatPriorityScore> SatStates::PrioritizeTargetSats(
-                                           const std::vector<int> &candidatePcis,
+                                           const std::vector<int64_t> &candidateNcis,
                                            const EcefPosition &observerEcef,
                                            int64_t tStartSec,
                                            int elevationMinDeg,
@@ -135,15 +135,15 @@ std::vector<SatPriorityScore> SatStates::PrioritizeTargetSats(
     if (!hasUePos)
         return prioritized;
 
-    if (candidatePcis.empty())
+    if (candidateNcis.empty())
         return prioritized;
 
     if (maxLookaheadSec < 0)
         return prioritized;
 
-    for (int pci : candidatePcis)
+    for (int64_t nci : candidateNcis)
     {
-        auto sgp4 = getSgp4(pci);
+        auto sgp4 = getSgp4(nci);
 
         // see if this sat is within the elevation angle threshold at the 
         //   serving sat's exit time.  if not, skip this candidate.
@@ -163,12 +163,12 @@ std::vector<SatPriorityScore> SatStates::PrioritizeTargetSats(
                                                     nadirDummy);
 
         const int transitSec = tNeighborExit - tStartSec;
-        prioritized.emplace_back(pci, transitSec);
+        prioritized.emplace_back(nci, transitSec);
     }
 
     std::sort(prioritized.begin(), prioritized.end(), [](const SatPriorityScore &a, const SatPriorityScore &b) {
         if (a.score == b.score)
-            return a.pci < b.pci;
+            return a.nci < b.nci;
         return a.score > b.score;
     });
 

@@ -87,16 +87,16 @@ using nr::sat::ComputeNadir;
 /* ------------------------------------------------------------------ */
 
 
-int selectBestTerrestrial(const std::unordered_set<int> &nonSatPcis, const std::map<int, int> &allMeas)
+int64_t selectBestTerrestrial(const std::unordered_set<int64_t> &nonSatNcis, const std::vector<std::pair<int64_t,int>> &allMeas)
 {
     // select the target candidate with the strongest signal (highest RSRP).
     // In the future, we can add more sophisticated tie-breaking logic here if needed.
-    int bestPci = -1;
+    int64_t bestNci = -1;
     int bestRsrp = std::numeric_limits<int>::min();
 
-    for (int pci : nonSatPcis)
+    for (int64_t nci : nonSatNcis)
     {
-        auto it = allMeas.find(pci);
+        auto it = std::find_if(allMeas.begin(), allMeas.end(), [&](const std::pair<int64_t,int> &p) { return p.first == nci; });
         if (it == allMeas.end())
             continue;
         int rsrp = it->second;
@@ -104,11 +104,11 @@ int selectBestTerrestrial(const std::unordered_set<int> &nonSatPcis, const std::
         if (rsrp > bestRsrp)
         {
             bestRsrp = rsrp;
-            bestPci = pci;
+            bestNci = nci;
         }
     }
 
-    return bestPci;
+    return bestNci;
 }
 
 /**
@@ -116,35 +116,29 @@ int selectBestTerrestrial(const std::unordered_set<int> &nonSatPcis, const std::
  * Only used if multiple candidate target gnbs are satellites.
  * 
  * @param servingCellId 
- * @param satPcis 
+ * @param satNcis 
  * @return std::vector<nr::sat::SatPriorityScore> 
  */
 std::vector<nr::sat::SatPriorityScore> UeRrcTask::selectBestSatellite(
-    int servingCellId,
-    const std::unordered_set<int> &satPcis)
+    int64_t servingCellId,
+    const std::unordered_set<int64_t> &satNcis)
 {
 
     std::vector<nr::sat::SatPriorityScore> priorities{};
 
     // sanity check
-    if (satPcis.empty())
+    if (satNcis.empty())
         return priorities;
 
     // get current sat time
     const int64_t satNowMs = m_base->satTime != nullptr ? m_base->satTime->CurrentSatTimeMillis()
                                                          : utils::CurrentTimeMillis();
 
-    // failsafe to determine PCI
-    int servingPci = servingCellId;
-    auto servingIt = m_cellDesc.find(servingCellId);
-    if (servingIt != m_cellDesc.end() && servingIt->second.sib1.hasSib1)
-        servingPci = cons::getPciFromNci(servingIt->second.sib1.nci);
-
     // dummy routing until actual propagators are built:
-    for (auto it = satPcis.begin(); it != satPcis.end(); ++it)
+    for (auto it = satNcis.begin(); it != satNcis.end(); ++it)
     {
-        int pci = *it;
-        priorities.emplace_back(pci, 0); // dummy score of 0 for now
+        int64_t nci = *it;
+        priorities.emplace_back(nci, 0); // dummy score of 0 for now
     }
 
     return priorities;
@@ -444,17 +438,17 @@ void UeRrcTask::parseConditionalReconfiguration(
                             auto *rws = cellGroupConfig->spCellConfig->reconfigurationWithSync;
 
                             // found the PCI, cRNTI and t304 timers for the candidate's target cell
-                            cand.targetPci =
+                            cand.targetNci =
                                 (rws->spCellConfigCommon && rws->spCellConfigCommon->physCellId)
-                                    ? static_cast<int>(*rws->spCellConfigCommon->physCellId)
+                                    ? static_cast<int64_t>(*rws->spCellConfigCommon->physCellId)
                                     : -1;
                             cand.newCRNTI = static_cast<int>(rws->newUE_Identity);
                             cand.t304Ms = nr::rrc::common::t304EnumToMs(rws->t304);
                             foundRWS = true;
                         }
                         asn::Free(asn_DEF_ASN_RRC_CellGroupConfig, cellGroupConfig);
-                        m_logger->debug("CHO candidate %d: decoded cRNTI=%d PCI=%d T304=%dms from nested RRCReconfiguration",
-                                        cand.candidateId, cand.newCRNTI, cand.targetPci, cand.t304Ms);
+                        m_logger->debug("CHO candidate %d: decoded cRNTI=%d NCI=%ld T304=%dms from nested RRCReconfiguration",
+                                        cand.candidateId, cand.newCRNTI, cand.targetNci, cand.t304Ms);
                             
                     }
                 }
@@ -474,9 +468,9 @@ void UeRrcTask::parseConditionalReconfiguration(
         // Enable candidate for evaluation
         cand.executed = false;
 
-        m_logger->info("CHO candidate %d added: targetPCI=%d newC-RNTI=%d t304=%dms "
+        m_logger->info("CHO candidate %d added: targetNCI=%d newC-RNTI=%d t304=%dms "
                        "conditions=%s",
-                       cand.candidateId, cand.targetPci, cand.newCRNTI, cand.t304Ms,
+                       cand.candidateId, cand.targetNci, cand.newCRNTI, cand.t304Ms,
                        conditionGroupStr(cand.measIds, m_measConfig).c_str());
 
         // add to the candidate list, or update if candidateId already exists
@@ -510,7 +504,7 @@ void UeRrcTask::parseConditionalReconfiguration(
  * @return true 
  * @return false 
  */
-bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int> &allMeas)
+bool UeRrcTask::evaluateChoCandidates(int64_t servingCellId, const std::vector<std::pair<int64_t,int>> &allMeas)
 {
     // if no candidates, or if handover is already in progress, or if measurement evaluation is suspended, then skip
     if (m_choCandidates.empty() || m_handoverInProgress || m_measurementEvalSuspended)
@@ -520,8 +514,8 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
     for (int i = 0; i < static_cast<int>(m_choCandidates.size()); i++)
     {
         const auto &cand = m_choCandidates[i];
-        m_logger->debug("Evaluating CHO candidate %d: targetPCI=%d conditions=%s executed=%s",
-                        cand.candidateId, cand.targetPci, conditionGroupStr(cand.measIds, m_measConfig).c_str(),
+        m_logger->debug("Evaluating CHO candidate %d: targetNCI=%d conditions=%s executed=%s",
+                        cand.candidateId, cand.targetNci, conditionGroupStr(cand.measIds, m_measConfig).c_str(),
                         cand.executed ? "yes" : "no");
 
         if (cand.executed)
@@ -541,7 +535,7 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
                 total_satisfied++;
             }
         }
-        if ((total_satisfied != 0U) && (total_satisfied == cand.measIds.size()))
+        if ((total_satisfied != 0) && (total_satisfied == cand.measIds.size()))
         {
             m_logger->debug("CHO candidate %d: triggered by event group %s",
                             cand.candidateId, conditionGroupStr(cand.measIds, m_measConfig).c_str());
@@ -563,7 +557,7 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
         auto ci = triggeredCandidateIndices[0];
         auto &cand = m_choCandidates[ci];
         m_logger->info("CHO candidate %d is only triggered candidate; executing handover to PCI %d",
-                       cand.candidateId, cand.targetPci);
+                       cand.candidateId, cand.targetNci);
         executeChoCandidate(cand);
         return true;
     }
@@ -573,26 +567,24 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
     // if these targets are satellites, then we need to calculate their transit times. Sat with the longest
     //  transit time will be in range teh longest and will be highest in sky
     
-    // generate list of PCIs that are sats
-    std::unordered_set<int> satPcis;
-    std::map<int, int> PciToVecIdx;
-    std::unordered_set<int> nonSatPcis;
+    // generate list of NCIs that are sats
+    std::unordered_set<int64_t> satNcis;
+    std::map<int64_t, int> NciToVecIdx;
+    std::unordered_set<int64_t> nonSatNcis;
     for (int ci : triggeredCandidateIndices)
     {
         auto &cand = m_choCandidates[ci];
-        PciToVecIdx[cand.targetPci] = ci;
+        NciToVecIdx[cand.targetNci] = ci;
         bool isSatCandidate = false;
         for (const auto &[cellId, desc] : m_cellDesc)
         {
             (void)cellId;
+            // if it doesn't have a SIB19 entry, skip it
             if (!desc.sib19.hasSib19)
                 continue;
-            if (desc.sib19.entriesByPci.count(cand.targetPci) != 0)
-            {
-                isSatCandidate = true;
-                break;
-            }
-            if (desc.sib1.hasSib1 && cons::getPciFromNci(desc.sib1.nci) == cand.targetPci)
+
+            // go through each SIB19 entry and if the candidate's targetNci matches any of the SIB19 entries for this cell, then it's a SAT candidate
+            if (desc.sib19.entriesByNci.count(cand.targetNci) != 0)
             {
                 isSatCandidate = true;
                 break;
@@ -601,33 +593,33 @@ bool UeRrcTask::evaluateChoCandidates(int servingCellId, const std::map<int, int
 
         if (isSatCandidate)
         {
-            satPcis.insert(cand.targetPci);
+            satNcis.insert(cand.targetNci);
         }
         else
         {
-            nonSatPcis.insert(cand.targetPci);
+            nonSatNcis.insert(cand.targetNci);
         }
     }
 
-    int bestSatPci = -1;
-    const auto prioritizedSat = selectBestSatellite(servingCellId, satPcis);
+    int bestSatNci = -1;
+    const auto prioritizedSat = selectBestSatellite(servingCellId, satNcis);
     if (!prioritizedSat.empty())
-        bestSatPci = prioritizedSat.front().pci;
+        bestSatNci = prioritizedSat.front().nci;
 
     // for non-SATs, we can apply the normal RSRP-based tie-breaking logic (highest RSRP wins)
-    int bestNonSatPci = selectBestTerrestrial(nonSatPcis, allMeas);
+    int bestNonSatNci = selectBestTerrestrial(nonSatNcis, allMeas);
 
     // for now, we pick the best SAT candidate if one exists, otherwise we pick the best non-SAT candidate.
-    int bestPci = bestSatPci > 0 ? bestSatPci : bestNonSatPci;
-    if (bestPci <= 0 || PciToVecIdx.count(bestPci) == 0)
+    int bestNci = bestSatNci > 0 ? bestSatNci : bestNonSatNci;
+    if (bestNci <= 0 || NciToVecIdx.count(bestNci) == 0)
     {
         m_logger->warn("CHO tie-break could not choose a valid candidate");
         return false;
     }
 
-    auto &foundCand = m_choCandidates[PciToVecIdx[bestPci]];
+    auto &foundCand = m_choCandidates[NciToVecIdx[bestNci]];
     m_logger->info("CHO candidate %d selected as best candidate; executing handover to PCI %d",
-                    foundCand.candidateId, foundCand.targetPci);
+                    foundCand.candidateId, foundCand.targetNci);
     executeChoCandidate(foundCand);
     return true;
 
@@ -644,8 +636,8 @@ void UeRrcTask::executeChoCandidate(ChoCandidate &candidate)
 {
     candidate.executed = true;
 
-    m_logger->info("Executing CHO candidate %d: targetPCI=%d newC-RNTI=%d t304=%dms",
-                   candidate.candidateId, candidate.targetPci,
+    m_logger->info("Executing CHO candidate %d: targetNCI=%d newC-RNTI=%d t304=%dms",
+                   candidate.candidateId, candidate.targetNci,
                    candidate.newCRNTI, candidate.t304Ms);
 
     // Cancel remaining CHO candidates before starting the handover.
@@ -657,7 +649,7 @@ void UeRrcTask::executeChoCandidate(ChoCandidate &candidate)
             c.executed = true;
     }
 
-    performHandover(candidate.txId, candidate.targetPci, candidate.newCRNTI,
+    performHandover(candidate.txId, candidate.targetNci, candidate.newCRNTI,
                     candidate.t304Ms, /*hasRachConfig=*/false);
 }
 

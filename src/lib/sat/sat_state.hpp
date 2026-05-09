@@ -35,7 +35,7 @@ class SatStates
   public:
 
     /// Return the entry for the given PCI, or nullopt if not present.
-    std::optional<SatTleEntry> getTle(int pci) const;
+    std::optional<SatTleEntry> getTle(int64_t nci) const;
     
     /// Return a snapshot of all entries.
     std::vector<SatTleEntry> getAllTles() const;
@@ -44,21 +44,21 @@ class SatStates
     size_t size() const;
 
     /// Get reference to the SGP4 object for the given PCI, or nullptr if not present.
-    std::shared_ptr<Propagator> getSgp4(int pci) const;
+    std::shared_ptr<Propagator> getSgp4(int64_t nci) const;
 
     /// clear the store
     void clear();
 
     /// Prioritizes target satellites based on their transit times.
-    std::vector<SatPriorityScore> PrioritizeTargetSats(const std::vector<int> &candidatePcis, const EcefPosition &observerEcef, int64_t tStartSec,
+    std::vector<SatPriorityScore> PrioritizeTargetSats(const std::vector<int64_t> &candidateNcis, const EcefPosition &observerEcef, int64_t tStartSec,
           int elevationMinDeg, int maxLookaheadSec);
 
   private:
     mutable std::mutex m_mutex;
     // TLEs keyed by PCI.
-    std::unordered_map<int, SatTleEntry> m_store;
+    std::unordered_map<int64_t, SatTleEntry> m_store;
     // SGP4 propagation objects keyed by PCI.
-    std::unordered_map<int, std::shared_ptr<Propagator>> m_sgp4;
+    std::unordered_map<int64_t, std::shared_ptr<Propagator>> m_sgp4;
 };
 
 } // namespace nr::sat

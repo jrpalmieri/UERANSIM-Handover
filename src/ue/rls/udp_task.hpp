@@ -20,9 +20,41 @@
 namespace nr::ue
 {
 
+inline static int64_t nciFromSti(uint64_t sti)
+{
+    // for gnb transmissions, ST = NCI (36 bits) + Randomizer (10 bits)
+    // to get NCI, just shift the STI right by 10 bits
+    return static_cast<int64_t>(sti >> 10);
+}
+
+class RlsCellMap
+{
+  public:
+    RlsCellMap();
+    RlsCellMap(int64_t last_seen_threshold_ms);
+
+  private:
+    std::vector<uint64_t> stis;
+    std::vector<int64_t> ncis;
+    std::vector<int64_t> last_seen;
+    std::vector<InetAddress> addresses;
+
+    int64_t m_lastSeenThreshold;
+
+  public:
+    void upsertCell(const uint64_t sti, const int64_t last_seen, const InetAddress &address);
+    bool removeCell(const uint64_t sti);
+    bool isCellInRange(const uint64_t sti) const;
+    std::vector<uint64_t> checkLastSeen(int64_t time) const;
+    void setLastSeenThreshold(int64_t threshold) { m_lastSeenThreshold = threshold; }
+    bool getAddressNci(int64_t nci, InetAddress &addr);
+
+};
+
 class RlsUdpTask : public NtsTask
 {
   private:
+
     struct CellInfo
     {
         InetAddress address;
@@ -39,21 +71,24 @@ class RlsUdpTask : public NtsTask
     udp::UdpServer *m_server;
     NtsTask *m_ctlTask;
     RlsSharedContext* m_shCtx;
-    std::vector<InetAddress> m_searchSpace;
-    // map of all known gnb cells, indexed by STI value
-    std::unordered_map<uint64_t, CellInfo> m_cells;
-    // map of STI values, indexed by cellId (which is UE-local)
-    std::unordered_map<int, uint64_t> m_cellIdToSti;
     int64_t m_lastLoop;
-    // used to generate a unique UE-local cellId for each new cell that sends a heartbeat ACK
-    int m_cellIdCounter;
     int m_loopCounter;
-    int m_receiveTimeout;
     int m_heartbeatThreshold;
+    int m_receiveTimeout;
 
-    std::unordered_map<u_int64_t, int> cellIdBySti;  // map of cellId indexed by sti value
 
-    bool handoverEnabled;
+    // map of all known gnb cells, indexed by STI value
+    //std::unordered_map<uint64_t, CellInfo> m_cells;
+    // map of STI values, indexed by cellId (which is UE-local)
+    //std::unordered_map<int, uint64_t> m_cellIdToSti;
+    //std::unordered_map<u_int64_t, int> cellIdBySti;  // map of cellId indexed by sti value
+
+    // tracker for all cells that have sent a heartbeat ACK, used to determine which cells are in range and to trigger heartbeat timeouts
+    RlsCellMap m_cellMap;
+
+    // list of all gNB IPs to send heartbeats
+    //  (can be altered dynamically through CLI commands)
+    std::vector<InetAddress> m_searchSpace;
 
     friend class UeCmdHandler;
 
@@ -68,15 +103,16 @@ class RlsUdpTask : public NtsTask
 
   private:
     void sendRlsPdu(const InetAddress &addr, const rls::RlsMessage &msg);
-    void receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::RlsMessage> &&msg);
+    void receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::RlsMessage> &&msg, int64_t time);
     //void onSignalChangeOrLost(int cellId);
     void heartbeatCycle(uint64_t time);
-    void updateMeasurements(const int dbm, const int cellId);
-    void onHeartbeatFailure(int cellId);
+    //void updateMeasurements(const int dbm, const int cellId);
+    //void onHeartbeatFailure(int cellId);
+
 
   public:
     void initialize(NtsTask *ctlTask);
-    void send(int cellId, const rls::RlsMessage &msg);
+    void send(int64_t nci, const rls::RlsMessage &msg);
     int addSearchSpaceIps(const std::vector<std::string> &ipAddresses);
     int removeSearchSpaceIps(const std::vector<std::string> &ipAddresses);
     std::vector<std::string> listSearchSpaceIps() const;

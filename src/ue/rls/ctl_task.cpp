@@ -104,7 +104,7 @@ void RlsControlTask::onQuit()
  * @param cellId 
  * @param msg 
  */
-void RlsControlTask::handleRlsMessage(int cellId, rls::RlsMessage &msg)
+void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
 {
     // if an ACK, then remove the acknowledged PDU from the m_pduMap tracking map
     if (msg.msgType == rls::EMessageType::PDU_TRANSMISSION_ACK)
@@ -158,7 +158,7 @@ void RlsControlTask::handleRlsMessage(int cellId, rls::RlsMessage &msg)
     }
 }
 
-void RlsControlTask::handleSignalChange(int cellId, int dbm)
+void RlsControlTask::handleSignalChange(int64_t cellId, int dbm)
 {
     auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::SIGNAL_CHANGED);
     w->cellId = cellId;
@@ -176,7 +176,7 @@ void RlsControlTask::handleSignalChange(int cellId, int dbm)
  * @param channel 
  * @param data 
  */
-void RlsControlTask::handleUplinkRrcDelivery(int cellId, uint32_t pduId, rrc::RrcChannel channel, OctetString &&data)
+void RlsControlTask::handleUplinkRrcDelivery(int64_t nci, uint32_t pduId, rrc::RrcChannel channel, OctetString &&data)
 {
     // PDU send tracking: if the message has a non-zero pduId, 
     //  then it is tracked in m_pduMap until acknowledged by the gnb.
@@ -190,7 +190,7 @@ void RlsControlTask::handleUplinkRrcDelivery(int cellId, uint32_t pduId, rrc::Rr
 
             auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::RADIO_LINK_FAILURE);
             w->rlfCause = rls::ERlfCause::PDU_ID_EXISTS;
-            w->cellId = cellId;
+            w->cellId = nci;
             m_mainTask->push(std::move(w));
             return;
         }
@@ -202,13 +202,13 @@ void RlsControlTask::handleUplinkRrcDelivery(int cellId, uint32_t pduId, rrc::Rr
 
             auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::RADIO_LINK_FAILURE);
             w->rlfCause = rls::ERlfCause::PDU_ID_FULL;
-            w->cellId = cellId;
+            w->cellId = nci;
             m_mainTask->push(std::move(w));
             return;
         }
 
         // add PDU to the map for tracking until acknowledgment, with the current time as sentTime
-        m_pduMap[pduId].endPointId = cellId;
+        m_pduMap[pduId].endPointId = nci;
         m_pduMap[pduId].id = pduId;
         m_pduMap[pduId].pdu = data.copy();
         m_pduMap[pduId].rrcChannel = channel;
@@ -217,31 +217,31 @@ void RlsControlTask::handleUplinkRrcDelivery(int cellId, uint32_t pduId, rrc::Rr
 
     // create a new RlsPduTransmission message with the provided RRC payload and 
     //  send it to the UDP task to be forwarded to the gnb
-    rls::RlsPduTransmission msg{m_shCtx->sti, m_shCtx->senderId, m_shCtx->cRnti.load()};
+    rls::RlsPduTransmission msg{m_shCtx->sti};
     msg.pduType = rls::EPduType::RRC;
     msg.pdu = std::move(data);
     msg.payload = static_cast<uint32_t>(channel);
     msg.pduId = pduId;
 
-    m_udpTask->send(cellId, msg);
+    m_udpTask->send(nci, msg);
 }
 
 /**
  * @brief Used to forward uplink data packets to the gnb 
  * via the UDP task.
  * 
- * @param psi a payload type code
+ * @param pduSessionId the session ID for this PDU Session
  * @param data the data to send
  */
-void RlsControlTask::handleUplinkDataDelivery(int psi, OctetString &&data)
+void RlsControlTask::handleUplinkDataDelivery(int pduSessionId, OctetString &&data)
 {
     
     // create a new RlsPduTransmission message with the provided data payload and
     //  send it to the UDP task to be forwarded to the gnb
-    rls::RlsPduTransmission msg{m_shCtx->sti, m_shCtx->senderId, m_shCtx->cRnti.load()};
+    rls::RlsPduTransmission msg{m_shCtx->sti};
     msg.pduType = rls::EPduType::DATA;
     msg.pdu = std::move(data);
-    msg.payload = static_cast<uint32_t>(psi);
+    msg.payload = static_cast<uint32_t>(pduSessionId);
     msg.pduId = 0;
 
     m_udpTask->send(m_servingCell, msg);
@@ -305,7 +305,7 @@ void RlsControlTask::onAckSendTimerExpired()
         if (!item.second.empty())
             continue;
 
-        rls::RlsPduTransmissionAck msg{m_shCtx->sti, m_shCtx->senderId, m_shCtx->cRnti.load()};
+        rls::RlsPduTransmissionAck msg{m_shCtx->sti};
         msg.pduIds = std::move(item.second);
 
         m_udpTask->send(item.first, msg);

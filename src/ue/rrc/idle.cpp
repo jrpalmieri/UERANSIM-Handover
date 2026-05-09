@@ -40,7 +40,7 @@ void UeRrcTask::performCellSelection()
 
     int64_t currentTime = utils::CurrentTimeMillis();
 
-    m_logger->info("Starting idle mode cell selection, current time since startup: %dms, current cellId: %d",
+    m_logger->info("Starting idle mode cell selection, current time since startup: %dms, current cellId: %lu",
                     static_cast<int>(currentTime - m_startedTime), m_base->shCtx.currentCell.get().cellId);
 
     //    if (currentTime - m_startedTime <= 1000LL && m_cellDesc.empty())
@@ -237,14 +237,13 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
         }
 
         // signal strength threshold check
-        int dbm = MIN_RSRP;
+        int dbm = m_base->cellDbMeas.getMeasurement(item.first);
+        // cell not found
+        if (dbm < MIN_RSRP)
         {
-            // signal strength is from global cellDbMeas map
-            std::shared_lock lock(m_base->cellDbMeasMutex);
-            auto it = m_base->cellDbMeas.find(item.first);
-            if (it != m_base->cellDbMeas.end())
-                dbm = it->second;
+            continue;
         }
+
         m_logger->debug("CellId %d has signal strength %d dBm", item.first, dbm);
 
         if (dbm < cons::RLF_RSRP)
@@ -263,13 +262,9 @@ bool UeRrcTask::lookForSuitableCell(ActiveCellInfo &cellInfo, CellSelectionRepor
 
 
     // sort the candidate list by signal strength (dbm) in descending order
-    {
-        std::shared_lock lock(m_base->cellDbMeasMutex);
-
-        std::sort(candidates.begin(), candidates.end(), [this](std::pair<int, int> a, std::pair<int, int> b) {
+    std::sort(candidates.begin(), candidates.end(), [this](std::pair<int, int> a, std::pair<int, int> b) {
             return a.second > b.second;
         });
-    }
 
     // select the top of the list as the best candidate
     int selectedId = candidates[0].first;
@@ -337,13 +332,10 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
         }
         
         // signal strength threshold check
-        int dbm = MIN_RSRP;
+        int dbm = m_base->cellDbMeas.getMeasurement(item.first);
+        // cell not found        if (dbm < MIN_RSRP)
         {
-            // signal strength is from global cellDbMeas map
-            std::shared_lock lock(m_base->cellDbMeasMutex);
-            auto it = m_base->cellDbMeas.find(item.first);
-            if (it != m_base->cellDbMeas.end())
-                dbm = it->second;
+            continue;
         }
 
         if (dbm < cons::RLF_RSRP)
@@ -363,14 +355,9 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
     Plmn selectedPlmn = m_base->shCtx.selectedPlmn.get();
 
     // sort the candidate list by signal strength (dbm) in descending order
-    // signal strength is from global celldbmeas map
-    {
-        std::shared_lock lock(m_base->cellDbMeasMutex);
-
-        std::sort(candidates.begin(), candidates.end(), [this](std::pair<int, int> a, std::pair<int, int> b) {
+    std::sort(candidates.begin(), candidates.end(), [this](std::pair<int, int> a, std::pair<int, int> b) {
             return a.second > b.second;
         });
-    }
 
     // Then order candidates by PLMN priority if we have a selected PLMN
     if (selectedPlmn.hasValue())

@@ -17,27 +17,43 @@
 namespace nr::ue
 {
 
+
+// make an STI value for a UE.
+//  convention is the STI = IMSI value in the high bit locations (starting at bit 10) + random value in the low 10 bits. 
+//  This allows the gnb to identify the UE by its IMSI from the STI, while also ensuring that the STI is unique across 
+//  multiple runs of the program (since the random value will be different each time).
+static uint64_t makeSti(const Supi supi)
+{
+    const auto &imsi =supi.value;
+    // IMSI is a 15-char decimal string; convert to uint64
+    uint64_t sti = static_cast<uint64_t>(
+        std::stoul(imsi));
+
+    // shift left by 10 bits
+    sti <<= 10;
+
+    // append random 10 bits
+    sti += Random::Mixed(utils::CurrentTimeMillis()).nextI(0, 1024);
+
+    return sti;
+}
+
 UeRlsTask::UeRlsTask(TaskBase *base) : m_base{base}
 {
     m_logger = m_base->logBase->makeUniqueLogger(m_base->config->getLoggerPrefix() + "rls");
 
     m_shCtx = new RlsSharedContext();
-    m_shCtx->sti = Random::Mixed(base->config->getNodeName()).nextL();
 
-    // Derive senderId from the low-order 8 digits of the IMSI if available, otherwise default to 0.
+    // create a unique STI for this UE based on its SUPI
     if (base->config->supi.has_value())
     {
-        const auto &imsi = base->config->supi->value;
-        // IMSI is a decimal string; parse the last 8 digits
-        // and truncate to uint32
-        std::string tail = imsi.length() > 8
-            ? imsi.substr(imsi.length() - 8) : imsi;
-        m_shCtx->senderId = static_cast<uint32_t>(
-            std::stoul(tail));
+        m_shCtx->sti = makeSti(base->config->supi.value());
     }
     else
     {
-        m_shCtx->senderId = 0;
+        // old STI assignment logic
+        //m_shCtx->sti = Random::Mixed(base->config->supi.value()).nextL();
+        m_shCtx->sti = Random::Mixed(base->config->getNodeName()).nextL();
     }
 
     m_shCtx->cRnti = 0;

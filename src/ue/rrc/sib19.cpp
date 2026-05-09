@@ -83,7 +83,7 @@ static constexpr size_t TLE_COMMON_OFFSET = 172;
 /*  Note - this is a custom implementation of SIB19 messages that does
 not use the standard ASN.1 parsing */
 /* ================================================================== */
-void UeRrcTask::receiveSib19(int cellId, const OctetString &pdu)
+void UeRrcTask::receiveSib19(int64_t cellId, const OctetString &pdu)
 {
     const uint8_t *p = pdu.data();
     size_t len = static_cast<size_t>(pdu.length());
@@ -169,243 +169,127 @@ void UeRrcTask::receiveSib19(int cellId, const OctetString &pdu)
     int64_t receivedTime = utils::CurrentTimeMillis() - m_startedTime;
     Sib19Info sib19{};
 
-    m_logger->debug("Received DL_SIB19 PDU from cellId=%d, len=%zu bytes", cellId, len);
+    m_logger->debug("Received DL_SIB19 PDU from cellId=%ld, len=%zu bytes", cellId, len);
 
-    if (len >= SIB19_MULTI_HEADER_SIZE && readU8(0) == SIB19_MULTI_VERSION)
+    uint8_t ephType = readU8(1);
+    if (ephType > 2)
     {
-        uint8_t ephType = readU8(1);
-        if (ephType > 2)
-        {
-            m_logger->err("DL_SIB19: unsupported multi-entry ephemeris type %u", ephType);
-            return;
-        }
-
-        const bool isTle = (ephType == 2);
-        const size_t entrySize = isTle ? SIB19_TLE_ENTRY_SIZE : SIB19_MULTI_ENTRY_SIZE;
-        const size_t commonOff = isTle ? TLE_COMMON_OFFSET : COMMON_OFFSET;
-
-        uint32_t entryCount = readU32(4);
-        size_t expectedSize = SIB19_MULTI_HEADER_SIZE + static_cast<size_t>(entryCount) * entrySize;
-        if (len < expectedSize)
-        {
-            m_logger->err("DL_SIB19: multi-entry PDU too short (%zu bytes, expected at least %zu)",
-                          len, expectedSize);
-            return;
-        }
-
-        std::vector<nr::sat::SatTleEntry> foundTles;
-
-        for (uint32_t i = 0; i < entryCount; i++)
-        {
-            size_t base = SIB19_MULTI_HEADER_SIZE + static_cast<size_t>(i) * entrySize;
-            int32_t pci = readI32(base);
-            if (pci < 0 || pci > 1007)
-                continue;
-
-            Sib19Info::PciEntry entry{};
-
-            if (ephType == 0)
-            {
-                entry.ntnConfig.ephemerisInfo.type = EEphemerisType::POSITION_VELOCITY;
-                entry.ntnConfig.ephemerisInfo.posVel.positionX  = readF64(base + 4);
-                entry.ntnConfig.ephemerisInfo.posVel.positionY  = readF64(base + 12);
-                entry.ntnConfig.ephemerisInfo.posVel.positionZ  = readF64(base + 20);
-                entry.ntnConfig.ephemerisInfo.posVel.velocityVX = readF64(base + 28);
-                entry.ntnConfig.ephemerisInfo.posVel.velocityVY = readF64(base + 36);
-                entry.ntnConfig.ephemerisInfo.posVel.velocityVZ = readF64(base + 44);
-            }
-            else if (ephType == 1)
-            {
-                entry.ntnConfig.ephemerisInfo.type = EEphemerisType::ORBITAL_PARAMETERS;
-                entry.ntnConfig.ephemerisInfo.orbital.semiMajorAxis = readI64(base + 4);
-                entry.ntnConfig.ephemerisInfo.orbital.eccentricity  = readI32(base + 12);
-                entry.ntnConfig.ephemerisInfo.orbital.periapsis     = readI32(base + 16);
-                entry.ntnConfig.ephemerisInfo.orbital.longitude     = readI32(base + 20);
-                entry.ntnConfig.ephemerisInfo.orbital.inclination   = readI32(base + 24);
-                entry.ntnConfig.ephemerisInfo.orbital.meanAnomaly   = readI32(base + 28);
-            }
-            else  // ephType == 2  (TLE)
-            {
-                // Wire layout within the entry (offsets from entry start):
-                //   +4   25 bytes  name  (null-padded, up to 24 chars)
-                //   +29  70 bytes  line1 (null-padded, 69-char TLE line 1)
-                //   +99  70 bytes  line2 (null-padded, 69-char TLE line 2)
-                entry.ntnConfig.ephemerisInfo.type = EEphemerisType::TLE;
-                auto &tle = entry.ntnConfig.ephemerisInfo.tle;
-
-                if (base + 4 + 25 <= len)
-                    std::memcpy(tle.name, p + base + 4, 25);
-                tle.name[24] = '\0';
-
-                if (base + 29 + 70 <= len)
-                    std::memcpy(tle.line1, p + base + 29, 70);
-                tle.line1[69] = '\0';
-
-                if (base + 99 + 70 <= len)
-                    std::memcpy(tle.line2, p + base + 99, 70);
-                tle.line2[69] = '\0';
-                
-                foundTles.emplace_back(nr::sat::SatTleEntry{
-                    pci,
-                    tle.name,
-                    tle.line1,
-                    tle.line2,
-                    receivedTime
-                });
-            }
-
-            fillCommonFields(base, commonOff, entry.ntnConfig, entry.cellSpecificKoffset,
-                             entry.ntnPolarization, entry.taDrift);
-            entry.receivedTime = receivedTime;
-
-            sib19.entriesByPci[pci] = std::move(entry);
-        }
-
-        if (sib19.entriesByPci.empty())
-        {
-            m_logger->err("DL_SIB19: no valid entries in multi-entry payload");
-            return;
-        }
-
-        sib19.hasSib19 = true;
-
-        auto selected = sib19.entriesByPci.find(cellId);
-        if (selected == sib19.entriesByPci.end())
-            selected = sib19.entriesByPci.begin();
-
-        sib19.ntnConfig = selected->second.ntnConfig;
-        sib19.cellSpecificKoffset = selected->second.cellSpecificKoffset;
-        sib19.ntnPolarization = selected->second.ntnPolarization;
-        sib19.taDrift = selected->second.taDrift;
-        sib19.receivedTime = selected->second.receivedTime;
-
-        auto &desc = m_cellDesc[cellId];
-        desc.sib19 = sib19;
-
-        // update the SatStates store with the new ephemeris info for this cell's PCI
-        if (m_base->satState && foundTles.size() > 0)
-        {
-            m_base->satState->upsertAll(foundTles);
-        }
-
-        m_logger->info("SIB19 received for cell %d: multi-entry count=%zu selectedPci=%d",
-                       cellId,
-                       sib19.entriesByPci.size(),
-                       selected->first);
+        m_logger->err("DL_SIB19: unsupported multi-entry ephemeris type %u", ephType);
         return;
     }
 
-    if (len < SIB19_LEGACY_PDU_SIZE)
+    const bool isTle = (ephType == 2);
+    const size_t entrySize = isTle ? SIB19_TLE_ENTRY_SIZE : SIB19_MULTI_ENTRY_SIZE;
+    const size_t commonOff = isTle ? TLE_COMMON_OFFSET : COMMON_OFFSET;
+
+    uint32_t entryCount = readU32(4);
+    size_t expectedSize = SIB19_MULTI_HEADER_SIZE + static_cast<size_t>(entryCount) * entrySize;
+    if (len < expectedSize)
     {
-        m_logger->err("DL_SIB19: PDU too short (%zu bytes, expected >= %zu)", len, SIB19_LEGACY_PDU_SIZE);
+        m_logger->err("DL_SIB19: multi-entry PDU too short (%zu bytes, expected at least %zu)",
+                        len, expectedSize);
         return;
     }
 
-    // --- Header ---
-    uint8_t ephType = readU8(0);
+    std::vector<nr::sat::SatTleEntry> foundTles;
 
-    // --- Ephemeris ---
-    if (ephType == 0)
+    for (uint32_t i = 0; i < entryCount; i++)
     {
-        // Position/Velocity state vectors
-        sib19.ntnConfig.ephemerisInfo.type = EEphemerisType::POSITION_VELOCITY;
-        auto &pv = sib19.ntnConfig.ephemerisInfo.posVel;
-        pv.positionX  = readF64(4);
-        pv.positionY  = readF64(12);
-        pv.positionZ  = readF64(20);
-        pv.velocityVX = readF64(28);
-        pv.velocityVY = readF64(36);
-        pv.velocityVZ = readF64(44);
+        size_t base = SIB19_MULTI_HEADER_SIZE + static_cast<size_t>(i) * entrySize;
+        int64_t nci = readI64(base);
 
-        m_logger->info("SIB19 cell %d: ephemeris posVel X=%.1f Y=%.1f Z=%.1f "
-                       "VX=%.4f VY=%.4f VZ=%.4f",
-                       cellId, pv.positionX, pv.positionY, pv.positionZ,
-                       pv.velocityVX, pv.velocityVY, pv.velocityVZ);
+        Sib19Info::CellEntry entry{};
+
+        if (ephType == 0)
+        {
+            entry.ntnConfig.ephemerisInfo.type = EEphemerisType::POSITION_VELOCITY;
+            entry.ntnConfig.ephemerisInfo.posVel.positionX  = readF64(base + 4);
+            entry.ntnConfig.ephemerisInfo.posVel.positionY  = readF64(base + 12);
+            entry.ntnConfig.ephemerisInfo.posVel.positionZ  = readF64(base + 20);
+            entry.ntnConfig.ephemerisInfo.posVel.velocityVX = readF64(base + 28);
+            entry.ntnConfig.ephemerisInfo.posVel.velocityVY = readF64(base + 36);
+            entry.ntnConfig.ephemerisInfo.posVel.velocityVZ = readF64(base + 44);
+        }
+        else if (ephType == 1)
+        {
+            entry.ntnConfig.ephemerisInfo.type = EEphemerisType::ORBITAL_PARAMETERS;
+            entry.ntnConfig.ephemerisInfo.orbital.semiMajorAxis = readI64(base + 4);
+            entry.ntnConfig.ephemerisInfo.orbital.eccentricity  = readI32(base + 12);
+            entry.ntnConfig.ephemerisInfo.orbital.periapsis     = readI32(base + 16);
+            entry.ntnConfig.ephemerisInfo.orbital.longitude     = readI32(base + 20);
+            entry.ntnConfig.ephemerisInfo.orbital.inclination   = readI32(base + 24);
+            entry.ntnConfig.ephemerisInfo.orbital.meanAnomaly   = readI32(base + 28);
+        }
+        else  // ephType == 2  (TLE)
+        {
+            // Wire layout within the entry (offsets from entry start):
+            //   +4   25 bytes  name  (null-padded, up to 24 chars)
+            //   +29  70 bytes  line1 (null-padded, 69-char TLE line 1)
+            //   +99  70 bytes  line2 (null-padded, 69-char TLE line 2)
+            entry.ntnConfig.ephemerisInfo.type = EEphemerisType::TLE;
+            auto &tle = entry.ntnConfig.ephemerisInfo.tle;
+
+            if (base + 4 + 25 <= len)
+                std::memcpy(tle.name, p + base + 4, 25);
+            tle.name[24] = '\0';
+
+            if (base + 29 + 70 <= len)
+                std::memcpy(tle.line1, p + base + 29, 70);
+            tle.line1[69] = '\0';
+
+            if (base + 99 + 70 <= len)
+                std::memcpy(tle.line2, p + base + 99, 70);
+            tle.line2[69] = '\0';
+            
+            foundTles.emplace_back(nr::sat::SatTleEntry{
+                nci,
+                tle.name,
+                tle.line1,
+                tle.line2,
+                receivedTime
+            });
+        }
+
+        fillCommonFields(base, commonOff, entry.ntnConfig, entry.cellSpecificKoffset,
+                            entry.ntnPolarization, entry.taDrift);
+        entry.receivedTime = receivedTime;
+
+        sib19.entriesByNci[nci] = std::move(entry);
     }
-    else if (ephType == 1)
-    {
-        // Orbital parameters (Keplerian)
-        sib19.ntnConfig.ephemerisInfo.type = EEphemerisType::ORBITAL_PARAMETERS;
-        auto &orb = sib19.ntnConfig.ephemerisInfo.orbital;
-        orb.semiMajorAxis = readI64(4);
-        orb.eccentricity  = readI32(12);
-        orb.periapsis     = readI32(16);
-        orb.longitude     = readI32(20);
-        orb.inclination   = readI32(24);
-        orb.meanAnomaly   = readI32(28);
 
-        m_logger->info("SIB19 cell %d: ephemeris orbital sma=%" PRId64 " ecc=%d",
-                       cellId, orb.semiMajorAxis, orb.eccentricity);
-    }
-    else
+    if (sib19.entriesByNci.empty())
     {
-        m_logger->err("DL_SIB19: unknown ephemeris type %u", ephType);
+        m_logger->err("DL_SIB19: no valid entries in multi-entry payload");
         return;
     }
 
-    // --- Common fields ---
-    sib19.ntnConfig.epochTime = readI64(COMMON_OFFSET + 0);
-    sib19.ntnConfig.kOffset = readI32(COMMON_OFFSET + 8);
-
-    // Timing Advance
-    int64_t taCommon = readI64(COMMON_OFFSET + 12);
-    int32_t taDrift = readI32(COMMON_OFFSET + 20);
-    int32_t taDriftVar = readI32(COMMON_OFFSET + 24);
-
-    TaInfo ta{};
-    ta.taCommon      = taCommon;
-    ta.taCommonDrift = taDrift;
-    if (taDriftVar != -1)
-        ta.taCommonDriftVariation = taDriftVar;
-    sib19.ntnConfig.taInfo = ta;
-
-    // UL sync validity duration
-    int32_t syncVal = readI32(COMMON_OFFSET + 28);
-    if (syncVal > 0)
-        sib19.ntnConfig.ulSyncValidityDuration =
-            static_cast<ENtnUlSyncValidityDuration>(syncVal);
-
-    // Cell-specific K_offset
-    int32_t csKoff = readI32(COMMON_OFFSET + 32);
-    if (csKoff >= 0)
-        sib19.cellSpecificKoffset = csKoff;
-
-    // NTN Polarization
-    int32_t pol = readI32(COMMON_OFFSET + 36);
-    if (pol >= 0 && pol <= 2)
-        sib19.ntnPolarization = static_cast<ENtnPolarization>(pol);
-
-    // TA drift (top-level shortcut)
-    int32_t taDriftTop = readI32(COMMON_OFFSET + 40);
-    if (taDriftTop != INT32_MIN)
-        sib19.taDrift = taDriftTop;
-
-    // Stamp reception time
-    sib19.receivedTime = receivedTime;
     sib19.hasSib19 = true;
 
-    Sib19Info::PciEntry legacyEntry{};
-    legacyEntry.ntnConfig = sib19.ntnConfig;
-    legacyEntry.cellSpecificKoffset = sib19.cellSpecificKoffset;
-    legacyEntry.ntnPolarization = sib19.ntnPolarization;
-    legacyEntry.taDrift = sib19.taDrift;
-    legacyEntry.receivedTime = sib19.receivedTime;
-    sib19.entriesByPci[cellId] = std::move(legacyEntry);
+    auto selected = sib19.entriesByNci.find(cellId);
+    if (selected == sib19.entriesByNci.end())
+        selected = sib19.entriesByNci.begin();
 
-    // Store in cell descriptor
+    sib19.ntnConfig = selected->second.ntnConfig;
+    sib19.cellSpecificKoffset = selected->second.cellSpecificKoffset;
+    sib19.ntnPolarization = selected->second.ntnPolarization;
+    sib19.taDrift = selected->second.taDrift;
+    sib19.receivedTime = selected->second.receivedTime;
+
     auto &desc = m_cellDesc[cellId];
     desc.sib19 = sib19;
 
+    // update the SatStates store with the new ephemeris info for this cell's PCI
+    if (m_base->satState && foundTles.size() > 0)
+    {
+        m_base->satState->upsertAll(foundTles);
+    }
 
-    m_logger->info("SIB19 received for cell %d: legacy format epochTime=%" PRId64
-                   " kOffset=%d syncValidity=%s",
-                   cellId,
-                   sib19.ntnConfig.epochTime,
-                   sib19.ntnConfig.kOffset,
-                   sib19.ntnConfig.ulSyncValidityDuration.has_value()
-                       ? std::to_string(static_cast<int>(
-                             sib19.ntnConfig.ulSyncValidityDuration.value())).c_str()
-                       : "N/A");
+    m_logger->info("SIB19 received for cell %ld: multi-entry count=%zu selectedPci=%d",
+                    cellId,
+                    sib19.entriesByNci.size(),
+                    selected->first);
+    return;
+
 }
 
 /* ================================================================== */
@@ -515,7 +399,7 @@ Json ToJson(ENtnPolarization v)
     }
 }
 
-Json ToJson(const Sib19Info::PciEntry &v)
+Json ToJson(const Sib19Info::CellEntry &v)
 {
     auto j = Json::Obj({
         {"ntnConfig", ToJson(v.ntnConfig)},
@@ -537,10 +421,10 @@ Json ToJson(const Sib19Info &v)
         return Json{};
 
     Json entries = Json::Arr({});
-    for (const auto &item : v.entriesByPci)
+    for (const auto &item : v.entriesByNci)
     {
         entries.push(Json::Obj({
-            {"pci", item.first},
+            {"nci", item.first},
             {"entry", ToJson(item.second)},
         }));
     }
@@ -549,7 +433,7 @@ Json ToJson(const Sib19Info &v)
         {"hasSib19",    true},
         {"ntnConfig",   ToJson(v.ntnConfig)},
         {"receivedTime", static_cast<int64_t>(v.receivedTime)},
-        {"entriesByPci", std::move(entries)},
+        {"entriesByNci", std::move(entries)},
     });
 
     if (v.cellSpecificKoffset.has_value())

@@ -22,39 +22,109 @@ static constexpr const int BUFFER_SIZE = 16384;
 namespace nr::ue
 {
 
-static std::string IpOnlyFromInetAddress(const InetAddress &address)
+
+RlsCellMap::RlsCellMap() : stis(), ncis(), last_seen(), addresses(), m_lastSeenThreshold(0)
 {
-    char buffer[INET6_ADDRSTRLEN] = {0};
-    const sockaddr *sockAddr = address.getSockAddr();
-
-    if (sockAddr->sa_family == AF_INET)
-    {
-        const auto *in = reinterpret_cast<const sockaddr_in *>(sockAddr);
-        if (inet_ntop(AF_INET, &in->sin_addr, buffer, INET_ADDRSTRLEN) == nullptr)
-            return "";
-        return buffer;
-    }
-
-    if (sockAddr->sa_family == AF_INET6)
-    {
-        const auto *in6 = reinterpret_cast<const sockaddr_in6 *>(sockAddr);
-        if (inet_ntop(AF_INET6, &in6->sin6_addr, buffer, INET6_ADDRSTRLEN) == nullptr)
-            return "";
-        return buffer;
-    }
-
-    return "";
 }
 
+RlsCellMap::RlsCellMap(int64_t last_seen_threshold_ms) : m_lastSeenThreshold(last_seen_threshold_ms), stis(), ncis(), last_seen(), addresses()
+{
+}
+
+void RlsCellMap::upsertCell(const uint64_t sti, const int64_t last_seen_ts, const InetAddress &address)
+{
+    // update if present
+    for (int i = 0; i < stis.size(); i++)
+    {
+        if (stis[i] == sti)
+        {
+            ncis[i] = nciFromSti(sti);
+            last_seen[i] = last_seen_ts;
+            addresses[i] = address;
+            return;
+        }
+    }
+
+    // Add if new
+    stis.push_back(sti);
+    ncis.push_back(nciFromSti(sti));
+    last_seen.push_back(last_seen_ts);
+    addresses.push_back(address);
+}
+
+bool RlsCellMap::removeCell(const uint64_t sti)
+{
+    for (size_t i = 0; i < stis.size(); i++)
+    {
+        if (stis[i] == sti)
+        {
+            stis[i] = stis.back();
+            stis.pop_back();
+            
+            ncis[i] = ncis.back();
+            ncis.pop_back();
+            
+            last_seen[i] = last_seen.back();
+            last_seen.pop_back();
+            
+            addresses[i] = addresses.back();
+            addresses.pop_back();
+            
+            return true;
+        }
+    }
+    return false;
+}
+
+bool RlsCellMap::isCellInRange(const uint64_t sti) const
+{
+    for (size_t i = 0; i < stis.size(); i++)
+    {
+        if (stis[i] == sti)
+            return true;
+    }
+    return false;
+}
+
+std::vector<uint64_t> RlsCellMap::checkLastSeen(int64_t now) const
+{
+    std::vector<uint64_t> staleStis;
+    for (size_t i = 0; i < stis.size(); i++)
+    {
+        if (now - last_seen[i] > m_lastSeenThreshold)
+            staleStis.push_back(stis[i]);
+    }
+    return staleStis;
+}
+
+bool RlsCellMap::getAddressNci(int64_t nci, InetAddress &addr)
+{
+    for (size_t i = 0; i < ncis.size(); i++)
+    {
+        if (ncis[i] == nci)
+        {
+            addr = addresses[i];
+            return true;
+        }
+    }
+    return false;
+}
+
+
 RlsUdpTask::RlsUdpTask(TaskBase *base, RlsSharedContext *shCtx, const std::vector<std::string> &searchSpace)
-    : m_base{base}, m_server{}, m_ctlTask{}, m_shCtx{shCtx}, m_searchSpace{}, m_cells{}, m_cellIdToSti{}, m_lastLoop{},
-    m_cellIdCounter{}, m_loopCounter{base->config->rls.loopCounter},
+    : m_base{base}, m_server{}, m_ctlTask{}, m_shCtx{shCtx}, m_searchSpace{}, m_lastLoop{},
+    m_loopCounter{base->config->rls.loopCounter},
     m_receiveTimeout{base->config->rls.receiveTimeout},
     m_heartbeatThreshold{base->config->rls.getHeartbeatThreshold()}
 {
     m_logger = base->logBase->makeUniqueLogger(base->config->getLoggerPrefix() + "rls-udp");
 
     m_server = new udp::UdpServer();
+
+    // set up the cell map for heartbeat testing
+    m_cellMap.setLastSeenThreshold(m_heartbeatThreshold);
+
+    //m_cellMap = new RlsCellMap(m_heartbeatThreshold);
 
     // Search space is the list GNB IPs
     for (auto &ip : searchSpace)
@@ -89,7 +159,7 @@ void RlsUdpTask::onLoop()
         if (rlsMsg == nullptr)
             m_logger->err("Unable to decode RLS message");
         else
-            receiveRlsPdu(peerAddress, std::move(rlsMsg));
+            receiveRlsPdu(peerAddress, std::move(rlsMsg), current);
     }
 }
 
@@ -106,32 +176,32 @@ void RlsUdpTask::sendRlsPdu(const InetAddress &addr, const rls::RlsMessage &msg)
     m_server->Send(addr, stream.data(), static_cast<size_t>(stream.length()));
 }
 
-void RlsUdpTask::send(int cellId, const rls::RlsMessage &msg)
+void RlsUdpTask::send(int64_t nci, const rls::RlsMessage &msg)
 {
-    if (m_cellIdToSti.count(cellId))
+    InetAddress addr;
+    if(m_cellMap.getAddressNci(nci, addr))
     {
-        auto sti = m_cellIdToSti[cellId];
-        sendRlsPdu(m_cells[sti].address, msg);
+        sendRlsPdu(addr, msg);
+        return;
     }
+    m_logger->warn("Unable to send RLS message to cell %d because address is unknown", nci);
+    return;
 }
 
-void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::RlsMessage> &&msg)
+void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::RlsMessage> &&msg, int64_t time)
 {
     
     // HEARTBEAT_ACKS are from gnbs to advertise themselves
     //   they will contain:
-    //    - a simulation temp identifier (STI) that is randomly generated by the gnb and should be unique across 
+    //    - a simulation temp identifier (STI) =  NCI (36 bits) + Randomizer (10 bits) that is randomly generated by the gnb and should be unique across 
     //       runs of the same gnb in different simulations (avoids stale message problem)
-    //    - the PhysicalCellId (PCI) of the gnb (if the gnb supports it; otherwise 0)
     //    - the dbm signal strength being simulated for this UE as estimated by the gnb
     if (msg->msgType == rls::EMessageType::HEARTBEAT_ACK)
     {
-        int reportedCellId = static_cast<int>(msg->senderId);
-
-        // Check dBm before touching any cell state. An ACK below the RLF threshold
-        // is treated as if it was never sent: lastSeen is not refreshed so the cell
-        // will time out naturally via heartbeatCycle, which then notifies RRC.
+        uint64_t reportedSti = msg->sti;
+        
         int newDbm = ((const rls::RlsHeartBeatAck &)*msg).dbm;
+        // Only enable the following if ACKS with dbms below the RLF should be ignored
         // if (newDbm < cons::RLF_RSRP)
         // {
         //     m_logger->debug("RLS heartbeat ACK ignored (below RLF threshold): sti=%lu dbm=%d threshold=%d",
@@ -139,35 +209,17 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
         //     return;
         // }
 
-        bool newCellFound = false;
+        // check if this is a new cell in the cellmap
+        bool newCellFound = !m_cellMap.isCellInRange(reportedSti);
 
-        // if the STI is not in the cell map, this is a new gnb.  Add it.
-        if (!m_cells.count(msg->sti))
-        {
-            // If gNB does not include a cell ID, generate a UE-local fallback ID.
-            m_cells[msg->sti].cellId =
-                reportedCellId != 0 ? reportedCellId : ++m_cellIdCounter;
-            m_cellIdToSti[m_cells[msg->sti].cellId] = msg->sti;
-            m_cells[msg->sti].address = addr;
-            newCellFound = true;
-        }
-        // if the STI is in the cell map, but the cellId in the message is different from the cellId in the map,
-        //  then update the cellId in the map with the new value from the message (this shouldn't happen)
-        else if (reportedCellId != 0 && m_cells[msg->sti].cellId != reportedCellId)
-        {
-            m_cellIdToSti.erase(m_cells[msg->sti].cellId);
-            m_cells[msg->sti].cellId = reportedCellId;
-            m_cellIdToSti[reportedCellId] = msg->sti;
-        }
+        // add/update the cell info in the cell map
+        m_cellMap.upsertCell(reportedSti, time, addr);
+        m_base->cellDbMeas.upsertMeasurement(nciFromSti(reportedSti), newDbm);
 
-        // refresh last seen time (used by heartbeat timer).
-        m_cells[msg->sti].lastSeen = utils::CurrentTimeMillis();
+        m_logger->debug("RLS heartbeat ACK received: sti=%lu NCI=%d dbm=%d",
+                reportedSti, nciFromSti(reportedSti), newDbm);
 
-        updateMeasurements(newDbm, reportedCellId);
-
-        m_logger->debug("RLS heartbeat ACK received: sti=%lu cellId=%d dbm=%d",
-                msg->sti, m_cells[msg->sti].cellId, newDbm);
-
+        // check if reported dBm is below the Radio Link Failure threshold
         bool low_signal = newDbm < cons::RLF_RSRP;
 
         // Notify RRC of a newly detected cell so it can add it to the cell table.
@@ -175,19 +227,19 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
         if (newCellFound || low_signal)
         {
             auto signalChange = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::SIGNAL_CHANGED);
-            signalChange->cellId = m_cells[msg->sti].cellId;
+            signalChange->cellId = nciFromSti(reportedSti);
             signalChange->dbm = newDbm;
             m_ctlTask->push(std::move(signalChange));
 
             if (newCellFound)
             {
                 m_logger->debug("RLS heartbeat ACK - new cell found %d, adding to RRC cell map",
-                    m_cells[msg->sti].cellId);
+                    nciFromSti(reportedSti));
             }
             else
             {
                 m_logger->debug("RLS heartbeat ACK - low signal detected for cell %d, dbm=%d",
-                    m_cells[msg->sti].cellId, newDbm);
+                    nciFromSti(reportedSti), newDbm);
             }
         }
 
@@ -197,7 +249,7 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
 
     // if not a heartbeat ack, and the STI is not in the cell map, 
     //  then ignore the message (could be a prior failed simulation)
-    if (!m_cells.count(msg->sti))
+    if (!m_cellMap.isCellInRange(msg->sti))
     {
         m_logger->warn(
             "Received RLS message with unknown STI %lu. Dropping message",
@@ -208,88 +260,30 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
 
     // for PDU_TRANSMISSION and other messages, forward to control task with cellId info
     auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::RECEIVE_RLS_MESSAGE);
-    if (msg->senderId != 0)
-        w->cellId = static_cast<int>(msg->senderId);
-    else if (m_cells.count(msg->sti))
-        w->cellId = m_cells[msg->sti].cellId;
-    else
-        w->cellId = 0;
+    w->cellId = nciFromSti(msg->sti);
 
     w->msg = std::move(msg);
     m_ctlTask->push(std::move(w));
 }
 
 
-// void RlsUdpTask::onSignalChangeOrLost(int cellId)
-// {
-//     int dbm = INT32_MIN;
-//     if (m_cellIdToSti.count(cellId))
-//     {
-//         auto sti = m_cellIdToSti[cellId];
-//         dbm = m_cells[sti].dbm;
-//     }
-
-//     auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::SIGNAL_CHANGED);
-//     w->cellId = cellId;
-//     w->dbm = dbm;
-//     m_ctlTask->push(std::move(w));
-// }
-
-void RlsUdpTask::onHeartbeatFailure(int cellId)
-{
-    // remove from cell trackers
-    if (m_cellIdToSti.count(cellId))
-    {
-        m_cellIdToSti.erase(cellId);
-    }
-    if (m_cells.count(cellId))
-    {
-        m_cells.erase(cellId);
-    }
-    {
-        // write lock for cellDbMeas since we're modifying it based on the removed cell
-        std::unique_lock lock(m_base->cellDbMeasMutex);
-        m_base->cellDbMeas.erase(cellId);
-    }
-
-    int dbm = cons::MIN_RSRP - 1; // set dbm to below the min value to signal total RLS failure
-
-    auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::SIGNAL_CHANGED);
-    w->cellId = cellId;
-    w->dbm = dbm;
-    m_ctlTask->push(std::move(w));
-}
-
 void RlsUdpTask::heartbeatCycle(uint64_t time)
 {
-    std::set<std::pair<uint64_t, int>> toRemove;
+    // check for missing Heartbeat ACKs
+    auto staleStis = m_cellMap.checkLastSeen(time);
 
-    // ACK check - loop through each known cell (in m_cells map)
-    //  if it hasn't been "seen" for more than HEARTBEAT_THRESHOLD,
-    //  mark it for removal
-    for (auto &cell : m_cells)
+    // if any missing, remove from the cell trackers
+    for (auto &sti : staleStis)
     {
-        auto delta = time - cell.second.lastSeen;
-        if (delta > static_cast<uint64_t>(m_heartbeatThreshold))
-            toRemove.insert({cell.first, cell.second.cellId});
-    }
+        m_logger->debug("RLS heartbeat timeout for STI %lu, removing cell", sti);
+        m_cellMap.removeCell(sti);
+        m_base->cellDbMeas.removeMeasurement(nciFromSti(sti));
 
-    // remove from cell trackers, then tell RRC each cell is gone
-    {
-        // write lock for cellDbMeas since we're modifying it based on the removed cells
-        std::unique_lock lock(m_base->cellDbMeasMutex);
-        for (auto cell : toRemove)
-        {
-            m_cells.erase(cell.first);
-            m_cellIdToSti.erase(cell.second);
-            m_base->cellDbMeas.erase(cell.second);
-        }
-    }
-    for (auto cell : toRemove)
-    {
-        m_logger->debug("RLS heartbeat timeout for cell[%d], notifying RRC", cell.second);
-        onHeartbeatFailure(cell.second);
-//        onSignalChangeOrLost(cell.second);
+        int dbm = cons::MIN_RSRP - 1; // set dbm to below the min value to signal total RLS failure
+        auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::SIGNAL_CHANGED);
+        w->cellId = nciFromSti(sti);
+        w->dbm = dbm;
+        m_ctlTask->push(std::move(w));
     }
 
     // Send HEARTBEATs
@@ -297,7 +291,7 @@ void RlsUdpTask::heartbeatCycle(uint64_t time)
     //   with the UE position from TaskBase::UeLocation (single source of truth)
     for (auto &addr : m_searchSpace)
     {
-           rls::RlsHeartBeat msg{m_shCtx->sti, m_shCtx->senderId, m_shCtx->cRnti.load()};
+        rls::RlsHeartBeat msg{m_shCtx->sti};
         msg.simPos.latitude = m_base->UeLocation.latitude;
         msg.simPos.longitude = m_base->UeLocation.longitude;
         msg.simPos.altitude = m_base->UeLocation.altitude;
@@ -305,20 +299,6 @@ void RlsUdpTask::heartbeatCycle(uint64_t time)
     }
 }
 
-void RlsUdpTask::updateMeasurements(const int dbm, const int cellId)
-{
-    
-    if (cellId != 0)
-    {
-        // write lock
-        std::unique_lock lock(m_base->cellDbMeasMutex);
-        // cell already exists in map, so update dbm
-        if (m_base->cellDbMeas.count(cellId) != 0)
-            m_base->cellDbMeas[cellId] = dbm;
-        else
-            m_base->cellDbMeas.insert({cellId, dbm});
-    }
-}
 
 void RlsUdpTask::initialize(NtsTask *ctlTask)
 {
@@ -333,7 +313,7 @@ int RlsUdpTask::addSearchSpaceIps(const std::vector<std::string> &ipAddresses)
         bool exists = false;
         for (const auto &addr : m_searchSpace)
         {
-            if (IpOnlyFromInetAddress(addr) == ip)
+            if (addr.getIpAddrString() == ip)
             {
                 exists = true;
                 break;
@@ -357,11 +337,14 @@ int RlsUdpTask::removeSearchSpaceIps(const std::vector<std::string> &ipAddresses
 
     for (const auto &addr : m_searchSpace)
     {
-        auto ip = IpOnlyFromInetAddress(addr);
+        auto ipAddrStr = addr.getIpAddrString();
+        if (ipAddrStr.empty())
+            continue;
+
         bool shouldRemove = false;
         for (const auto &target : ipAddresses)
         {
-            if (ip == target)
+            if (ipAddrStr == target)
             {
                 shouldRemove = true;
                 break;
@@ -384,11 +367,13 @@ std::vector<std::string> RlsUdpTask::listSearchSpaceIps() const
     ips.reserve(m_searchSpace.size());
     for (const auto &addr : m_searchSpace)
     {
-        auto ip = IpOnlyFromInetAddress(addr);
+        auto ip = addr.getIpAddrString();
         if (!ip.empty())
             ips.push_back(std::move(ip));
     }
     return ips;
 }
+
+
 
 } // namespace nr::ue

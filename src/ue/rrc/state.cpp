@@ -17,6 +17,17 @@
 namespace nr::ue
 {
 
+
+static int getServingCellRsrp(int64_t servingCellId, const std::vector<std::pair<int64_t, int> >&allMeas)
+{
+    auto it = std::find_if(allMeas.begin(), allMeas.end(), [servingCellId](const auto &m) { return m.first == servingCellId; });
+    if (it != allMeas.end())
+        return it->second;
+
+    return cons::MIN_RSRP; // if no measurement for serving cell, use minimum RSRP as default
+}
+
+
 /**
  * @brief Pushes TRIGGER_CYCLE message onto msg queue to perform an RRC cycle.
  * 
@@ -39,18 +50,13 @@ void UeRrcTask::performCycle()
     if (m_state == ERrcState::RRC_CONNECTED)
     {
 
-        int servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
-        std::map<int, int> allMeas;
-        // Get the current measurements to evaluate against
-        //   since this is actively updated by the RLS meas task and read here by RRC, 
-        //   we make a copy from the shared context which is protected by a mutex
-        {
-            std::shared_lock lk(m_base->cellDbMeasMutex);
-            allMeas = m_base->cellDbMeas;
-        }
+        int64_t servingCellId = m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
+        auto allMeas = m_base->cellDbMeas.getMeasurements(); // get the current measurements to evaluate against
+        // get the serving cell id and RSRP for easier reference in loops below
+        int servingCellRsrp = getServingCellRsrp(servingCellId, allMeas);
 
         // evaluate all the MeasIds and set their current state
-        evaluateMeasurements(servingCellId, allMeas);
+        evaluateMeasurements(servingCellId, servingCellRsrp, allMeas);
 
         // evaluate CHO first. If CHO triggers in this cycle,
         // suppress Rel-15 MeasurementReport generation for the same cycle.
@@ -62,7 +68,7 @@ void UeRrcTask::performCycle()
         if (choTriggered)
             return;
 
-        measurementReporting(servingCellId, getServingCellRsrp(servingCellId, allMeas));
+        measurementReporting(servingCellId, servingCellRsrp);
     }
     else if (m_state == ERrcState::RRC_IDLE)
     {

@@ -277,7 +277,7 @@ struct NmUeRlsToRls : NtsMessage
     // DOWNLINK_RRC
     // SIGNAL_CHANGED
     // ASSIGN_CURRENT_CELL
-    int cellId{};
+    int64_t cellId{};
 
     // RECEIVE_RLS_MESSAGE
     std::unique_ptr<rls::RlsMessage> msg{};

@@ -79,19 +79,19 @@ struct NeighborEndpoint
 };
 
 struct SatPriorityScore {
-    int pci{};
+    int64_t nci{};
     int score{};
 
     SatPriorityScore() = default;
 
-    SatPriorityScore(int pci, int score) : pci(pci), score(score)
+    SatPriorityScore(int64_t nci, int score) : nci(nci), score(score)
     {
     }
 };
 
 struct SatTleEntry
 {
-    int pci{};
+    int64_t nci{};
     std::string name{};   // satellite name (optional, up to 24 chars)
     std::string line1{};
     std::string line2{};

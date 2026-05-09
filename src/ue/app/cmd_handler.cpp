@@ -151,14 +151,18 @@ static Json ToJsonSatTimeStatus(const nr::sat::SatTime::Status &status)
     return json;
 }
 
-// static Json ToJsonLocWgs84(const GeoPosition &position)
-// {
-//     return Json::Obj({
-//         {"latitude", std::to_string(position.latitude)},
-//         {"longitude", std::to_string(position.longitude)},
-//         {"altitude", std::to_string(position.altitude)},
-//     });
-// }
+static Json ToJsonCellMeasurements(const std::vector<std::pair<int64_t, int>> &measurements)
+{
+    Json json = Json::Arr({});
+    for (const auto &[cellId, dbm] : measurements)
+    {
+        json.push(Json::Obj({
+            {"cell-id", cellId},
+            {"dbm", dbm},
+        }));
+    }
+    return json;
+}
 
 static std::string EscapeForLog(const std::string &value)
 {
@@ -324,6 +328,7 @@ void UeCmdHandler::logResponse(bool isError, const std::string &output)
     }
 }
 
+
 void UeCmdHandler::pauseTasks()
 {
     m_base->nasTask->requestPause();
@@ -419,39 +424,31 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
         break;
     }
     case app::UeCliCommand::UI_STATUS: {
-        std::optional<int> currentCellId = std::nullopt;
+        std::optional<int64_t> currentCellId = std::nullopt;
         auto currentCell = m_base->shCtx.currentCell.get();
         if (currentCell.hasValue())
             currentCellId = currentCell.cellId;
         
-        std::string connectedPci = "NONE";
+        std::string connectedCell = "NONE";
         std::string connectedDbm = "NONE";
-        std::string cellMeasStr;
+
+        const auto &measurements = m_base->cellDbMeas.getMeasurements();
+        if (currentCellId.has_value())
         {
-            std::shared_lock lock(m_base->cellDbMeasMutex);
-            if (currentCellId.has_value())
-            {
-                connectedPci = std::to_string(*currentCellId);
-                auto it = m_base->cellDbMeas.find(*currentCellId);
-                if (it != m_base->cellDbMeas.end())
-                    connectedDbm = std::to_string(it->second);
-            }
-            bool first = true;
-            for (const auto &[cellId, dbm] : m_base->cellDbMeas)
-            {
-                if (!first)
-                    cellMeasStr += ",";
-                cellMeasStr += std::to_string(cellId) + ":" + std::to_string(dbm);
-                first = false;
-            }
+            connectedCell = std::to_string(*currentCellId);
+            auto it = std::find_if(measurements.begin(), measurements.end(), [&](const auto &entry) {
+                return entry.first == *currentCellId;
+            });
+            if (it != measurements.end())
+                connectedDbm = std::to_string(it->second);
         }
 
         Json json = Json::Obj({
             {"rrc-state", ToJson(m_base->rrcTask->m_state)},
             {"nas-state", ToJson(m_base->nasTask->mm->m_mmSubState)},
-            {"connected-pci", connectedPci},
+            {"connected-cell", connectedCell},
             {"connected-dbm", connectedDbm},
-            {"cell-measurements", cellMeasStr},
+            {"cell-measurements", ToJsonCellMeasurements(measurements)},
         });
 
         sendResult(msg.address, json.dumpYaml());
