@@ -25,8 +25,8 @@ class TestGnbHandover:
         rrc_connected_ue_with_neighbor.send_measurement_report(
             meas_id=1,
             serving_rsrp=20,
-            serving_pci=0,
-            neighbor_pci=2,
+            serving_nci=0,
+            neighbor_nci=2,
             neighbor_rsrp=60,
         )
 
@@ -49,8 +49,8 @@ class TestGnbHandover:
         rrc_connected_ue_with_neighbor.send_measurement_report(
             meas_id=1,
             serving_rsrp=20,
-            serving_pci=0,
-            neighbor_pci=2,
+            serving_nci=0,
+            neighbor_nci=2,
             neighbor_rsrp=60,
         )
 
@@ -95,18 +95,18 @@ class TestGnbHandover:
             pytest.skip("gNB did not send MeasConfig in two-neighbor scenario")
         time.sleep(1.0)
 
-        # Neighbor PCI 3 is intentionally stronger than PCI 2 and should be selected as target.
+        # Neighbor NCI 3 is intentionally stronger than NCI 2 and should be selected as target.
         rrc_connected_ue_with_two_neighbors.send_measurement_report_multi_neighbor(
             meas_id=1,
             serving_rsrp=20,
-            serving_pci=0,
+            serving_nci=0,
             neighbors=((2, 55), (3, 65)),
         )
 
         decision_line = started_gnb_with_two_neighbors.wait_for_handover_decision(timeout_s=10)
         assert decision_line is not None, "gNB did not log handover decision"
-        assert re.search(r"targetPCI=3\b", decision_line), (
-            f"Expected handover target PCI 3, but decision log was: {decision_line}"
+        assert re.search(r"targetNCI=3\b", decision_line), (
+            f"Expected handover target NCI 3, but decision log was: {decision_line}"
         )
 
         required_line = started_gnb_with_two_neighbors.wait_for_handover_required(timeout_s=10)
@@ -116,7 +116,7 @@ class TestGnbHandover:
         assert ho is not None, "AMF did not receive HandoverRequired for strongest neighbor"
         assert ho.procedure_code == ngap.PROC_HANDOVER_PREPARATION
 
-    def test_handover_selects_pci2_when_pci2_is_strongest_in_multi_neighbor_report(
+    def test_handover_selects_nci2_when_nci2_is_strongest_in_multi_neighbor_report(
         self,
         fake_amf,
         started_gnb_with_two_neighbors,
@@ -129,14 +129,14 @@ class TestGnbHandover:
         rrc_connected_ue_with_two_neighbors.send_measurement_report_multi_neighbor(
             meas_id=1,
             serving_rsrp=20,
-            serving_pci=0,
+            serving_nci=0,
             neighbors=((2, 64), (3, 56)),
         )
 
         decision_line = started_gnb_with_two_neighbors.wait_for_handover_decision(timeout_s=10)
         assert decision_line is not None, "gNB did not log handover decision"
-        assert re.search(r"targetPCI=2\b", decision_line), (
-            f"Expected handover target PCI 2, but decision log was: {decision_line}"
+        assert re.search(r"targetNCI=2\b", decision_line), (
+            f"Expected handover target NCI 2, but decision log was: {decision_line}"
         )
 
         required_line = started_gnb_with_two_neighbors.wait_for_handover_required(timeout_s=10)

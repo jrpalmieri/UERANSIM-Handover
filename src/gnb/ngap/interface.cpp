@@ -234,7 +234,7 @@ void NgapTask::receiveErrorIndication(int amfId, ASN_NGAP_ErrorIndication *msg)
         m_logger->err("Error indication received.");
 }
 
-void NgapTask::sendErrorIndication(int amfId, NgapCause cause, int ueId)
+void NgapTask::sendErrorIndication(int amfId, NgapCause cause, int64_t ueId)
 {
     auto ieCause = asn::New<ASN_NGAP_ErrorIndicationIEs>();
     ieCause->id = ASN_NGAP_ProtocolIE_ID_id_Cause;

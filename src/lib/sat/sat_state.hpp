@@ -1,5 +1,5 @@
 //
-// Thread-safe store for satellite TLE entries, keyed by PCI.
+// Thread-safe store for satellite TLE entries, keyed by NCI.
 // Shared across gNB tasks (RRC writes, RLS reads).
 //
 
@@ -34,7 +34,7 @@ class SatStates
 
   public:
 
-    /// Return the entry for the given PCI, or nullopt if not present.
+    /// Return the entry for the given NCI, or nullopt if not present.
     std::optional<SatTleEntry> getTle(int64_t nci) const;
     
     /// Return a snapshot of all entries.
@@ -43,7 +43,7 @@ class SatStates
     /// Number of stored entries.
     size_t size() const;
 
-    /// Get reference to the SGP4 object for the given PCI, or nullptr if not present.
+    /// Get reference to the SGP4 object for the given NCI, or nullptr if not present.
     std::shared_ptr<Propagator> getSgp4(int64_t nci) const;
 
     /// clear the store
@@ -55,9 +55,9 @@ class SatStates
 
   private:
     mutable std::mutex m_mutex;
-    // TLEs keyed by PCI.
+    /// TLEs keyed by NCI.
     std::unordered_map<int64_t, SatTleEntry> m_store;
-    // SGP4 propagation objects keyed by PCI.
+    // SGP4 propagation objects keyed by NCI.
     std::unordered_map<int64_t, std::shared_ptr<Propagator>> m_sgp4;
 };
 

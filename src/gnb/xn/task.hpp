@@ -38,7 +38,7 @@ class XnTask : public NtsTask
     void onQuit() override;
 
   private:
-    std::optional<InetAddress> resolveNeighborXnEndpoint(int targetPci) const;
+    std::optional<InetAddress> resolveNeighborXnEndpoint(int64_t targetNci) const;
     void handleRrcMessage(NmGnbRrcToXn &message);
     void handleNgapMessage(NmGnbNgapToXn &message);
     void handleUdpPacket(udp::NwUdpServerReceive &packetMsg);

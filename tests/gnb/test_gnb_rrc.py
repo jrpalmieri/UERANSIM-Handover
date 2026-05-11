@@ -104,8 +104,8 @@ class TestMeasurementReport:
         connected_ue.send_measurement_report(
             meas_id=1,
             serving_rsrp=30,
-            serving_pci=0,
-            neighbor_pci=1,
+            serving_nci=0,
+            neighbor_nci=1,
             neighbor_rsrp=40,
         )
 
@@ -141,8 +141,8 @@ class TestHandoverCommand:
         connected_ue.send_measurement_report(
             meas_id=1,
             serving_rsrp=20,
-            serving_pci=0,
-            neighbor_pci=1,
+            serving_nci=0,
+            neighbor_nci=1,
             neighbor_rsrp=60,
         )
 

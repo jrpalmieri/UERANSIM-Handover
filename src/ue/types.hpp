@@ -318,7 +318,7 @@ struct UeMeasConfig
  * Per 3GPP TS 38.331 §5.3.5.8.6 (Release 16/17), the gNB pre-configures
  * one or more CHO candidates.  Each candidate carries:
  *  - Target cell parameters (technically this is a ReconfigWithSync message, but
- *      for simulation we only need to store the PCI, C-RNTI, T304).
+ *      for simulation we only need to store the NCI, C-RNTI, T304).
  *  - A condition group: one or more ReportConfigEvents evaluated with
  *    AND logic.  All conditions in the group must be simultaneously
  *    satisfied for the candidate to trigger.

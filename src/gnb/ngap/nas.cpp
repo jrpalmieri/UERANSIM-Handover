@@ -70,16 +70,16 @@ int32_t extractSliceInfoAndModifyPdu(OctetString &nasPdu) {
     return requestedSliceType;
 }
 
-void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t rrcEstablishmentCause,
+void NgapTask::handleInitialNasTransport(int64_t ueId, OctetString &nasPdu, int64_t rrcEstablishmentCause,
                                             const std::optional<GutiMobileIdentity> &sTmsi)
 {
     int32_t requestedSliceType = extractSliceInfoAndModifyPdu(nasPdu);
 
-    m_logger->debug("UE[%d] Initial NAS message received", ueId);
+    m_logger->debug("UE[%ld] Initial NAS message received", ueId);
 
     if (m_ueCtx.count(ueId))
     {
-        m_logger->err("UE[%d] Context already exists.  Overwriting.", ueId);
+        m_logger->err("UE[%ld] Context already exists.  Overwriting.", ueId);
         //return;
     }
 
@@ -89,7 +89,7 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
     auto *ueCtx = findUeContext(ueId);
     if (ueCtx == nullptr) 
     {
-        m_logger->err("UE[%d] Context creation failed.", ueId);
+        m_logger->err("UE[%ld] Context creation failed.", ueId);
         return;
     }
 
@@ -98,13 +98,14 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
     auto *amfCtx = findAmfContext(ueCtx->associatedAmfId);
     if (amfCtx == nullptr)
     {
-        m_logger->err("UE[%d] AMF association failed.", ueId);
+        m_logger->err("UE[%ld] AMF association failed.", ueId);
         return;
     }
 
+    // check we can reach AMF
     if (amfCtx->state != EAmfState::CONNECTED)
     {
-        m_logger->err("UE[%d] Initial NAS transport failure. AMF is not in connected state.", ueId);
+        m_logger->err("UE[%ld] Initial NAS transport failure. AMF is not in connected state.", ueId);
         return;
     }
 
@@ -113,6 +114,8 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
     if ((amfCtx->nextStream == 0) && (amfCtx->association.outStreams > 1))
         amfCtx->nextStream += 1;
     ueCtx->uplinkStream = amfCtx->nextStream;
+
+    // create NGAP message to AMF
 
     std::vector<ASN_NGAP_InitialUEMessage_IEs *> ies;
 
@@ -155,12 +158,12 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
     // send message to AMF - INITIAL_UE msg
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_InitialUEMessage>(ies);
 
-    m_logger->debug("UE[%d] Initial NGAP message to AMF sent, SCTP stream=%d", ueId, amfCtx->nextStream);
+    m_logger->debug("UE[%ld] Initial NGAP message to AMF sent, SCTP stream=%d", ueId, amfCtx->nextStream);
 
     sendNgapUeAssociated(ueId, pdu);
 }
 
-void NgapTask::deliverDownlinkNas(int ueId, OctetString &&nasPdu)
+void NgapTask::deliverDownlinkNas(int64_t ueId, OctetString &&nasPdu)
 {
     auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::NAS_DELIVERY);
     w->ueId = ueId;
@@ -168,7 +171,7 @@ void NgapTask::deliverDownlinkNas(int ueId, OctetString &&nasPdu)
     m_base->rrcTask->push(std::move(w));
 }
 
-void NgapTask::handleUplinkNasTransport(int ueId, const OctetString &nasPdu)
+void NgapTask::handleUplinkNasTransport(int64_t ueId, const OctetString &nasPdu)
 {
     auto *ue = findUeContext(ueId);
     if (ue == nullptr)
@@ -184,9 +187,9 @@ void NgapTask::handleUplinkNasTransport(int ueId, const OctetString &nasPdu)
     sendNgapUeAssociated(ueId, pdu);
 }
 
-void NgapTask::sendNasNonDeliveryIndication(int ueId, const OctetString &nasPdu, NgapCause cause)
+void NgapTask::sendNasNonDeliveryIndication(int64_t ueId, const OctetString &nasPdu, NgapCause cause)
 {
-    m_logger->debug("Sending non-delivery indication UE[%d] ", ueId);
+    m_logger->debug("Sending non-delivery indication UE[%ld] ", ueId);
 
     auto *ieNasPdu = asn::New<ASN_NGAP_NASNonDeliveryIndication_IEs>();
     ieNasPdu->id = ASN_NGAP_ProtocolIE_ID_id_NAS_PDU;

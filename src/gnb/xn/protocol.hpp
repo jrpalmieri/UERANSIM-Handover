@@ -25,9 +25,9 @@ struct XnMessage
 {
     XnMessageType type{XnMessageType::HandoverRequest};
     uint32_t transactionId{};
-    int ueId{};
-    int sourcePci{};
-    int targetPci{};
+    int64_t ueId{};
+    int64_t sourceNci{};
+    int64_t targetNci{};
     int newCrnti{};
     int t304Ms{};
     int causeCode{};

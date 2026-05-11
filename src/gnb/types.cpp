@@ -16,10 +16,6 @@
 namespace nr::gnb
 {
 
-int getPciFromNci(int64_t nci)
-{
-    return static_cast<int>(nci & cons::PCI_MASK);
-}
 
 static std::string ToString(EGnbRsrpMode mode)
 {
@@ -65,7 +61,6 @@ Json ToJson(const GnbStatusInfo &v)
 {
     Json json = Json::Obj({
             {"nci", v.nci},
-            {"pci", v.pci},
             {"rrc-ue-count", v.rrcConnectedUes},
             {"ngap-ue-count", v.ngapConnectedUes},
             {"ngap-ues-in-handover", v.handoverInProgressUes},
@@ -157,7 +152,7 @@ Json ToJson(const GnbConfig &v)
             {"tac", neighbor.tac},
             {"ip-address", neighbor.ipAddress},
             {"handover-interface", ToString(neighbor.handoverInterface)},
-            {"pci", neighbor.getPci()},
+            {"nci", neighbor.getNci()},
         });
 
         if (neighbor.xnAddress)

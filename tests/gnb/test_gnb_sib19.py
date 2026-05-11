@@ -122,7 +122,7 @@ def _parse_sib19_payload(pdu: bytes) -> dict:
         for i in range(count):
             base = 8 + i * 96
             entry = {
-                "pci": struct.unpack_from("<i", pdu, base)[0],
+                "nci": struct.unpack_from("<l", pdu, base)[0],
                 "epoch10ms": struct.unpack_from("<q", pdu, base + 52)[0],
                 "kOffset": struct.unpack_from("<i", pdu, base + 60)[0],
                 "taCommon": struct.unpack_from("<q", pdu, base + 64)[0],
@@ -166,7 +166,7 @@ def _parse_sib19_payload(pdu: bytes) -> dict:
         "formatVersion": 1,
         "ephemerisType": pdu[0],
         "entries": [{
-            "pci": None,
+            "nci": None,
             "x": struct.unpack_from("<d", pdu, 4)[0],
             "y": struct.unpack_from("<d", pdu, 12)[0],
             "z": struct.unpack_from("<d", pdu, 20)[0],
@@ -220,14 +220,14 @@ def started_gnb_with_sib19_tle(fake_amf) -> tuple[GnbProcess, dict, str, int]:
         yaml.safe_dump(cfg, f, sort_keys=False)
 
     node_name = _compute_node_name(cfg)
-    own_pci = int(str(cfg["nci"]), 0) & 0x3FF
+    own_nci = int(str(cfg["nci"]), 0)
 
     gnb.start(cfg_path)
     if not gnb.wait_for_ng_setup(timeout_s=20):
         gnb.cleanup()
         pytest.skip("gNB did not complete NG setup for SIB19 TLE test")
 
-    yield gnb, sib19_cfg, node_name, own_pci
+    yield gnb, sib19_cfg, node_name, own_nci
     gnb.cleanup()
 
 
@@ -261,21 +261,21 @@ def started_gnb_with_sib19_tle_orbital(fake_amf) -> tuple[GnbProcess, dict, str,
         yaml.safe_dump(cfg, f, sort_keys=False)
 
     node_name = _compute_node_name(cfg)
-    own_pci = int(str(cfg["nci"]), 0) & 0x3FF
+    own_nci = int(str(cfg["nci"]), 0)
 
     gnb.start(cfg_path)
     if not gnb.wait_for_ng_setup(timeout_s=20):
         gnb.cleanup()
         pytest.skip("gNB did not complete NG setup for orbital SIB19 test")
 
-    yield gnb, sib19_cfg, node_name, own_pci
+    yield gnb, sib19_cfg, node_name, own_nci
     gnb.cleanup()
 
 
 def test_gnb_loads_tle_from_config_and_stores_at_startup(started_gnb_with_sib19_tle):
-    gnb, _sib19_cfg, _node_name, own_pci = started_gnb_with_sib19_tle
+    gnb, _sib19_cfg, _node_name, own_nci = started_gnb_with_sib19_tle
 
-    loaded_line = gnb.wait_for_log(rf"Loaded own TLE from config \(pci={own_pci}\)", timeout_s=5.0)
+    loaded_line = gnb.wait_for_log(rf"Loaded own TLE from config \(nci={own_nci}\)", timeout_s=5.0)
     assert loaded_line is not None, "gNB did not report loading own TLE from config"
 
     store_line = gnb.wait_for_log(r"TLE store upserted 1 entries, total 1 satellites", timeout_s=5.0)
@@ -283,17 +283,17 @@ def test_gnb_loads_tle_from_config_and_stores_at_startup(started_gnb_with_sib19_
 
 
 def test_gnb_cli_sat_tle_json_upserts_store(started_gnb_with_sib19_tle):
-    gnb, _sib19_cfg, node_name, own_pci = started_gnb_with_sib19_tle
+    gnb, _sib19_cfg, node_name, own_nci = started_gnb_with_sib19_tle
 
     payload = {
         "satellites": [
             {
-                "pci": own_pci,
+                "nci": own_nci,
                 "line1": OWN_TLE_LINE1,
                 "line2": OWN_TLE_LINE2,
             },
             {
-                "pci": 222,
+                "nci": 222,
                 "line1": NEIGHBOR_TLE_LINE1,
                 "line2": NEIGHBOR_TLE_LINE2,
             },
@@ -312,7 +312,7 @@ def test_gnb_periodic_sib19_contains_own_and_neighbor_satellite_positions(
     started_gnb_with_sib19_tle,
     fake_ue: FakeUe,
 ):
-    gnb, _sib19_cfg, node_name, own_pci = started_gnb_with_sib19_tle
+    gnb, _sib19_cfg, node_name, own_nci = started_gnb_with_sib19_tle
 
     if not fake_ue.wait_for_heartbeat_ack(timeout_s=8):
         pytest.skip("Fake UE did not receive heartbeat ack in SIB19 TLE periodicity test")
@@ -320,12 +320,12 @@ def test_gnb_periodic_sib19_contains_own_and_neighbor_satellite_positions(
     payload = {
         "satellites": [
             {
-                "pci": own_pci,
+                "nci": own_nci,
                 "line1": OWN_TLE_LINE1,
                 "line2": OWN_TLE_LINE2,
             },
             {
-                "pci": 222,
+                "nci": 222,
                 "line1": NEIGHBOR_TLE_LINE1,
                 "line2": NEIGHBOR_TLE_LINE2,
             },
@@ -338,13 +338,13 @@ def test_gnb_periodic_sib19_contains_own_and_neighbor_satellite_positions(
         fake_ue,
         lambda p: p["formatVersion"] == 2
         and p["ephemerisType"] == 0
-        and {e["pci"] for e in p["entries"]}.issuperset({own_pci, 222}),
+        and {e["nci"] for e in p["entries"]}.issuperset({own_nci, 222}),
         timeout_s=25.0,
     )
     assert parsed is not None, "Did not receive SIB19 containing own + neighbor TLE-derived entries"
 
-    own_entry = next(e for e in parsed["entries"] if e["pci"] == own_pci)
-    neighbor_entry = next(e for e in parsed["entries"] if e["pci"] == 222)
+    own_entry = next(e for e in parsed["entries"] if e["nci"] == own_nci)
+    neighbor_entry = next(e for e in parsed["entries"] if e["nci"] == 222)
 
     # Validate that both entries include finite position fields in the pos/vel encoding path.
     for entry in (own_entry, neighbor_entry):
@@ -361,7 +361,7 @@ def test_gnb_periodic_sib19_orbital_mode_contains_own_and_neighbor(
     started_gnb_with_sib19_tle_orbital,
     fake_ue: FakeUe,
 ):
-    _gnb, _sib19_cfg, node_name, own_pci = started_gnb_with_sib19_tle_orbital
+    _gnb, _sib19_cfg, node_name, own_nci = started_gnb_with_sib19_tle_orbital
 
     if not fake_ue.wait_for_heartbeat_ack(timeout_s=8):
         pytest.skip("Fake UE did not receive heartbeat ack in orbital SIB19 periodicity test")
@@ -369,12 +369,12 @@ def test_gnb_periodic_sib19_orbital_mode_contains_own_and_neighbor(
     payload = {
         "satellites": [
             {
-                "pci": own_pci,
+                "nci": own_nci,
                 "line1": OWN_TLE_LINE1,
                 "line2": OWN_TLE_LINE2,
             },
             {
-                "pci": 222,
+                "nci": 222,
                 "line1": NEIGHBOR_TLE_LINE1,
                 "line2": NEIGHBOR_TLE_LINE2,
             },
@@ -386,13 +386,13 @@ def test_gnb_periodic_sib19_orbital_mode_contains_own_and_neighbor(
         fake_ue,
         lambda p: p["formatVersion"] == 2
         and p["ephemerisType"] == 1
-        and {e["pci"] for e in p["entries"]}.issuperset({own_pci, 222}),
+        and {e["nci"] for e in p["entries"]}.issuperset({own_nci, 222}),
         timeout_s=25.0,
     )
     assert parsed is not None, "Did not receive orbital SIB19 containing own + neighbor entries"
 
-    own_entry = next(e for e in parsed["entries"] if e["pci"] == own_pci)
-    neighbor_entry = next(e for e in parsed["entries"] if e["pci"] == 222)
+    own_entry = next(e for e in parsed["entries"] if e["nci"] == own_nci)
+    neighbor_entry = next(e for e in parsed["entries"] if e["nci"] == 222)
 
     for entry in (own_entry, neighbor_entry):
         assert entry["semiMajorAxis"] > 6_000_000
@@ -408,31 +408,31 @@ def test_gnb_periodic_sib19_orbital_mode_contains_own_and_neighbor(
     assert math.isfinite(float(neighbor_entry["semiMajorAxis"]))
 
 
-def test_gnb_sib19_three_entries_for_same_tle_different_pcis(
+def test_gnb_sib19_three_entries_for_same_tle_different_ncis(
     started_gnb_with_sib19_tle,
     fake_ue: FakeUe,
 ):
-    _gnb, _sib19_cfg, node_name, own_pci = started_gnb_with_sib19_tle
+    _gnb, _sib19_cfg, node_name, own_nci = started_gnb_with_sib19_tle
 
     if not fake_ue.wait_for_heartbeat_ack(timeout_s=8):
-        pytest.skip("Fake UE did not receive heartbeat ack in same-TLE multi-PCI SIB19 test")
+        pytest.skip("Fake UE did not receive heartbeat ack in same-TLE multi-NCI SIB19 test")
 
-    # Configure own PCI with a known example TLE (from custom-gnb), then add two more PCIs
+    # Configure own NCI with a known example TLE (from custom-gnb), then add two more NCIs
     # with the exact same orbit via CLI to emulate 3 satellites on identical trajectories.
     payload = {
         "satellites": [
             {
-                "pci": own_pci,
+                "nci": own_nci,
                 "line1": CUSTOM_TLE_LINE1,
                 "line2": CUSTOM_TLE_LINE2,
             },
             {
-                "pci": 223,
+                "nci": 223,
                 "line1": CUSTOM_TLE_LINE1,
                 "line2": CUSTOM_TLE_LINE2,
             },
             {
-                "pci": 224,
+                "nci": 224,
                 "line1": CUSTOM_TLE_LINE1,
                 "line2": CUSTOM_TLE_LINE2,
             },
@@ -444,18 +444,19 @@ def test_gnb_sib19_three_entries_for_same_tle_different_pcis(
         fake_ue,
         lambda p: p["formatVersion"] == 2
         and p["ephemerisType"] == 0
+        and p["ephemerisType"] == 0
         and len(p["entries"]) == 3
-        and {e["pci"] for e in p["entries"]} == {own_pci, 223, 224},
+        and {e["nci"] for e in p["entries"]} == {own_nci, 223, 224},
         timeout_s=25.0,
     )
-    assert parsed is not None, "Did not receive SIB19 with exactly 3 entries for the expected PCIs"
+    assert parsed is not None, "Did not receive SIB19 with exactly 3 entries for the expected NCIs"
 
-    entries_by_pci = {entry["pci"]: entry for entry in parsed["entries"]}
-    own_entry = entries_by_pci[own_pci]
-    e223 = entries_by_pci[223]
-    e224 = entries_by_pci[224]
+    entries_by_nci = {entry["nci"]: entry for entry in parsed["entries"]}
+    own_entry = entries_by_nci[own_nci]
+    e223 = entries_by_nci[223]
+    e224 = entries_by_nci[224]
 
-    # Because all three PCIs carry identical TLE lines, their propagated positions/velocities should match.
+    # Because all three NCIs carry identical TLE lines, their propagated positions/velocities should match.
     # This confirms each SIB19 entry corresponds to one of the provided TLE records.
     for axis in ("x", "y", "z", "vx", "vy", "vz"):
         assert own_entry[axis] == pytest.approx(e223[axis], rel=1e-9, abs=1e-6)
@@ -463,7 +464,7 @@ def test_gnb_sib19_three_entries_for_same_tle_different_pcis(
 
 
 def test_gnb_sib19_format_and_periodicity(started_gnb_with_sib19_tle, fake_ue: FakeUe):
-    _gnb, sib19_cfg, _node_name, _own_pci = started_gnb_with_sib19_tle
+    _gnb, sib19_cfg, _node_name, _own_nci = started_gnb_with_sib19_tle
 
     if not fake_ue.wait_for_heartbeat_ack(timeout_s=8):
         pytest.skip("Fake UE did not receive heartbeat ack in SIB19 periodicity test")
@@ -477,6 +478,7 @@ def test_gnb_sib19_format_and_periodicity(started_gnb_with_sib19_tle, fake_ue: F
         assert p["ephemerisType"] == 0
         assert len(p["entries"]) >= 1
         entry = p["entries"][0]
+        assert entry["nci"] == _own_nci
         assert entry["kOffset"] == sib19_cfg["kOffset"]
         assert entry["taCommon"] == sib19_cfg["taCommon"]
         assert entry["taCommonDrift"] == sib19_cfg["taCommonDrift"]

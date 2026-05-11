@@ -74,7 +74,7 @@ static constexpr size_t SIB19_TLE_ENTRY_SIZE   = 216;  // TLE
 // Common-field start offset within a standard (PosVel/Orbital) entry.
 static constexpr size_t COMMON_OFFSET     = 52;
 // Common-field start offset within a TLE entry.
-// Layout: 4 (PCI) + 25 (name) + 70 (line1) + 70 (line2) + 3 (pad) = 172
+// Layout: 8 (NCI) + 25 (name) + 70 (line1) + 70 (line2) + 3 (pad) = 172
 static constexpr size_t TLE_COMMON_OFFSET = 172;
 
 /* ================================================================== */
@@ -278,13 +278,13 @@ void UeRrcTask::receiveSib19(int64_t cellId, const OctetString &pdu)
     auto &desc = m_cellDesc[cellId];
     desc.sib19 = sib19;
 
-    // update the SatStates store with the new ephemeris info for this cell's PCI
+    // update the SatStates store with the new ephemeris info for this cell's NCI
     if (m_base->satState && foundTles.size() > 0)
     {
         m_base->satState->upsertAll(foundTles);
     }
 
-    m_logger->info("SIB19 received for cell %ld: multi-entry count=%zu selectedPci=%d",
+    m_logger->info("SIB19 received for cell %ld: multi-entry count=%zu selectedNci=%d",
                     cellId,
                     sib19.entriesByNci.size(),
                     selected->first);

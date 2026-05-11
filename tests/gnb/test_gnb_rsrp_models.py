@@ -705,7 +705,7 @@ def _parse_sib19_payload(pdu: bytes) -> dict | None:
 
     base = 8
     return {
-        "pci": struct.unpack_from("<i", pdu, base)[0],
+        "nci": struct.unpack_from("<i", pdu, base)[0],
         "x": struct.unpack_from("<d", pdu, base + 4)[0],
         "y": struct.unpack_from("<d", pdu, base + 12)[0],
         "z": struct.unpack_from("<d", pdu, base + 20)[0],

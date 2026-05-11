@@ -72,7 +72,7 @@ struct NeighborsUpdateResult
 
 struct SatLocPvRequest
 {
-    int pci{};
+    int64_t nci{};
     double x{};
     double y{};
     double z{};
@@ -288,7 +288,7 @@ static NeighborsUpdateRequest ParseNeighborsRequest(const std::string &jsonPaylo
         i++;
     }
 
-    ValidateUniqueNeighborPci(request.neighbors, "neighbors");
+    ValidateUniqueNeighborNci(request.neighbors, "neighbors");
 
     return request;
 }
@@ -323,7 +323,7 @@ static std::vector<SatTleEntry> ParseSatTleRequest(const std::string &jsonPayloa
             throw std::runtime_error(path + " must be an object.");
 
         SatTleEntry entry{};
-        entry.pci = yaml::GetInt32(node, "pci", 0, 1007);
+        entry.nci = yaml::GetInt64(node, "nci", 0, std::nullopt);
 
         if (!node["line1"] || !node["line1"].IsScalar())
             throw std::runtime_error(path + ".line1 is required.");
@@ -358,7 +358,7 @@ static SatLocPvRequest ParseSatLocPvRequest(const std::string &jsonPayload)
         throw std::runtime_error("Payload must be a JSON object.");
 
     SatLocPvRequest request{};
-    request.pci = yaml::GetInt32(root, "pci", 0, 1007);
+    request.nci = yaml::GetInt64(root, "nci", 0, std::nullopt);
     request.x = root["x"].as<double>();
     request.y = root["y"].as<double>();
     request.z = root["z"].as<double>();
@@ -406,8 +406,7 @@ static Json ToJsonNeighborList(const std::vector<GnbNeighborConfig> &neighbors)
             {"idLength", neighbor.idLength},
             {"tac", neighbor.tac},
             {"ipAddress", neighbor.ipAddress},
-            {"handoverInterface", neighbor.handoverInterface == EHandoverInterface::Xn ? "Xn" : "N2"},
-            {"pci", neighbor.getPci()},
+            {"handoverInterface", neighbor.handoverInterface == EHandoverInterface::Xn ? "Xn" : "N2"}
         });
         if (neighbor.xnAddress.has_value())
             entry.put("xnAddress", *neighbor.xnAddress);
@@ -434,17 +433,17 @@ static NeighborsUpdateResult ApplyNeighborsUpdate(GnbNeighbors &neighbors,
     }
     else if (request.mode == ENeighborsUpdateMode::Add)
     {
-        std::unordered_set<int> seenPci{};
+        std::unordered_set<int64_t> seenNci{};
         for (const auto &neighbor : candidate)
-            seenPci.insert(neighbor.getPci());
+            seenNci.insert(neighbor.getNci());
 
         for (const auto &neighbor : request.neighbors)
         {
-            int pci = neighbor.getPci();
-            if (seenPci.count(pci) != 0)
-                throw std::runtime_error("Cannot add duplicate PCI=" + std::to_string(pci));
+            int64_t nci = neighbor.getNci();
+            if (seenNci.count(nci) != 0)
+                throw std::runtime_error("Cannot add duplicate NCI=" + std::to_string(nci));
 
-            seenPci.insert(pci);
+            seenNci.insert(nci);
             candidate.push_back(neighbor);
         }
 
@@ -452,15 +451,15 @@ static NeighborsUpdateResult ApplyNeighborsUpdate(GnbNeighbors &neighbors,
     }
     else
     {
-        std::unordered_set<int> removePci{};
+        std::unordered_set<int64_t> removeNci{};
         for (const auto &neighbor : request.neighbors)
-            removePci.insert(neighbor.getPci());
+            removeNci.insert(neighbor.getNci());
 
         std::vector<GnbNeighborConfig> filtered{};
         filtered.reserve(candidate.size());
         for (const auto &neighbor : candidate)
         {
-            if (removePci.count(neighbor.getPci()) == 0)
+            if (removeNci.count(neighbor.getNci()) == 0)
                 filtered.push_back(neighbor);
         }
 
@@ -468,7 +467,7 @@ static NeighborsUpdateResult ApplyNeighborsUpdate(GnbNeighbors &neighbors,
         candidate = std::move(filtered);
     }
 
-    ValidateUniqueNeighborPci(candidate, "neighborList");
+    ValidateUniqueNeighborNci(candidate, "neighborList");
 
     if (request.mode == ENeighborsUpdateMode::Replace)
     {
@@ -621,15 +620,6 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
     case app::GnbCliCommand::UI_STATUS: {
         auto gnbStatus = m_base->getGnbStatusInfo();
         Json json = ToJson(gnbStatus);
-        // Json json = Json::Obj({
-        //     {"nci", gnbStatus.nci},
-        //     {"pci", gnbStatus.pci},
-        //     {"rrc-ue-count", gnbStatus.rrcConnectedUes},
-        //     {"ngap-ue-count", gnbStatus.ngapConnectedUes},
-        //     {"ngap-ues-in-handover", gnbStatus.handoverInProgressUes},
-        //     {"ngap-up", gnbStatus.isNgapUp},
-        // });
-        // json.push(ToJsonLocWgs84(gnbStatus.gnbPosition));
 
         sendResult(msg.address, json.dumpYaml());
         break;
@@ -704,7 +694,7 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
                     {"amf-ngap-id", ue.second->amfUeNgapId},
                 }));
             }
-            for (auto &ue : m_base->ngapTask->m_handoverPending)
+            for (auto &ue : m_base->ngapTask->m_handoversPending)
             {
                 json.push(Json::Obj({
                     {"handover-pending-ue-id", ue.first},
@@ -834,7 +824,7 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
         }
 
         SatellitePositionVelocityEntry entry{};
-        entry.pci = request.pci;
+        entry.nci = request.nci;
         entry.x = request.x;
         entry.y = request.y;
         entry.z = request.z;
@@ -848,7 +838,7 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
 
         Json response = Json::Obj({
             {"result", "ok"},
-            {"pci", request.pci},
+            {"nci", request.nci},
             {"updatedAtMs", static_cast<int64_t>(entry.lastUpdatedMs)},
         });
         sendResult(msg.address, response.dumpYaml());

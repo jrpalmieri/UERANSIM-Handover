@@ -375,7 +375,7 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
     }
 
     bool isHandover = false;
-    int hoPhysCellId = -1;
+    int64_t hoTargetNci = -1;
     int hoNewCRNTI = 0;
     int hoT304Ms = 0;
     bool hoHasRachConfig = false;
@@ -429,16 +429,16 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
                     //  and set the handover flag
                     auto *rws = cellGroupConfig->spCellConfig->reconfigurationWithSync;
 
-                    hoPhysCellId = (rws->spCellConfigCommon && rws->spCellConfigCommon->physCellId)
-                                       ? static_cast<int>(*rws->spCellConfigCommon->physCellId)
+                    hoTargetNci = (rws->spCellConfigCommon && rws->spCellConfigCommon->physCellId)
+                                       ? static_cast<int64_t>(*rws->spCellConfigCommon->physCellId)
                                        : -1;
                     hoNewCRNTI = static_cast<int>(rws->newUE_Identity);
                     hoT304Ms = t304EnumToMs(rws->t304);
                     hoHasRachConfig = (rws->rach_ConfigDedicated != nullptr);
                     isHandover = true;
 
-                    m_logger->info("ReconfigurationWithSync detected: PCI=%d newC-RNTI=%d t304=%dms rachConfig=%s",
-                                   hoPhysCellId, hoNewCRNTI, hoT304Ms,
+                    m_logger->info("ReconfigurationWithSync detected: NCI=%ld newC-RNTI=%d t304=%dms rachConfig=%s",
+                                   hoTargetNci, hoNewCRNTI, hoT304Ms,
                                    hoHasRachConfig ? "dedicated" : "common");
                 }
 
@@ -496,7 +496,7 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
     if (isHandover)
     {
         // handovers require special processing
-        performHandover(txId, hoPhysCellId, hoNewCRNTI, hoT304Ms, hoHasRachConfig);
+        performHandover(txId, hoTargetNci, hoNewCRNTI, hoT304Ms, hoHasRachConfig);
     }
 
     // Non-handover reconfiguration: just send RRCReconfigurationComplete as ACK

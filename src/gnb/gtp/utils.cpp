@@ -29,7 +29,7 @@ uint64_t PduSessionTree::findByDownTeid(uint32_t teid)
     return {};
 }
 
-uint64_t PduSessionTree::findBySessionId(int ue, int psi)
+uint64_t PduSessionTree::findBySessionId(int64_t ue, int psi)
 {
     if (!mapByUeId.count(ue))
         return {};
@@ -43,7 +43,7 @@ uint64_t PduSessionTree::findBySessionId(int ue, int psi)
 
 void PduSessionTree::remove(uint64_t session, uint32_t downTeid)
 {
-    int ueId = GetUeId(session);
+    int64_t ueId = GetUeId(session);
     int psi = GetPsi(session);
 
     mapByDownTeid.erase(downTeid);
@@ -58,7 +58,7 @@ void PduSessionTree::remove(uint64_t session, uint32_t downTeid)
     }
 }
 
-void PduSessionTree::enumerateByUe(int ue, std::vector<uint64_t> &output)
+void PduSessionTree::enumerateByUe(int64_t ue, std::vector<uint64_t> &output)
 {
     if (mapByUeId.count(ue) == 0)
         return;
@@ -116,7 +116,7 @@ void TokenBucket::refill()
 
 bool RateLimiter::allowDownlinkPacket(uint64_t pduSession, uint64_t packetSize)
 {
-    int ueId = GetUeId(pduSession);
+    int64_t ueId = GetUeId(pduSession);
 
     if (downlinkByUe.count(ueId))
     {
@@ -137,7 +137,7 @@ bool RateLimiter::allowDownlinkPacket(uint64_t pduSession, uint64_t packetSize)
 
 bool RateLimiter::allowUplinkPacket(uint64_t pduSession, uint64_t packetSize)
 {
-    int ueId = GetUeId(pduSession);
+    int64_t ueId = GetUeId(pduSession);
 
     if (uplinkByUe.count(ueId))
     {
@@ -156,7 +156,7 @@ bool RateLimiter::allowUplinkPacket(uint64_t pduSession, uint64_t packetSize)
     return true;
 }
 
-void RateLimiter::updateUeUplinkLimit(int ueId, uint64_t limit)
+void RateLimiter::updateUeUplinkLimit(int64_t ueId, uint64_t limit)
 {
     if (limit <= 0)
     {
@@ -175,7 +175,7 @@ void RateLimiter::updateUeUplinkLimit(int ueId, uint64_t limit)
     }
 }
 
-void RateLimiter::updateUeDownlinkLimit(int ueId, uint64_t limit)
+void RateLimiter::updateUeDownlinkLimit(int64_t ueId, uint64_t limit)
 {
     if (limit <= 0)
     {

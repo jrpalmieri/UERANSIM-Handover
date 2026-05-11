@@ -628,7 +628,7 @@ class RrcCodec:
 
     def build_cell_group_config_handover(
         self,
-        target_pci: int = 2,
+        target_nci: int = 2,
         new_crnti: int = 0x1234,
         t304_ms: int = 1000,
     ) -> bytes:
@@ -639,8 +639,8 @@ class RrcCodec:
 
         Parameters
         ----------
-        target_pci : int
-            Physical Cell Identity of the target cell (0-1007).
+        target_nci : int
+            Cell Identity of the target cell (36 bits).
         new_crnti : int
             The C-RNTI assigned by the target cell (0-65535).
         t304_ms : int
@@ -654,7 +654,7 @@ class RrcCodec:
                 "spCellConfig": {
                     "reconfigurationWithSync": {
                         "spCellConfigCommon": {
-                            "physCellId": target_pci,
+                            "physCellId": target_nci,
                             "dmrs-TypeA-Position": "pos2",
                             "ss-PBCH-BlockPower": 0,
                         },
@@ -678,7 +678,7 @@ class RrcCodec:
     def build_rrc_reconfiguration_with_sync(
         self,
         transaction_id: int = 0,
-        target_pci: int = 2,
+        target_nci: int = 2,
         new_crnti: int = 0x1234,
         t304_ms: int = 1000,
     ) -> bytes:
@@ -688,7 +688,7 @@ class RrcCodec:
         containing a CellGroupConfig with ReconfigurationWithSync.
         """
         mcg_bytes = self.build_cell_group_config_handover(
-            target_pci, new_crnti, t304_ms
+            target_nci, new_crnti, t304_ms
         )
 
         transaction_id = self._normalize_txn_id(transaction_id)
@@ -728,7 +728,7 @@ class RrcCodec:
     def build_conditional_rrc_reconfiguration_with_sync(
         self,
         transaction_id: int = 0,
-        target_pci: int = 2,
+        target_nci: int = 2,
         new_crnti: int = 0x1234,
         t304_ms: int = 1000,
     ) -> bytes:
@@ -737,7 +737,7 @@ class RrcCodec:
         `condRRCReconfig` in ConditionalReconfiguration carries the inner
         `RRCReconfiguration` type, not the outer `DL-DCCH-Message` wrapper.
         """
-        mcg_bytes = self.build_cell_group_config_handover(target_pci, new_crnti, t304_ms)
+        mcg_bytes = self.build_cell_group_config_handover(target_nci, new_crnti, t304_ms)
         transaction_id = self._normalize_txn_id(transaction_id)
 
         if self._asn1 is not None:

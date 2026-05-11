@@ -132,7 +132,7 @@ void GtpTask::handleSessionCreate(PduSessionResource *session)
     m_logger->debug("UE[%d] PDU session resource created. PSI[%d]", session->ueId, session->psi);
 }
 
-void GtpTask::handleSessionRelease(int ueId, int psi)
+void GtpTask::handleSessionRelease(int64_t ueId, int psi)
 {
     if (!m_ueContexts.count(ueId))
     {
@@ -159,7 +159,7 @@ void GtpTask::handleSessionRelease(int ueId, int psi)
     m_logger->debug("UE[%d] PDU session resource released. PSI[%d]", ueId, psi);
 }
 
-void GtpTask::handleUeContextDelete(int ueId)
+void GtpTask::handleUeContextDelete(int64_t ueId)
 {
     // Find PDU sessions of the UE
     std::vector<uint64_t> sessions{};
@@ -191,7 +191,7 @@ void GtpTask::handleUeContextDelete(int ueId)
     m_logger->debug("UE[%d] Context(s) deleted [count=%d]", ueId, count);
 }
 
-void GtpTask::handleUplinkData(int ueId, int psi, OctetString &&pdu)
+void GtpTask::handleUplinkData(int64_t ueId, int psi, OctetString &&pdu)
 {
     const uint8_t *data = pdu.data();
 
@@ -287,7 +287,7 @@ void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
     }
 }
 
-void GtpTask::updateAmbrForUe(int ueId)
+void GtpTask::updateAmbrForUe(int64_t ueId)
 {
     if (!m_ueContexts.count(ueId))
         return;

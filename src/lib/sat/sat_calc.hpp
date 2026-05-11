@@ -15,8 +15,8 @@ namespace nr::sat
 {
 
 
-using EndpointResolver = std::function<bool(int pci, NeighborEndpoint &endpoint)>;
-using SatStateResolver = std::function<bool(int pci, int offsetSec, SatEcefState &state)>;
+using EndpointResolver = std::function<bool(int64_t nci, NeighborEndpoint &endpoint)>;
+using SatStateResolver = std::function<bool(int64_t nci, int offsetSec, SatEcefState &state)>;
 
 bool PropagateTleToEcef(const std::string &line1,
                         const std::string &line2,

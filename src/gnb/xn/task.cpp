@@ -71,9 +71,9 @@ void XnTask::onQuit()
     }
 }
 
-std::optional<InetAddress> XnTask::resolveNeighborXnEndpoint(int targetPci) const
+std::optional<InetAddress> XnTask::resolveNeighborXnEndpoint(int64_t targetNci) const
 {
-    auto neighborOpt = m_base->neighbors->findByPci(targetPci);
+    auto neighborOpt = m_base->neighbors->findByNci(targetNci);
     if (!neighborOpt)
         return std::nullopt;
 
@@ -88,11 +88,11 @@ void XnTask::handleRrcMessage(NmGnbRrcToXn &message)
     switch (message.present)
     {
     case NmGnbRrcToXn::HANDOVER_REQUIRED_XN: {
-        auto endpoint = resolveNeighborXnEndpoint(message.hoTargetPci);
+        auto endpoint = resolveNeighborXnEndpoint(static_cast<int>(message.hoTargetNci));
         if (!endpoint)
         {
-            m_logger->warn("UE[%d] Xn handover request dropped, targetPCI=%d not found",
-                           message.ueId, message.hoTargetPci);
+            m_logger->warn("UE[%ld] Xn handover request dropped, targetNCI=%ld not found",
+                           message.ueId, message.hoTargetNci);
             return;
         }
 
@@ -100,8 +100,8 @@ void XnTask::handleRrcMessage(NmGnbRrcToXn &message)
         xnMessage.type = xn::XnMessageType::HandoverRequest;
         xnMessage.transactionId = m_transactionCounter++;
         xnMessage.ueId = message.ueId;
-        xnMessage.sourcePci = m_base->config->getCellId();
-        xnMessage.targetPci = message.hoTargetPci;
+        xnMessage.sourceNci = m_base->config->nci;
+        xnMessage.targetNci = static_cast<int64_t>(message.hoTargetNci);
         xnMessage.causeCode = static_cast<int>(message.hoCause);
 
         if (m_udpTask)
@@ -110,16 +110,16 @@ void XnTask::handleRrcMessage(NmGnbRrcToXn &message)
             m_udpTask->sendPacket(*endpoint, packet);
         }
 
-        m_logger->info("Xn HandoverRequest sent UE[%d] -> ipV%d:%u targetPCI=%d tx=%u",
+        m_logger->info("Xn HandoverRequest sent UE[%ld] -> ipV%d:%u targetNCI=%ld tx=%u",
                        message.ueId,
                        endpoint->getIpVersion(),
                        static_cast<unsigned>(endpoint->getPort()),
-                       message.hoTargetPci,
+                       message.hoTargetNci,
                        xnMessage.transactionId);
         break;
     }
     case NmGnbRrcToXn::HANDOVER_COMPLETE_XN:
-        m_logger->info("UE[%d] Xn HandoverComplete notification received", message.ueId);
+        m_logger->info("UE[%ld] Xn HandoverComplete notification received", message.ueId);
         break;
     }
 }

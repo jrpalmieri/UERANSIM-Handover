@@ -39,7 +39,7 @@
 namespace nr::gnb
 {
 
-void GnbRrcTask::receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest &msg)
+void GnbRrcTask::receiveRrcSetupRequest(int64_t ueId, const ASN_RRC_RRCSetupRequest &msg)
 {
     // see if UeID is already in the RRC UE context map
     // Why: - failed registration, failed handover
@@ -47,13 +47,13 @@ void GnbRrcTask::receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest 
     if (ue)
     {
         // TODO: handle this more properly
-        m_logger->err("UE[%d] RRC SetupRequest received. UE context already exists.  Discarding.", ueId);
+        m_logger->err("UE[%ld] RRC SetupRequest received. UE context already exists.  Discarding.", ueId);
         return;
     }
 
     if (msg.rrcSetupRequest.ue_Identity.present == ASN_RRC_InitialUE_Identity_PR_NOTHING)
     {
-        m_logger->err("UE[%d] RRC SetupRequest received. Identity not present. Discarding.", ueId);
+        m_logger->err("UE[%ld] RRC SetupRequest received. Identity not present. Discarding.", ueId);
         return;
     }
 
@@ -62,13 +62,13 @@ void GnbRrcTask::receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest 
     ue = createUe(ueId, newCrnti);
     if (!ue)
     {
-        m_logger->err("UE[%d] RRC SetupRequest received. Failed to create UE RRC context. Discarding.", ueId);
+        m_logger->err("UE[%ld] RRC SetupRequest received. Failed to create UE RRC context. Discarding.", ueId);
         return;
     }
 
     ue->ueId = ueId;
     ue->rrcState = UE_RRC_CONNECTION_STATE::RRC_CONNECTION_PENDING;
-    m_logger->info("UE[%d] RRC SetupRequest received. UE context created, cRNTI=%d", ueId, newCrnti);
+    m_logger->info("UE[%ld] RRC SetupRequest received. UE context created, cRNTI=%d", ueId, newCrnti);
 
 
     if (msg.rrcSetupRequest.ue_Identity.present == ASN_RRC_InitialUE_Identity_PR_ng_5G_S_TMSI_Part1)
@@ -100,12 +100,12 @@ void GnbRrcTask::receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest 
     asn::SetOctetString(rrcSetupIEs->masterCellGroup,
                         rrc::encode::EncodeS(asn_DEF_ASN_RRC_CellGroupConfig, &masterCellGroup));
 
-    m_logger->debug("UE[%d] RRC Setup sent to UE, cRNTI=%d", ueId, newCrnti);
+    m_logger->debug("UE[%ld] RRC Setup sent to UE, cRNTI=%d", ueId, newCrnti);
     sendRrcMessage(ueId, pdu);
     asn::Free(asn_DEF_ASN_RRC_DL_CCCH_Message, pdu);
 }
 
-void GnbRrcTask::receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplete &msg)
+void GnbRrcTask::receiveRrcSetupComplete(int64_t ueId, const ASN_RRC_RRCSetupComplete &msg)
 {
     auto *ue = tryFindUeByUeId(ueId);
     if (!ue)
@@ -116,11 +116,11 @@ void GnbRrcTask::receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplet
 
     if (!ue)
     {
-        m_logger->err("UE[%d] RRC Setup Complete received. UE context not found.", ueId);
+        m_logger->err("UE[%ld] RRC Setup Complete received. UE context not found.", ueId);
         return;
     }
 
-    m_logger->debug("UE[%d] RRC Setup Complete received, cRnti=%d", ue->ueId, ue->cRnti);
+    m_logger->debug("UE[%ld] RRC Setup Complete received, cRnti=%d", ue->ueId, ue->cRnti);
 
     ue->rrcState = UE_RRC_CONNECTION_STATE::RRC_CONNECTED;
     
@@ -156,7 +156,7 @@ void GnbRrcTask::receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplet
     w->rrcEstablishmentCause = ue->establishmentCause;
     w->sTmsi = ue->sTmsi;
 
-    m_logger->debug("UE[%d] sending Initial NAS Delivery to NGAP task, cRNTI=%d, sTmsi=%d", ueId, ue->cRnti, ue->sTmsi.has_value() ? static_cast<int>(ue->sTmsi->tmsi) : -1);
+    m_logger->debug("UE[%ld] sending Initial NAS Delivery to NGAP task, cRNTI=%d, sTmsi=%d", ueId, ue->cRnti, ue->sTmsi.has_value() ? static_cast<int>(ue->sTmsi->tmsi) : -1);
 
     m_base->ngapTask->push(std::move(w));
 

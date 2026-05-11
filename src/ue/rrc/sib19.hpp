@@ -270,7 +270,7 @@ struct Sib19Info
     /* UE-local reception timestamp (ms since UE start) */
     int64_t receivedTime{};
 
-    /* All decoded SIB19 records in the last received payload, keyed by PCI. */
+    /* All decoded SIB19 records in the last received payload, keyed by NCI. */
     struct CellEntry
     {
         NtnConfig ntnConfig{};

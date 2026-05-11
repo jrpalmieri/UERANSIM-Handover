@@ -163,15 +163,15 @@ class FakeUe:
         self,
         meas_id: int = 1,
         serving_rsrp: int = 30,
-        serving_pci: int = 0,
-        neighbor_pci: int = 1,
+        serving_nci: int = 0,
+        neighbor_nci: int = 1,
         neighbor_rsrp: int = 50,
     ):
         pdu = self._build_measurement_report(
             meas_id,
             serving_rsrp,
-            serving_pci,
-            neighbor_pci,
+            serving_nci,
+            neighbor_nci,
             neighbor_rsrp,
         )
         self._send_ul_rrc(RrcChannel.UL_DCCH, pdu)
@@ -180,13 +180,13 @@ class FakeUe:
         self,
         meas_id: int = 1,
         serving_rsrp: int = 30,
-        serving_pci: int = 0,
+        serving_nci: int = 0,
         neighbors: Sequence[tuple[int, int]] = ((1, 50),),
     ):
         pdu = self._build_measurement_report_multi_neighbor(
             meas_id,
             serving_rsrp,
-            serving_pci,
+            serving_nci,
             neighbors,
         )
         self._send_ul_rrc(RrcChannel.UL_DCCH, pdu)
@@ -369,8 +369,8 @@ class FakeUe:
         self,
         meas_id: int,
         serving_rsrp: int,
-        serving_pci: int,
-        neighbor_pci: int,
+        serving_nci: int,
+        neighbor_nci: int,
         neighbor_rsrp: int,
     ) -> bytes:
         asn1 = _get_asn1()
@@ -390,7 +390,7 @@ class FakeUe:
                 }
 
                 neighbors = [{
-                    "physCellId": neighbor_pci,
+                    "physCellId": neighbor_nci,
                     "measResult": {
                         "cellResults": {
                             "resultsSSB-Cell": {
@@ -435,14 +435,14 @@ class FakeUe:
         self,
         meas_id: int,
         serving_rsrp: int,
-        serving_pci: int,
+        serving_nci: int,
         neighbors: Sequence[tuple[int, int]],
     ) -> bytes:
         asn1 = _get_asn1()
         if asn1 is not None:
             try:
                 serving = {
-                    "servCellId": serving_pci,
+                    "servCellId": serving_nci,
                     "measResultServingCell": {
                         "measResult": {
                             "cellResults": {
@@ -455,10 +455,10 @@ class FakeUe:
                 }
 
                 neighbor_items = []
-                for pci, rsrp in neighbors:
+                for nci, rsrp in neighbors:
                     neighbor_items.append(
                         {
-                            "physCellId": pci,
+                            "physCellId": nci,
                             "measResult": {
                                 "cellResults": {
                                     "resultsSSB-Cell": {
@@ -499,10 +499,10 @@ class FakeUe:
                 pass
 
         if not neighbors:
-            return self._build_measurement_report(meas_id, serving_rsrp, serving_pci, neighbor_pci=1, neighbor_rsrp=50)
+            return self._build_measurement_report(meas_id, serving_rsrp, serving_nci, neighbor_nci=1, neighbor_rsrp=50)
 
-        best_pci, best_rsrp = max(neighbors, key=lambda item: item[1])
-        return self._build_measurement_report(meas_id, serving_rsrp, serving_pci, best_pci, best_rsrp)
+        best_nci, best_rsrp = max(neighbors, key=lambda item: item[1])
+        return self._build_measurement_report(meas_id, serving_rsrp, serving_nci, best_nci, best_rsrp)
 
     def _build_rrc_reconfig_complete(self, txn_id: int) -> bytes:
         asn1 = _get_asn1()

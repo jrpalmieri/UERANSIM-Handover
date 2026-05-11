@@ -19,7 +19,7 @@
 namespace nr::gnb
 {
 
-void NgapTask::handleRadioLinkFailure(int ueId)
+void NgapTask::handleRadioLinkFailure(int64_t ueId)
 {
     // Notify GTP task
     auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_RELEASE);

@@ -52,7 +52,7 @@ struct KeplerianElementsRaw
 
 struct EphEntry
 {
-    int pci{};
+    int64_t nci{};
 
     // pos/vel (ephType == 0)
     double x{}, y{}, z{};

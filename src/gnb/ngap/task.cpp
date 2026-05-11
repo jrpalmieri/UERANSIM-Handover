@@ -73,29 +73,29 @@ void NgapTask::onLoop()
         // RRC (target gnb) notifies NGAP of handover completion (RRCReconfigComplete). NGAP will notify AMF with HANDOVER_NOTIFY.
         //      AMF will notify source gnb to delete UE context.
         case NmGnbRrcToNgap::HANDOVER_NOTIFY: {
-            m_logger->info("UE[%d] Handover complete notification from RRC", w.ueId);
+            m_logger->info("UE[%ld] Handover complete notification from RRC", w.ueId);
             handleHandoverNotifyFromRrc(w.ueId);
             break;
         }
         // RRC (source gnb) notifies NGAP of handover start. NGAP will notify AMF with HANDOVER_REQUIRED.
         //      AMF will then notify target gNB.
         case NmGnbRrcToNgap::HANDOVER_REQUIRED: {
-            m_logger->info("UE[%d] HandoverRequired received from RRC, targetPCI=%d", w.ueId, w.hoTargetPci);
-            
+            m_logger->info("UE[%ld] HandoverRequired received from RRC, targetNCI=%ld", w.ueId, w.hoTargetNci);
+
             auto *_ue = findUeContext(w.ueId);
             if (!_ue || _ue->amfUeNgapId < 1 || _ue->pduSessions.empty())
             {
-                m_logger->warn("UE[%d] Core Network resources not yet assigned, deferring HandoverRequired", w.ueId);
+                m_logger->warn("UE[%ld] Core Network resources not yet assigned, deferring HandoverRequired", w.ueId);
                 auto deferred = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_REQUIRED);
                 deferred->ueId = w.ueId;
-                deferred->hoTargetPci = w.hoTargetPci;
+                deferred->hoTargetNci = w.hoTargetNci;
                 deferred->hoCause = w.hoCause;
                 deferred->hoForChoPreparation = w.hoForChoPreparation;
                 deferred->retries = w.retries;
                 enqueueDeferred(std::move(deferred));
                 break;
             }
-            sendHandoverRequired(w.ueId, w.hoTargetPci, w.hoCause, w.hoForChoPreparation);
+            sendHandoverRequired(w.ueId, w.hoTargetNci, w.hoCause, w.hoForChoPreparation);
             break;
         }
         }
@@ -125,7 +125,7 @@ void NgapTask::onLoop()
         switch (w.present)
         {
         case NmGnbXnToNgap::PATH_SWITCH_REQUEST_REQUIRED: {
-            m_logger->info("Xn requested PathSwitchRequest UE[%d] ", w.ueId);
+            m_logger->info("Xn requested PathSwitchRequest UE[%ld] ", w.ueId);
             sendPathSwitchRequest(w.ueId);
             break;
         }
@@ -168,11 +168,11 @@ void NgapTask::processDeferredQueue()
 
         if (m_ueCtx.count(msg->ueId) && (m_ueCtx[msg->ueId]->amfUeNgapId > 0 && !m_ueCtx[msg->ueId]->pduSessions.empty()))
         {
-            sendHandoverRequired(msg->ueId, msg->hoTargetPci, msg->hoCause, msg->hoForChoPreparation);
+            sendHandoverRequired(msg->ueId, msg->hoTargetNci, msg->hoCause, msg->hoForChoPreparation);
         }
         else if (msg->retries >= DEFERRED_MAX_RETRIES)
         {
-            m_logger->err("UE[%d] Dropping deferred HandoverRequired after %d retries", msg->ueId, msg->retries);
+            m_logger->err("UE[%ld] Dropping deferred HandoverRequired after %d retries", msg->ueId, msg->retries);
         }
         else
         {
@@ -197,7 +197,7 @@ void NgapTask::sendGnbStatusUpdate()
     info.ngapConnectedUes = static_cast<int>(m_ueCtx.size());
 
     info.handoverInProgressUesIsPresent = true;
-    info.handoverInProgressUes = static_cast<int>(m_handoverPending.size());
+    info.handoverInProgressUes = static_cast<int>(m_handoversPending.size());
 
     m_base->setGnbStatusInfo(info);
 }

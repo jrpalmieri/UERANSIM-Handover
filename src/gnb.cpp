@@ -70,8 +70,8 @@ static int64_t ParseNciHex(const std::string &s)
 
 static std::string ResolveGnbNodeNameTemplateToken(const std::string &token, const nr::gnb::GnbConfig &config)
 {
-    if (token == "pci")
-        return std::to_string(cons::getPciFromNci(config.nci));
+    if (token == "nci")
+        return std::to_string(config.nci);
 
     throw std::runtime_error("Unsupported token in nodeNameTemplate: {" + token + "}");
 }
@@ -608,7 +608,7 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
             result->neighborList.push_back(std::move(neighbor));
         }
 
-        nr::gnb::ValidateUniqueNeighborPci(result->neighborList, "neighborList");
+        nr::gnb::ValidateUniqueNeighborNci(result->neighborList, "neighborList");
     }
 
     if (yaml::HasField(config, "handover"))
@@ -686,7 +686,7 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
                 throw std::runtime_error("Fields ntn.tle.line1 and ntn.tle.line2 are required");
 
             nr::sat::SatTleEntry entry{};
-            entry.pci = cons::getPciFromNci(result->nci);
+            entry.nci = result->nci;
             if (yaml::HasField(tle, "name"))
                 entry.name = tle["name"].as<std::string>();
             entry.line1 = tle["line1"].as<std::string>();

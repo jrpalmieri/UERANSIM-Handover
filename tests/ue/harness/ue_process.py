@@ -40,7 +40,7 @@ class UeState:
     # Handover-related
     handover_completed: bool = False
     handover_failed: bool = False
-    handover_target_pci: int = 0
+    handover_target_nci: int = 0
     handover_source_cell: int = 0
     handover_target_cell: int = 0
 
@@ -327,9 +327,9 @@ class UeProcess:
             # Handover
             if "Handover to cell" in line and "completed" in line:
                 state.handover_completed = True
-                m = re.search(r"PCI=(\d+)", line)
+                m = re.search(r"NCI=(\d+)", line)
                 if m:
-                    state.handover_target_pci = int(m.group(1))
+                    state.handover_target_nci = int(m.group(1))
             if "Handover failure" in line or "T304 expired" in line:
                 state.handover_failed = True
             m = re.search(r"Serving cell switched: cell\[(\d+)\].*cell\[(\d+)\]", line)
@@ -360,7 +360,7 @@ class UeProcess:
 
     def wait_for_handover_command(self, timeout_s: float = 15.0) -> Optional[str]:
         """Wait until the UE logs reception of a handover command."""
-        return self.wait_for_log(r"Handover command: targetPCI=", timeout_s)
+        return self.wait_for_log(r"Handover command: targetNCI=", timeout_s)
 
     def wait_for_cell_switch(self, timeout_s: float = 15.0) -> Optional[str]:
         """Wait until the UE logs a cell switch."""
@@ -377,7 +377,7 @@ class UeProcess:
           - command_received (bool)
           - completed (bool)
           - failed (bool)
-          - target_pci (int or None)
+          - target_nci (int or None)
           - source_cell (int or None)
           - target_cell (int or None)
           - t304_expired (bool)
@@ -388,7 +388,7 @@ class UeProcess:
             "command_received": False,
             "completed": False,
             "failed": False,
-            "target_pci": None,
+            "target_nci": None,
             "source_cell": None,
             "target_cell": None,
             "t304_expired": False,
@@ -396,11 +396,11 @@ class UeProcess:
         }
 
         for line in self._log_lines:
-            # "Handover command: targetPCI=X newC-RNTI=Y t304=Zms"
-            m = re.search(r"Handover command: targetPCI=(\d+)", line)
+            # "Handover command: targetNCI=X newC-RNTI=Y t304=Zms"
+            m = re.search(r"Handover command: targetNCI=(\d+)", line)
             if m:
                 info["command_received"] = True
-                info["target_pci"] = int(m.group(1))
+                info["target_nci"] = int(m.group(1))
 
             # "Serving cell switched: cell[X] → cell[Y]"
             m = re.search(r"Serving cell switched: cell\[(\d+)\].*cell\[(\d+)\]", line)
@@ -408,15 +408,15 @@ class UeProcess:
                 info["source_cell"] = int(m.group(1))
                 info["target_cell"] = int(m.group(2))
 
-            # "Handover to cell[X] completed (PCI=Y, newC-RNTI=Z)"
+            # "Handover to cell[X] completed (NCI=Y, newC-RNTI=Z)"
             if "Handover to cell" in line and "completed" in line:
                 info["completed"] = True
 
-            # "Handover failure: target PCI X not found"
+            # "Handover failure: target NCI X not found"
             if "Handover failure" in line:
                 info["failed"] = True
 
-            # "T304 expired – handover to PCI X failed"
+            # "T304 expired – handover to NCI X failed"
             if "T304 expired" in line:
                 info["t304_expired"] = True
                 info["failed"] = True

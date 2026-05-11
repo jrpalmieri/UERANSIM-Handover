@@ -57,15 +57,15 @@ class NgapTask : public NtsTask
     std::unique_ptr<Logger> m_logger;
 
     std::unordered_map<int, NgapAmfContext *> m_amfCtx;
-    std::unordered_map<int, NgapUeContext *> m_ueCtx;
+    std::unordered_map<int64_t, NgapUeContext *> m_ueCtx;
 
     // tracks pending CHO handover preparations, so that responses can be correlated.
-    // primary index is UE ctxId, secondary index is target PCI. Third value is count of pending CHO preparations for the same target PCI
-    //  (can be >1 but unlikely in practice, since usually only 1 handover preparation per target PCI would be triggered for the same UE)
-    std::unordered_map<int, std::unordered_map<int, int>> m_hoReqChoPendingByTargetPci;
+    // primary index is UE ctxId, secondary index is target NCI. Third value is count of pending CHO preparations for the same target NCI
+    //  (can be >1 but unlikely in practice, since usually only 1 handover preparation per target NCI would be triggered for the same UE)
+    std::unordered_map<int64_t, std::unordered_map<int64_t, int>> m_hoReqChoPendingByTargetNci;
 
-    // Handover context tracker, indexed by ueId
-    std::unordered_map<int, NGAPHandoverPending *> m_handoverPending;
+    // Pending handover context tracker, indexed by ueId
+    std::unordered_map<int64_t, NGAPHandoverPending *> m_handoversPending;
 
     int64_t m_ueNgapIdCounter;
     uint32_t m_downlinkTeidCounter;
@@ -100,21 +100,21 @@ class NgapTask : public NtsTask
   
     void createAmfContext(const GnbAmfConfig &config);
     NgapAmfContext *findAmfContext(int ctxId);
-    void createUeContext(int ueId, int32_t &requestedSliceType);
-    NgapUeContext *findUeContext(int ctxId);
+    void createUeContext(int64_t ueId, int32_t &requestedSliceType);
+    NgapUeContext *findUeContext(int64_t ctxId);
     NgapUeContext *findUeByRanId(int64_t ranUeNgapId);
     NgapUeContext *findUeByAmfId(int64_t amfUeNgapId);
     NgapUeContext *findUeByNgapIdPair(int amfCtxId, const NgapIdPair &idPair);
-    void deleteUeContext(int ueId);
+    void deleteUeContext(int64_t ueId);
     void deleteAmfContext(int amfId);
-    int64_t generateRanUeNgapId(int ueId);
+    int64_t generateRanUeNgapId(int64_t ueId);
     void sendGnbStatusUpdate();
 
     /* Interface management */
     void handleAssociationSetup(int amfId, int ascId, int inCount, int outCount);
     void handleAssociationShutdown(int amfId);
     void sendNgSetupRequest(int amfId);
-    void sendErrorIndication(int amfId, NgapCause cause = NgapCause::Protocol_unspecified, int ueId = 0);
+    void sendErrorIndication(int amfId, NgapCause cause = NgapCause::Protocol_unspecified, int64_t ueId = 0);
     void receiveNgSetupResponse(int amfId, ASN_NGAP_NGSetupResponse *msg);
     void receiveNgSetupFailure(int amfId, ASN_NGAP_NGSetupFailure *msg);
     void receiveErrorIndication(int amfId, ASN_NGAP_ErrorIndication *msg);
@@ -124,17 +124,17 @@ class NgapTask : public NtsTask
 
     /* Message transport */
     void sendNgapNonUe(int amfId, ASN_NGAP_NGAP_PDU *pdu);
-    void sendNgapUeAssociated(int ueId, ASN_NGAP_NGAP_PDU *pdu);
+    void sendNgapUeAssociated(int64_t ueId, ASN_NGAP_NGAP_PDU *pdu);
     void handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer &buffer);
     bool handleSctpStreamId(int amfId, int stream, const ASN_NGAP_NGAP_PDU &pdu);
 
     /* NAS transport */
-    void handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t rrcEstablishmentCause,
+    void handleInitialNasTransport(int64_t ueId, OctetString &nasPdu, int64_t rrcEstablishmentCause,
                                    const std::optional<GutiMobileIdentity> &sTmsi);
-    void handleUplinkNasTransport(int ueId, const OctetString &nasPdu);
+    void handleUplinkNasTransport(int64_t ueId, const OctetString &nasPdu);
     void receiveDownlinkNasTransport(int amfId, ASN_NGAP_DownlinkNASTransport *msg);
-    void deliverDownlinkNas(int ueId, OctetString &&nasPdu);
-    void sendNasNonDeliveryIndication(int ueId, const OctetString &nasPdu, NgapCause cause);
+    void deliverDownlinkNas(int64_t ueId, OctetString &&nasPdu);
+    void sendNasNonDeliveryIndication(int64_t ueId, const OctetString &nasPdu, NgapCause cause);
     void receiveRerouteNasRequest(int amfId, ASN_NGAP_RerouteNASRequest *msg);
 
     /* PDU session management */
@@ -147,28 +147,28 @@ class NgapTask : public NtsTask
     void receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetupRequest *msg);
     void receiveContextRelease(int amfId, ASN_NGAP_UEContextReleaseCommand *msg);
     void receiveContextModification(int amfId, ASN_NGAP_UEContextModificationRequest *msg);
-    void sendContextRelease(int ueId, NgapCause cause);
+    void sendContextRelease(int64_t ueId, NgapCause cause);
 
     /* NAS Node Selection - nnsf.cpp */
     
-    NgapAmfContext *selectAmf(int ueId, int32_t &requestedSliceType);
-    NgapAmfContext *selectNewAmfForReAllocation(int ueId, int initiatedAmfId, int amfSetId);
+    NgapAmfContext *selectAmf(int64_t ueId, int32_t &requestedSliceType);
+    NgapAmfContext *selectNewAmfForReAllocation(int64_t ueId, int initiatedAmfId, int amfSetId);
 
     /* Radio resource control */
-    void handleRadioLinkFailure(int ueId);
+    void handleRadioLinkFailure(int64_t ueId);
     void receivePaging(int amfId, ASN_NGAP_Paging *msg);
 
     /* Handover (N2-based, AMF-mediated) */
 
-    void sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bool hoForChoPreparation);
+    void sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause cause, bool hoForChoPreparation);
     void receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg);
     void receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg);
     void receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPreparationFailure *msg);
-    void sendHandoverNotify(int ueId);
-    void sendPathSwitchRequest(int ueId);
+    void sendHandoverNotify(int64_t ueId);
+    void sendPathSwitchRequest(int64_t ueId);
     void receivePathSwitchRequestAcknowledge(int amfId, ASN_NGAP_PathSwitchRequestAcknowledge *msg);
     void receivePathSwitchRequestFailure(int amfId, ASN_NGAP_PathSwitchRequestFailure *msg);
-    void handleHandoverNotifyFromRrc(int ueId);
+    void handleHandoverNotifyFromRrc(int64_t ueId);
 };
 
 } // namespace nr::gnb

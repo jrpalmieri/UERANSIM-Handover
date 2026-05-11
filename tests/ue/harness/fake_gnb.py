@@ -72,7 +72,7 @@ _EVENT_TYPE_MAP = {
 CONDITION_SIZE = 56
 
 # Candidate header = 24 bytes:
-#   candidateId + targetPci + newCRNTI + t304Ms + executionPriority + numConditions
+#   candidateId + targetNci + newCRNTI + t304Ms + executionPriority + numConditions
 CANDIDATE_HEADER_SIZE = 24
 
 
@@ -136,55 +136,6 @@ def _build_condition(cond: Dict) -> bytes:
            struct.pack("<dddd", fp1, fp2, fp3, fp4)
 
 
-def _build_cho_binary(candidates: List[Dict]) -> bytes:
-    """Build a v2 binary CHO configuration PDU for the DL_CHO channel.
-
-    V2 wire format (little-endian):
-      [0..3]   numCandidates (uint32)
-      Per candidate (variable size):
-        [0..3]   candidateId        (int32)
-        [4..7]   targetPci          (int32)
-        [8..11]  newCRNTI           (int32)
-        [12..15] t304Ms             (int32)
-        [16..19] executionPriority  (int32)  -1 = unset
-        [20..23] numConditions      (uint32)
-        Per condition (56 bytes each):
-          (see _build_condition)
-
-    Each candidate dict can use the LEGACY keys for single-condition
-    shorthand:
-      - conditionType: "T1_ONLY" | "T1_AND_A3" | "D1_ONLY"  →  mapped to
-        conditions list automatically.
-      - t1DurationMs, a3Offset, a3Hysteresis, a3TimeToTriggerMs,
-        d1RefX, d1RefY, d1RefZ, d1ThresholdM  →  used for the single cond.
-
-    Or the NEW key for arbitrary condition groups:
-      - conditions: list of dicts, each with:
-          event: "T1"|"A2"|"A3"|"A5"|"D1"
-          (plus event-specific params)
-    """
-    buf = struct.pack("<I", len(candidates))
-    for c in candidates:
-        cid = c.get("candidateId", 1)
-        tpci = c.get("targetPci", 2)
-        crnti = c.get("newCRNTI", 0x1234)
-        t304 = c.get("t304Ms", 1000)
-        prio = c.get("executionPriority", -1)
-
-        # Build condition list
-        if "conditions" in c:
-            # New-style: explicit condition list
-            cond_list = c["conditions"]
-        else:
-            # Legacy-style: single conditionType → map to condition list
-            cond_str = c.get("conditionType", "T1_ONLY")
-            cond_list = _legacy_to_conditions(c, cond_str)
-
-        buf += struct.pack("<iiiiiI", cid, tpci, crnti, t304, prio, len(cond_list))
-        for cond in cond_list:
-            buf += _build_condition(cond)
-
-    return buf
 
 
 def _legacy_to_conditions(c: Dict, cond_str: str) -> List[Dict]:
@@ -528,7 +479,7 @@ class FakeGnb:
 
     def send_handover_command(
         self,
-        target_pci: int = 2,
+        target_nci: int = 2,
         new_crnti: int = 0x1234,
         t304_ms: int = 1000,
         transaction_id: int = 2,
@@ -536,18 +487,18 @@ class FakeGnb:
         """Send an RRCReconfiguration containing ReconfigurationWithSync.
 
         This triggers the UE to perform a handover to the cell identified
-        by *target_pci*.
+        by *target_nci*.
         """
         reconfig = self._rrc.build_rrc_reconfiguration_with_sync(
             transaction_id=transaction_id,
-            target_pci=target_pci,
+            target_nci=target_nci,
             new_crnti=new_crnti,
             t304_ms=t304_ms,
         )
         self.send_dl_dcch(reconfig)
         logger.info(
-            "Sent handover command: targetPCI=%d newC-RNTI=%d t304=%dms",
-            target_pci, new_crnti, t304_ms,
+            "Sent handover command: targetNCI=%d newC-RNTI=%d t304=%dms",
+            target_nci, new_crnti, t304_ms,
         )
 
     def send_rrc_release(self, transaction_id: int = 0):
@@ -556,30 +507,6 @@ class FakeGnb:
         self.send_dl_dcch(release)
         logger.info("Sent RRCRelease")
 
-    def send_cho_configuration(
-        self,
-        candidates: List[Dict],
-    ):
-        """Send CHO configuration via the DL_CHO custom channel (v2 protocol).
-
-        Each candidate dict supports LEGACY keys (single condition shorthand):
-          - candidateId, targetPci, newCRNTI, t304Ms
-          - conditionType: "T1_ONLY" | "T1_AND_A3" | "D1_ONLY"
-          - t1DurationMs, a3Offset, a3Hysteresis, a3TimeToTriggerMs
-          - d1RefX, d1RefY, d1RefZ, d1ThresholdM
-
-        Or NEW keys for arbitrary condition groups:
-          - candidateId, targetPci, newCRNTI, t304Ms
-          - executionPriority (int, lower = higher priority, -1 = unset)
-          - conditions: list of dicts, each with:
-              event: "T1"|"A2"|"A3"|"A5"|"D1"
-              (plus event-specific params, see _build_condition)
-        """
-        pdu = _build_cho_binary(candidates)
-        self.send_rrc(RrcChannel.DL_CHO, pdu)
-        logger.info(
-            "Sent CHO configuration: %d candidate(s)", len(candidates)
-        )
 
     def send_conditional_reconfiguration(
         self,

@@ -56,7 +56,7 @@ Json ToJson(const ChoCandidate &v)
 {
     return Json::Obj({
         {"candidateId", v.candidateId},
-        {"targetPci", v.targetNci},
+        {"targetNci", v.targetNci},
         {"newCRNTI", v.newCRNTI},
         {"t304Ms", v.t304Ms},
         {"txId", v.txId},

@@ -125,7 +125,7 @@ class TestUeChoDebugEncodingLadder:
 
         cond_rrc = codec.build_conditional_rrc_reconfiguration_with_sync(
             transaction_id=1,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x4201,
             t304_ms=1000,
         )
@@ -158,13 +158,13 @@ class TestUeChoDebugEncodingLadder:
 
         cond_rrc_a = codec.build_conditional_rrc_reconfiguration_with_sync(
             transaction_id=1,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x4301,
             t304_ms=1000,
         )
         cond_rrc_b = codec.build_conditional_rrc_reconfiguration_with_sync(
             transaction_id=1,
-            target_pci=3,
+            target_nci=3,
             new_crnti=0x4302,
             t304_ms=1000,
         )
@@ -307,10 +307,10 @@ class TestUeChoIntegrationSmoke:
             pytest.skip("UE registration flow did not complete in this environment")
 
     @staticmethod
-    def _build_cond_rrc(fake_gnb, transaction_id: int, target_pci: int, new_crnti: int) -> bytes:
+    def _build_cond_rrc(fake_gnb, transaction_id: int, target_nci: int, new_crnti: int) -> bytes:
         return fake_gnb._rrc.build_conditional_rrc_reconfiguration_with_sync(
             transaction_id=transaction_id,
-            target_pci=target_pci,
+            target_nci=target_nci,
             new_crnti=new_crnti,
             t304_ms=1000,
         )
@@ -381,7 +381,7 @@ class TestUeChoIntegrationSmoke:
         cond_rrc = self._build_cond_rrc(
             fake_gnb,
             transaction_id=7,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x3301,
         )
 
@@ -416,7 +416,7 @@ class TestUeChoIntegrationSmoke:
         cond_rrc = self._build_cond_rrc(
             fake_gnb,
             transaction_id=18,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x33AA,
         )
 
@@ -454,13 +454,13 @@ class TestUeChoIntegrationSmoke:
         first = self._build_cond_rrc(
             fake_gnb,
             transaction_id=10,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x3310,
         )
         second = self._build_cond_rrc(
             fake_gnb,
             transaction_id=11,
-            target_pci=3,
+            target_nci=3,
             new_crnti=0x3320,
         )
 
@@ -501,7 +501,7 @@ class TestUeChoIntegrationSmoke:
         cond_rrc = self._build_cond_rrc(
             fake_gnb,
             transaction_id=20,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x3340,
         )
 
@@ -537,7 +537,7 @@ class TestUeChoIntegrationSmoke:
         cond_rrc = self._build_cond_rrc(
             fake_gnb,
             transaction_id=30,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x3350,
         )
 
@@ -599,7 +599,7 @@ class TestUeChoIntegrationSmoke:
         cond_rrc = self._build_cond_rrc(
             fake_gnb,
             transaction_id=34,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x3360,
         )
 
@@ -657,8 +657,8 @@ class TestUeChoIntegrationSmoke:
         self._send_a2_meas_config(fake_gnb, transaction_id=56, threshold=-110)
         fake_gnb.cell_dbm = -120
 
-        cond_rrc_1 = self._build_cond_rrc(fake_gnb, transaction_id=57, target_pci=2, new_crnti=0x3450)
-        cond_rrc_2 = self._build_cond_rrc(fake_gnb, transaction_id=58, target_pci=3, new_crnti=0x3451)
+        cond_rrc_1 = self._build_cond_rrc(fake_gnb, transaction_id=57, target_nci=2, new_crnti=0x3450)
+        cond_rrc_2 = self._build_cond_rrc(fake_gnb, transaction_id=58, target_nci=3, new_crnti=0x3451)
         fake_gnb.send_conditional_reconfiguration(
             candidates_to_add_mod=[
                 {"candidateId": 1, "measIds": [1], "condRrcReconfig": cond_rrc_1},
@@ -706,8 +706,8 @@ class TestUeChoIntegrationSmoke:
             transaction_id=60,
         )
 
-        cond_rrc_1 = self._build_cond_rrc(fake_gnb, transaction_id=61, target_pci=2, new_crnti=0x3460)
-        cond_rrc_2 = self._build_cond_rrc(fake_gnb, transaction_id=62, target_pci=3, new_crnti=0x3461)
+        cond_rrc_1 = self._build_cond_rrc(fake_gnb, transaction_id=61, target_nci=2, new_crnti=0x3460)
+        cond_rrc_2 = self._build_cond_rrc(fake_gnb, transaction_id=62, target_nci=3, new_crnti=0x3461)
         fake_gnb.send_conditional_reconfiguration(
             candidates_to_add_mod=[
                 {"candidateId": 3, "measIds": [1], "condRrcReconfig": cond_rrc_1},
@@ -738,8 +738,8 @@ class TestUeChoIntegrationSmoke:
         self._send_a2_meas_config(fake_gnb, transaction_id=64, threshold=-110)
         fake_gnb.cell_dbm = -120
 
-        cond_rrc_1 = self._build_cond_rrc(fake_gnb, transaction_id=65, target_pci=2, new_crnti=0x3462)
-        cond_rrc_2 = self._build_cond_rrc(fake_gnb, transaction_id=66, target_pci=2, new_crnti=0x3463)
+        cond_rrc_1 = self._build_cond_rrc(fake_gnb, transaction_id=65, target_nci=2, new_crnti=0x3462)
+        cond_rrc_2 = self._build_cond_rrc(fake_gnb, transaction_id=66, target_nci=2, new_crnti=0x3463)
         fake_gnb.send_conditional_reconfiguration(
             candidates_to_add_mod=[
                 {"candidateId": 5, "measIds": [1], "condRrcReconfig": cond_rrc_1},
@@ -808,13 +808,13 @@ class TestUeChoIntegrationSmoke:
         cond_rrc_1 = self._build_cond_rrc(
             fake_gnb,
             transaction_id=53,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x3490,
         )
         cond_rrc_2 = self._build_cond_rrc(
             fake_gnb,
             transaction_id=54,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x3491,
         )
 
@@ -855,7 +855,7 @@ class TestUeChoIntegrationSmoke:
         cond_rrc = self._build_cond_rrc(
             fake_gnb,
             transaction_id=40,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x3470,
         )
 
@@ -900,7 +900,7 @@ class TestUeChoIntegrationSmoke:
         self._send_a2_meas_config(fake_gnb, transaction_id=68, threshold=-110)
         fake_gnb.cell_dbm = -120
 
-        cond_rrc = self._build_cond_rrc(fake_gnb, transaction_id=69, target_pci=2, new_crnti=0x3480)
+        cond_rrc = self._build_cond_rrc(fake_gnb, transaction_id=69, target_nci=2, new_crnti=0x3480)
         fake_gnb.send_conditional_reconfiguration(
             candidates_to_add_mod=[
                 {"candidateId": 8, "measIds": [1], "condRrcReconfig": cond_rrc}
@@ -940,7 +940,7 @@ class TestUeChoIntegrationSmoke:
             transaction_id=50,
         )
 
-        cond_rrc = self._build_cond_rrc(fake_gnb, transaction_id=71, target_pci=2, new_crnti=0x3481)
+        cond_rrc = self._build_cond_rrc(fake_gnb, transaction_id=71, target_nci=2, new_crnti=0x3481)
         fake_gnb.send_conditional_reconfiguration(
             candidates_to_add_mod=[
                 {"candidateId": 6, "measIds": [1], "condRrcReconfig": cond_rrc}

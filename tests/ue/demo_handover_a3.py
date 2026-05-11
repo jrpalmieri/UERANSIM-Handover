@@ -57,8 +57,8 @@ def run_demo(a3_offset: int, a3_hysteresis: int, a3_ttt: int) -> int:
 
     try:
         print_banner("Starting Demo Components")
-        print("[SRC-gNB] Start on 127.0.0.1:4997 (PCI/NCI=1)")
-        print("[TGT-gNB] Start on 127.0.0.2:4997 (PCI/NCI=2)")
+        print("[SRC-gNB] Start on 127.0.0.1:4997 (NCI=1)")
+        print("[TGT-gNB] Start on 127.0.0.2:4997 (NCI=2)")
         src_gnb.start()
         tgt_gnb.start()
 
@@ -131,8 +131,8 @@ def run_demo(a3_offset: int, a3_hysteresis: int, a3_ttt: int) -> int:
         print("[SRC-gNB] MeasurementReport received")
 
         print_banner("Issue Handover Command")
-        print("[SRC-gNB] Send RRCReconfigurationWithSync targeting PCI=2")
-        src_gnb.send_handover_command(target_pci=2, new_crnti=0x1234, t304_ms=1000, transaction_id=2)
+        print("[SRC-gNB] Send RRCReconfigurationWithSync targeting NCI=2")
+        src_gnb.send_handover_command(target_nci=2, new_crnti=0x1234, t304_ms=1000, transaction_id=2)
 
         print("[SRC-gNB/TGT-gNB] Wait for RRCReconfigurationComplete")
         reconfig_complete_src = src_gnb.wait_for_rrc_reconfiguration_complete(timeout_s=5)
@@ -151,7 +151,7 @@ def run_demo(a3_offset: int, a3_hysteresis: int, a3_ttt: int) -> int:
         print(f"[UE] command_received={info['command_received']}")
         print(f"[UE] completed={info['completed']}")
         print(f"[UE] failed={info['failed']}")
-        print(f"[UE] target_pci={info['target_pci']}")
+        print(f"[UE] target_nci={info['target_nci']}")
         print(f"[UE] source_cell={info['source_cell']}")
         print(f"[UE] target_cell={info['target_cell']}")
         print(f"[UE] t304_expired={info['t304_expired']}")

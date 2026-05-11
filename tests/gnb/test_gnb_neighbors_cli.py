@@ -82,22 +82,22 @@ def _run_info(node_name: str) -> dict:
     return yaml.safe_load(proc.stdout)
 
 
-def _pci_set(info_json: dict) -> set[int]:
+def _nci_set(info_json: dict) -> set[int]:
     entries = info_json.get("neighbor-list")
     if entries is None:
         entries = info_json.get("neighborList")
     if entries is None:
         entries = []
-    return {int(entry["pci"]) for entry in entries}
+    return {int(entry["nci"]) for entry in entries}
 
 
 def _neighbors_from_update_response(response: dict) -> set[int]:
     entries = response.get("neighbors")
     assert isinstance(entries, list), f"neighbors field missing or not a list: {response}"
-    return {int(entry["pci"]) for entry in entries}
+    return {int(entry["nci"]) for entry in entries}
 
 
-def _runtime_neighbors_pci_set(node_name: str) -> set[int]:
+def _runtime_neighbors_nci_set(node_name: str) -> set[int]:
     # No-op request used to fetch current runtime neighbor store from command response.
     proc = _run_neighbors(node_name, {"mode": "add", "neighbors": []})
     assert proc.returncode == 0, (
@@ -148,10 +148,10 @@ def test_neighbors_replace_updates_neighbor_list(started_gnb: GnbProcess):
     assert response["afterCount"] == 2
 
     assert _neighbors_from_update_response(response) == {2, 3}
-    assert _runtime_neighbors_pci_set(node_name) == {2, 3}
+    assert _runtime_neighbors_nci_set(node_name) == {2, 3}
 
 
-def test_neighbors_add_and_remove_by_pci(started_gnb: GnbProcess):
+def test_neighbors_add_and_remove_by_nci(started_gnb: GnbProcess):
     node_name = _get_node_name(started_gnb)
 
     initial = {
@@ -212,10 +212,10 @@ def test_neighbors_add_and_remove_by_pci(started_gnb: GnbProcess):
     assert remove_response["removedCount"] == 1
 
     assert _neighbors_from_update_response(remove_response) == {3}
-    assert _runtime_neighbors_pci_set(node_name) == {3}
+    assert _runtime_neighbors_nci_set(node_name) == {3}
 
 
-def test_neighbors_rejects_duplicate_pci_and_preserves_state(started_gnb: GnbProcess):
+def test_neighbors_rejects_duplicate_nci_and_preserves_state(started_gnb: GnbProcess):
     node_name = _get_node_name(started_gnb)
 
     initial = {
@@ -247,10 +247,9 @@ def test_neighbors_rejects_duplicate_pci_and_preserves_state(started_gnb: GnbPro
 
     proc = _run_neighbors(node_name, invalid_payload)
     combined = (proc.stdout + "\n" + proc.stderr).lower()
-    assert proc.returncode != 0 or "duplicate pci" in combined
+    assert proc.returncode != 0 or "duplicate nci" in combined
 
-    assert _runtime_neighbors_pci_set(node_name) == {2}
-
+    assert _runtime_neighbors_nci_set(node_name) == {2}
 
 def test_neighbors_config_load_add_two_and_delete_one_preserves_others(
     started_gnb_with_neighbor: GnbProcess,
@@ -258,7 +257,7 @@ def test_neighbors_config_load_add_two_and_delete_one_preserves_others(
     node_name = _get_node_name(started_gnb_with_neighbor)
 
     # 1) Verify neighbors from config are present in the global neighbor store.
-    assert _runtime_neighbors_pci_set(node_name) == {2}
+    assert _runtime_neighbors_nci_set(node_name) == {2}
 
     # 2) Add at least two neighbors via CLI and verify all are present.
     add_payload = {
@@ -296,7 +295,7 @@ def test_neighbors_config_load_add_two_and_delete_one_preserves_others(
     assert add_response["afterCount"] == 3
 
     assert _neighbors_from_update_response(add_response) == {2, 4, 5}
-    assert _runtime_neighbors_pci_set(node_name) == {2, 4, 5}
+    assert _runtime_neighbors_nci_set(node_name) == {2, 4, 5}
 
     # 3) Delete one added neighbor and verify the others remain.
     remove_payload = {
@@ -322,4 +321,4 @@ def test_neighbors_config_load_add_two_and_delete_one_preserves_others(
     assert remove_response["afterCount"] == 2
 
     assert _neighbors_from_update_response(remove_response) == {2, 5}
-    assert _runtime_neighbors_pci_set(node_name) == {2, 5}
+    assert _runtime_neighbors_nci_set(node_name) == {2, 5}

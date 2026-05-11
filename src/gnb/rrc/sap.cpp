@@ -21,7 +21,7 @@ void GnbRrcTask::handleRlsSapMessage(NmGnbRlsToRrc &msg)
     switch (msg.present)
     {
     case NmGnbRlsToRrc::SIGNAL_DETECTED: {
-        m_logger->debug("UE[%d] new signal detected", msg.ueId);
+        m_logger->debug("UE[%ld] new signal detected", msg.ueId);
         triggerSysInfoBroadcast();  // Send MIB and SIBs
         break;
     }

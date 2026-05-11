@@ -35,12 +35,12 @@ class GnbRrcTask : public NtsTask
     std::unique_ptr<Logger> m_logger;
 
     // UE RRC Contexts, indexed by UE ID
-    std::unordered_map<int, RrcUeContext *> m_ueCtx;
+    std::unordered_map<int64_t, RrcUeContext *> m_ueCtx;
 
     // Pending Handover Contexts, indexed by UE ID
-    std::unordered_map<int, RRCHandoverPending *> m_handoversPending;
+    std::unordered_map<int64_t, RRCHandoverPending *> m_handoversPending;
 
-    std::unordered_map<int, int> m_tidCountersByUe;
+    std::unordered_map<int64_t, int> m_tidCountersByUe;
 
     bool m_isBarred = true;
     bool m_cellReserved = false;
@@ -50,20 +50,20 @@ class GnbRrcTask : public NtsTask
     // gnb location as PV in ECEF coordinates
     //PositionVelocity m_truePositionVelocity{};
 
-    std::unordered_map<int, SatellitePositionVelocityEntry> m_satellitePvByPci{};
+    std::unordered_map<int64_t, SatellitePositionVelocityEntry> m_satellitePvByNci{};
 
-    // Cache of PCI values for neighboring satellites, used for coarse filtering of nearby satellites.
+    // Cache of NCI values for neighboring satellites, used for coarse filtering of nearby satellites.
     // TODO(satellite-neighbor-integration): When satellite tracking discovers a new neighbor gNB
     //   (i.e., a satellite with a valid TLE that is within range), call
     //   m_base->neighbors->upsert(entry) to add it to the runtime neighbor store so it becomes
     //   available for handover decisions without a manual CLI update.
-    std::vector<int> m_satNeighborhoodCache{};
+    std::vector<int64_t> m_satNeighborhoodCache{};
 
-    // Cache of PCIs for gNBs that are within communication range of the UE,
+    // Cache of NCIs for gNBs that are within communication range of the UE,
     //   used for deciding which neighbors to include in SIB19.
     // TODO(satellite-neighbor-integration): Entries added here that are not yet in the runtime
     //   neighbor store should trigger a neighbor upsert (see m_satNeighborhoodCache note above).
-    std::vector<int> m_sib19RangeCache{};
+    std::vector<int64_t> m_sib19RangeCache{};
 
     friend class GnbCmdHandler;
 
@@ -71,11 +71,11 @@ class GnbRrcTask : public NtsTask
     explicit GnbRrcTask(TaskBase *base);
     ~GnbRrcTask() override = default;
 
-    std::vector<HandoverMeasurementIdentity> getHandoverMeasurementIdentities(int ueId) const;
-    OctetString getHandoverMeasConfigRrcReconfiguration(int ueId) const;
-    int64_t buildHandoverCommandForTransfer(int ueId, int targetPci, int newCrnti, int t304Ms,
+    std::vector<HandoverMeasurementIdentity> getHandoverMeasurementIdentities(int64_t ueId) const;
+    OctetString getHandoverMeasConfigRrcReconfiguration(int64_t ueId) const;
+    int64_t buildHandoverCommandForTransfer(int64_t ueId, int64_t targetNci, int newCrnti, int t304Ms,
                         OctetString &rrcContainer);
-    bool addPendingHandover(int ueId, const HandoverPreparationInfo &handoverPrep,
+    bool addPendingHandover(int64_t ueId, const HandoverPreparationInfo &handoverPrep,
                 OctetString &rrcContainer);
     void setTrueGeoPosition(const GeoPosition &value);
     GeoPosition getTrueGeoPosition() const;
@@ -95,43 +95,43 @@ class GnbRrcTask : public NtsTask
 
   /* Management - management.cpp */
 
-    int getNextTid(int ueId);
+    int getNextTid(int64_t ueId);
     int allocateCrnti() const;
     RrcUeContext* findCtxByCrnti(int cRnti);
-    RrcUeContext* findCtxByUeId(int ueId);
+    RrcUeContext* findCtxByUeId(int64_t ueId);
 
     /* Handlers for RRC-NAS - handlers.cpp */
 
-    void handleUplinkRrc(int ueId, int cRnti, rrc::RrcChannel channel, const OctetString &rrcPdu);
-    void handleDownlinkNasDelivery(int ueId, const OctetString &nasPdu);
-    void deliverUplinkNas(int ueId, OctetString &&nasPdu);
-    void releaseConnection(int ueId);
-    void handleRadioLinkFailure(int ueId);
+    void handleUplinkRrc(int64_t ueId, int cRnti, rrc::RrcChannel channel, const OctetString &rrcPdu);
+    void handleDownlinkNasDelivery(int64_t ueId, const OctetString &nasPdu);
+    void deliverUplinkNas(int64_t ueId, OctetString &&nasPdu);
+    void releaseConnection(int64_t ueId);
+    void handleRadioLinkFailure(int64_t ueId);
     void handlePaging(const asn::Unique<ASN_NGAP_FiveG_S_TMSI> &tmsi,
                       const asn::Unique<ASN_NGAP_TAIListForPaging> &taiList);
 
-    void receiveUplinkInformationTransfer(int ueId, const ASN_RRC_ULInformationTransfer &msg);
+    void receiveUplinkInformationTransfer(int64_t ueId, const ASN_RRC_ULInformationTransfer &msg);
 
     /* RRC channel send message to UE - channel.cpp */
 
     void sendRrcMessage(ASN_RRC_BCCH_BCH_Message *msg);
     void sendRrcMessage(ASN_RRC_BCCH_DL_SCH_Message *msg);
     void sendRrcMessage(rrc::RrcChannel channel, OctetString &&pdu);
-    void sendRrcMessage(int ueId, ASN_RRC_DL_CCCH_Message *msg);
-    void sendRrcMessage(int ueId, ASN_RRC_DL_DCCH_Message *msg);
+    void sendRrcMessage(int64_t ueId, ASN_RRC_DL_CCCH_Message *msg);
+    void sendRrcMessage(int64_t ueId, ASN_RRC_DL_DCCH_Message *msg);
     void sendRrcMessage(ASN_RRC_PCCH_Message *msg);
 
     /* RRC channel receive message from UE - channel.cpp */
 
-    void receiveRrcMessage(int ueId, ASN_RRC_BCCH_BCH_Message *msg);
-    void receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH_Message *msg);
-    void receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH1_Message *msg);
-    void receiveRrcMessage(int ueId, int cRnti, ASN_RRC_UL_DCCH_Message *msg);
+    void receiveRrcMessage(int64_t ueId, ASN_RRC_BCCH_BCH_Message *msg);
+    void receiveRrcMessage(int64_t ueId, ASN_RRC_UL_CCCH_Message *msg);
+    void receiveRrcMessage(int64_t ueId, ASN_RRC_UL_CCCH1_Message *msg);
+    void receiveRrcMessage(int64_t ueId, int cRnti, ASN_RRC_UL_DCCH_Message *msg);
 
     /* Satellite TLE tracking and neighborhood cache - sat_calcs.cpp */
 
     void roughNeighborhoodSats();
-    void satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, const int ownPci, RrcUeContext *ue);
+    void satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, int64_t ownNci, RrcUeContext *ue);
 
     /* System Information Broadcast related - broadcast.cpp */
 
@@ -146,33 +146,33 @@ class GnbRrcTask : public NtsTask
 
     /* UE Management - ues.cpp */
 
-    RrcUeContext *createUe(int ueId, int crnti);
+    RrcUeContext *createUe(int64_t ueId, int crnti);
     RrcUeContext *tryFindUeByCrnti(int crnti);
-    RrcUeContext *tryFindUeByUeId(int ueId);
+    RrcUeContext *tryFindUeByUeId(int64_t ueId);
 
     /* Connection Control - connection.cpp */
 
-    void receiveRrcSetupRequest(int ueId, const ASN_RRC_RRCSetupRequest &msg);
-    void receiveRrcSetupComplete(int ueId, const ASN_RRC_RRCSetupComplete &msg);
+    void receiveRrcSetupRequest(int64_t ueId, const ASN_RRC_RRCSetupRequest &msg);
+    void receiveRrcSetupComplete(int64_t ueId, const ASN_RRC_RRCSetupComplete &msg);
 
     /* Handover - handover.cpp */
 
-    void receiveRrcReconfigurationComplete(int ueId, int cRnti, const ASN_RRC_RRCReconfigurationComplete &msg);
-    void receiveMeasurementReport(int ueId, int cRnti, const ASN_RRC_MeasurementReport &msg);
-    void sendUeHandoverMessage(int ueId, int targetPci, int newCrnti, int t304Ms);
-    void handleHandoverComplete(int ueId);
-    void sendMeasConfig(int ueId, bool forceResend = false);
-    void evaluateHandoverDecision(int ueId, int measId);
-    void processConditionalHandover(int ueId,
+    void receiveRrcReconfigurationComplete(int64_t ueId, int cRnti, const ASN_RRC_RRCReconfigurationComplete &msg);
+    void receiveMeasurementReport(int64_t ueId, int cRnti, const ASN_RRC_MeasurementReport &msg);
+    void sendUeHandoverMessage(int64_t ueId, int64_t targetNci, int newCrnti, int t304Ms);
+    void handleHandoverComplete(int64_t ueId);
+    void sendMeasConfig(int64_t ueId, bool forceResend = false);
+    void evaluateHandoverDecision(int64_t ueId, int measId);
+    void processConditionalHandover(int64_t ueId,
                     const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
                     int choProfileIdx);
-    void handleNgapHandoverCommand(int ueId, const OctetString &rrcContainer, bool hoForChoPreparation);
-    void handleNgapHandoverFailure(int ueId, int targetPci, bool hoForChoPreparation);
-    void handoverContextRelease(int ueId);
+    void handleNgapHandoverCommand(int64_t ueId, const OctetString &rrcContainer, bool hoForChoPreparation);
+    void handleNgapHandoverFailure(int64_t ueId, int64_t targetNci, bool hoForChoPreparation);
+    void handoverContextRelease(int64_t ueId);
     void completeConditionalHandover(RrcUeContext *ue, const OctetString &rrcContainer);
     std::vector<ScoredNeighbor> prioritizeNeighbors(
       const std::vector<GnbNeighborConfig> &neighborList,
-      int servingPci,
+      int64_t servingNci,
       const nr::sat::EcefPosition &ueEcef,
       int tExitSec);
     void clearChoPendingState(RrcUeContext *ue, int profileIdx);

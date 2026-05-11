@@ -100,21 +100,21 @@ void SatStates::clear()
 /**
  * @brief Prioritizes target satellites based on their transit times.
  * Caller provides a start time (tStartSec) as the start time for running propagations, and list of
- * satellites (candidate PCIs) to propagate.  
+ * satellites (candidate NCIs) to propagate.  
  * 
  * Transit times are calculated as the amount of time a satellite spends above an elevation angle threshold
  * (elevationMinDeg).  The angle is relative to a ground observer (observerEcef).  The propagation runs can
  * be time-limited using the maxLookaheadSec parameter, which is the maximum amount of time to look ahead 
  * from tStartSec when calculating transit times (maxLookaheadSec=0 means no limit).
  * 
- * Returns a vector of (PCI, score) pairs, sorted by score with the best candidate first.
+ * Returns a vector of (NCI, score) pairs, sorted by score with the best candidate first.
  * The score is the transit time in seconds (higher is better), which is a proxy for the highest reached
  * elevation angle.
  * 
  * Other scoring methods may also be used where constellations with different altitudes are involved, 
  * but transit time is a simple and effective method for constellations of similar altitudes. 
  * 
- * @param candidatePcis 
+ * @param candidateNcis 
  * @param observerEcef 
  * @param tStartSec 
  * @param elevationMinDeg 

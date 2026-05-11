@@ -645,8 +645,7 @@ class WindowedDashboard:
             nci = self.gnb_ncis.get(gnb_key, "")
             if not nci:
                 continue
-            pci = int(nci.strip(), 16)
-            all_sats.append({"pci": pci, "line1": line1, "line2": line2})
+            all_sats.append({"nci": nci, "line1": line1, "line2": line2})
         if not all_sats:
             return []
         entries: List[Dict[str, object]] = []
@@ -2337,13 +2336,13 @@ class WindowedDashboard:
         out = self._cli_exec_with_mode(node, "ui-status", use_sudo=self.ue_cli_with_sudo)
         if "error" in out:
             self._record_cli_error(key, out["error"])
-            return {"RRC": "N/A", "NAS": "N/A", "PCI": "N/A", "dBm": "N/A", "cell-measurements": ""}
+            return {"RRC": "N/A", "NAS": "N/A", "NCI": "N/A", "dBm": "N/A", "cell-measurements": ""}
 
         self.last_cli_error.pop(key, None)
         return {
             "RRC": out.get("rrc-state", "N/A"),
             "NAS": out.get("nas-state", "N/A"),
-            "PCI": out.get("connected-pci", "N/A"),
+            "NCI": out.get("connected-nci", "N/A"),
             "dBm": out.get("connected-dbm", "N/A"),
             "cell-measurements": out.get("cell-measurements", ""),
         }
@@ -3192,7 +3191,6 @@ class WindowedDashboard:
             self._record_cli_error(key, out["error"])
             return {
                 "NCI": "N/A",
-                "PCI": "N/A",
                 "RRC UEs": "N/A",
                 "NGAP UEs": "N/A",
                 "NGAP Up": "N/A",
@@ -3201,7 +3199,6 @@ class WindowedDashboard:
         self.last_cli_error.pop(key, None)
         return {
             "NCI": out.get("nci", "N/A"),
-            "PCI": out.get("pci", "N/A"),
             "RRC UEs": out.get("rrc-ue-count", "N/A"),
             "NGAP UEs": out.get("ngap-ue-count", "N/A"),
             "NGAP Up": out.get("ngap-up", "N/A").upper(),
@@ -4501,8 +4498,8 @@ class WindowedDashboard:
             else:
                 lines.append("  (no location)")
 
-            def _normalize_pci(pci_raw: str) -> Optional[str]:
-                value = pci_raw.strip()
+            def _normalize_nci(nci_raw: str) -> Optional[str]:
+                value = nci_raw.strip()
                 if not value or value in ("N/A", "NONE"):
                     return None
                 try:
@@ -4520,54 +4517,53 @@ class WindowedDashboard:
                     return None
                 return str(nci_val & 0x3FF)
 
-            gnb_pci_map: Dict[str, str] = {}
+            gnb_nci_map: Dict[str, str] = {}
             for gnb_key in self.gnb_keys:
                 gnb_scalars, _ = self.panes[gnb_key].snapshot()
-                pci_val = _normalize_pci(gnb_scalars.get("PCI", ""))
-                if pci_val is None:
+                nci_val = _normalize_nci(gnb_scalars.get("NCI", ""))
+                if nci_val is None:
                     nci_raw = gnb_scalars.get("NCI", "")
                     if not nci_raw:
                         nci_raw = self.gnb_ncis.get(gnb_key, "")
-                    pci_val = _pci_from_nci(nci_raw)
-                if pci_val is not None:
-                    gnb_pci_map[gnb_key] = pci_val
+                if nci_val is not None:
+                    gnb_nci_map[gnb_key] = nci_val
 
-            ue_pci = _normalize_pci(ue_scalars.get("PCI", "N/A"))
+            ue_nci = _normalize_nci(ue_scalars.get("NCI", "N/A"))
             connected_gnb = "N/A"
-            if ue_pci is not None:
-                for gnb_key, pci_val in gnb_pci_map.items():
-                    if pci_val == ue_pci:
+            if ue_nci is not None:
+                for gnb_key, nci_val in gnb_nci_map.items():
+                    if nci_val == ue_nci:
                         connected_gnb = self.node_names.get(gnb_key, gnb_key)
                         break
             lines.append(f"  Connected:  {connected_gnb}")
             lines.append("")
 
-            # Parse "pci:dbm,pci:dbm,..." from UE live cell measurements
+            # Parse "nci:dbm,nci:dbm,..." from UE live cell measurements
             cell_meas: Dict[str, int] = {}
             cell_meas_raw = ue_scalars.get("cell-measurements", "")
             if cell_meas_raw:
                 for pair in cell_meas_raw.split(","):
                     if ":" in pair:
-                        pci_s, dbm_s = pair.split(":", 1)
+                        nci_s, dbm_s = pair.split(":", 1)
                         try:
-                            cell_meas[pci_s.strip()] = int(dbm_s.strip())
+                            cell_meas[nci_s.strip()] = int(dbm_s.strip())
                         except ValueError:
                             pass
 
-            # Build PCI → gNB name from gNB pane scalars
-            pci_to_name: Dict[str, str] = {}
-            for gnb_key, pci_val in gnb_pci_map.items():
-                pci_to_name[pci_val] = self.node_names.get(gnb_key, gnb_key)
+            # Build NCI → gNB name from gNB pane scalars
+            nci_to_name: Dict[str, str] = {}
+            for gnb_key, nci_val in gnb_nci_map.items():
+                nci_to_name[nci_val] = self.node_names.get(gnb_key, gnb_key)
 
             col = 22
             lines.append("  Signal Measurements:")
             lines.append(f"  {'GNB':<{col}} RSRP")
             lines.append("  " + "-" * (col + 12))
             if cell_meas:
-                for pci_s, dbm in sorted(cell_meas.items(),
+                for nci_s, dbm in sorted(cell_meas.items(),
                                          key=lambda x: int(x[0]) if x[0].isdigit() else 0):
-                    pci_key = _normalize_pci(pci_s) or pci_s
-                    gnb_name = pci_to_name.get(pci_key, f"Cell {pci_s}")
+                    nci_key = _normalize_nci(nci_s) or nci_s
+                    gnb_name = nci_to_name.get(nci_key, f"Cell {nci_s}")
                     lines.append(f"  {gnb_name:<{col}} {dbm} dBm")
             else:
                 for gnb_key in self.gnb_keys:

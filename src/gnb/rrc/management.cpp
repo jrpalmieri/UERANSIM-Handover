@@ -13,7 +13,7 @@
 namespace nr::gnb
 {
 
-int GnbRrcTask::getNextTid(int ueId)
+int GnbRrcTask::getNextTid(int64_t ueId)
 {
     if (ueId <= 0)
         return 0;
@@ -33,7 +33,7 @@ int GnbRrcTask::getNextTid(int ueId)
 int GnbRrcTask::allocateCrnti() const
 {
     constexpr int kMinCrnti = 1;
-    constexpr int kMaxCrnti = 0xFFFF;
+    constexpr int kMaxCrnti = 65529;
 
     auto hasCrnti = [&](int crnti) {
         for (const auto &entry : m_ueCtx)
@@ -90,7 +90,7 @@ RrcUeContext* GnbRrcTask::findCtxByCrnti(int cRnti)
 
 }
 
-RrcUeContext* GnbRrcTask::findCtxByUeId(int ueId)
+RrcUeContext* GnbRrcTask::findCtxByUeId(int64_t ueId)
 {
     if (ueId <= 0)
         return nullptr;
@@ -102,7 +102,7 @@ RrcUeContext* GnbRrcTask::findCtxByUeId(int ueId)
     auto *ctx = it->second;
     if (ctx->ueId != ueId)
     {
-        m_logger->warn("UE[%d] RRC context key mismatch: keyUeId=%d ctxUeId=%d cRnti=%d",
+        m_logger->warn("UE[%ld] RRC context key mismatch: keyUeId=%ld ctxUeId=%ld cRnti=%d",
                        ueId, ueId, ctx->ueId, ctx->cRnti);
         return nullptr;
     }

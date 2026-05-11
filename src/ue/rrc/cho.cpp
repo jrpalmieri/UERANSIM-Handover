@@ -385,7 +385,7 @@ void UeRrcTask::parseConditionalReconfiguration(
         }
 
 
-        // Decode the nested RRCReconfiguration from condRRCReconfig to extract the target PCI, C-RNTI, and T304 for 
+        // Decode the nested RRCReconfiguration from condRRCReconfig to extract the target NCI, C-RNTI, and T304 for 
         //  the candidate target cell.
 
         if (!item->condRRCReconfig || item->condRRCReconfig->size == 0)
@@ -437,7 +437,7 @@ void UeRrcTask::parseConditionalReconfiguration(
                         {
                             auto *rws = cellGroupConfig->spCellConfig->reconfigurationWithSync;
 
-                            // found the PCI, cRNTI and t304 timers for the candidate's target cell
+                            // found the NCI, cRNTI and t304 timers for the candidate's target cell
                             cand.targetNci =
                                 (rws->spCellConfigCommon && rws->spCellConfigCommon->physCellId)
                                     ? static_cast<int64_t>(*rws->spCellConfigCommon->physCellId)
@@ -556,7 +556,7 @@ bool UeRrcTask::evaluateChoCandidates(int64_t servingCellId, const std::vector<s
     {
         auto ci = triggeredCandidateIndices[0];
         auto &cand = m_choCandidates[ci];
-        m_logger->info("CHO candidate %d is only triggered candidate; executing handover to PCI %d",
+        m_logger->info("CHO candidate %d is only triggered candidate; executing handover to NCI %ld",
                        cand.candidateId, cand.targetNci);
         executeChoCandidate(cand);
         return true;
@@ -618,7 +618,7 @@ bool UeRrcTask::evaluateChoCandidates(int64_t servingCellId, const std::vector<s
     }
 
     auto &foundCand = m_choCandidates[NciToVecIdx[bestNci]];
-    m_logger->info("CHO candidate %d selected as best candidate; executing handover to PCI %d",
+    m_logger->info("CHO candidate %d selected as best candidate; executing handover to NCI %ld",
                     foundCand.candidateId, foundCand.targetNci);
     executeChoCandidate(foundCand);
     return true;
@@ -636,7 +636,7 @@ void UeRrcTask::executeChoCandidate(ChoCandidate &candidate)
 {
     candidate.executed = true;
 
-    m_logger->info("Executing CHO candidate %d: targetNCI=%d newC-RNTI=%d t304=%dms",
+    m_logger->info("Executing CHO candidate %d: targetNCI=%ld newC-RNTI=%d t304=%dms",
                    candidate.candidateId, candidate.targetNci,
                    candidate.newCRNTI, candidate.t304Ms);
 

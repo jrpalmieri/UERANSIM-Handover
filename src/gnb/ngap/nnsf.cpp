@@ -11,7 +11,7 @@
 namespace nr::gnb
 {
 
-NgapAmfContext *NgapTask::selectAmf(int ueId, int32_t &requestedSliceType)
+NgapAmfContext *NgapTask::selectAmf(int64_t ueId, int32_t &requestedSliceType)
 {
     // First pass: try to match by requested slice type
     for (auto &amf : m_amfCtx) {
@@ -28,7 +28,7 @@ NgapAmfContext *NgapTask::selectAmf(int ueId, int32_t &requestedSliceType)
     // Fallback: if no slice match (e.g. NAS without NSSAI), return first AMF
     if (!m_amfCtx.empty())
     {
-        m_logger->warn("UE[%d] No slice-based AMF match (requestedSST=%d), using first available AMF",
+        m_logger->warn("UE[%ld] No slice-based AMF match (requestedSST=%d), using first available AMF",
                        ueId, requestedSliceType);
         return m_amfCtx.begin()->second;
     }
@@ -36,7 +36,7 @@ NgapAmfContext *NgapTask::selectAmf(int ueId, int32_t &requestedSliceType)
     return nullptr;
 }
 
-NgapAmfContext *NgapTask::selectNewAmfForReAllocation(int ueId, int initiatedAmfId, int amfSetId)
+NgapAmfContext *NgapTask::selectNewAmfForReAllocation(int64_t ueId, int initiatedAmfId, int amfSetId)
 {
     // TODO an arbitrary AMF is selected for now
     return findAmfContext(initiatedAmfId);

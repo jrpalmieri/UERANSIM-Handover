@@ -335,7 +335,7 @@ class TestUeDistanceChoLocationUpdate:
 
         cond_rrc = source_gnb.rrc_codec.build_conditional_rrc_reconfiguration_with_sync(
             transaction_id=61,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x4501,
             t304_ms=1000,
         )
@@ -399,7 +399,7 @@ class TestUeDistanceChoLocationUpdate:
 
         cond_rrc_2 = source_gnb.rrc_codec.build_conditional_rrc_reconfiguration_with_sync(
             transaction_id=64,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x4501,
             t304_ms=1000,
         )
@@ -563,7 +563,7 @@ class TestUeDistanceChoLocationUpdate:
 
         cond_rrc = source_gnb.rrc_codec.build_conditional_rrc_reconfiguration_with_sync(
             transaction_id=68,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x4502,
             t304_ms=1000,
         )
@@ -762,10 +762,10 @@ class TestUeDistanceChoLocationUpdate:
                 timeout_s=12,
             ), "UE did not apply D1(nadir) MeasConfig"
 
-            # Candidate A (treated as higher-priority in this test) to target PCI 2.
+            # Candidate A (treated as higher-priority in this test) to target NCI 2.
             cond_rrc_a = source_gnb.rrc_codec.build_conditional_rrc_reconfiguration_with_sync(
                 transaction_id=72,
-                target_pci=2,
+                target_nci=2,
                 new_crnti=0x4601,
                 t304_ms=1000,
             )
@@ -780,10 +780,10 @@ class TestUeDistanceChoLocationUpdate:
                 transaction_id=73,
             )
 
-            # Candidate B to a different target PCI 3.
+            # Candidate B to a different target NCI 3.
             cond_rrc_b = source_gnb.rrc_codec.build_conditional_rrc_reconfiguration_with_sync(
                 transaction_id=74,
-                target_pci=3,
+                target_nci=3,
                 new_crnti=0x4602,
                 t304_ms=1000,
             )
@@ -843,7 +843,7 @@ class TestUeDistanceChoLocationUpdate:
 
         Steps covered:
           1. Position is sent to gNBs via command interface (`set-loc-pv`) and update is verified.
-        2. Source gNB sends ASN ConditionalReconfiguration CHO toward target PCI=2
+        2. Source gNB sends ASN ConditionalReconfiguration CHO toward target NCI=2
            and UE acknowledges CHO application.
           3. gNB position is updated again via `set-loc-pv` to change geometry and trigger CHO,
            causing CHO-triggered handover to the target gNB.
@@ -915,7 +915,7 @@ class TestUeDistanceChoLocationUpdate:
 
         cond_rrc = source_gnb.rrc_codec.build_conditional_rrc_reconfiguration_with_sync(
             transaction_id=41,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x4201,
             t304_ms=1000,
         )
@@ -1034,7 +1034,7 @@ class TestUeDistanceChoLocationUpdate:
 
         cond_rrc = source_gnb.rrc_codec.build_conditional_rrc_reconfiguration_with_sync(
             transaction_id=44,
-            target_pci=2,
+            target_nci=2,
             new_crnti=0x4202,
             t304_ms=1000,
         )

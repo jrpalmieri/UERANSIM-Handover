@@ -67,7 +67,7 @@ enum class EAmfState
 
 struct RRCHandoverPending
 {
-    int id{};
+    int64_t ueId{};
     RrcUeContext* ctx{};
     uint64_t expireTime{};
     int64_t txId{};
@@ -90,7 +90,7 @@ struct HandoverPreparationInfo
 
 struct NGAPHandoverPending
 {
-    int id{};
+    int64_t ueId{};
     NgapUeContext* ctx{};
     int64_t expireTime{};
     bool choCandidate{};
@@ -166,12 +166,12 @@ struct NgapAmfContext
 
 struct RlsUeContext
 {
-    const int ueId;
+    const int64_t ueId;
     uint64_t sti{};
     InetAddress addr{};
     int64_t lastSeen{};
 
-    explicit RlsUeContext(int ueId) : ueId(ueId)
+    explicit RlsUeContext(int64_t ueId) : ueId(ueId)
     {
     }
 };
@@ -191,7 +191,7 @@ enum UE_NGAP_CONNECTION_STATE {
 // The NGAP context for a UE
 struct NgapUeContext
 {
-    const int ctxId{};
+    const int64_t ctxId{};
 
     // State tracker for connection state
     UE_NGAP_CONNECTION_STATE connectionState{UE_NGAP_CONNECTION_STATE::NGAP_NOT_CONNECTED};
@@ -214,7 +214,7 @@ struct NgapUeContext
     // All PDU Session IDs associated with this UE
     std::set<int> pduSessions{};
 
-    explicit NgapUeContext(int ctxId) : ctxId(ctxId)
+    explicit NgapUeContext(int64_t ctxId) : ctxId(ctxId)
     {
     }
 };
@@ -242,8 +242,8 @@ enum UE_RRC_CONNECTION_STATE {
 struct ChoPreparationState
 {
     bool pending{false};
-    std::vector<int> candidatePcis{};
-    std::unordered_map<int, int> candidateScores{};
+    std::vector<int64_t> candidateNcis{};
+    std::unordered_map<int64_t, int> candidateScores{};
     std::vector<long> measIds{};
     int triggerTimerSec{};
     int distanceThreshold{};
@@ -254,7 +254,7 @@ struct RrcUeContext
 
 
     // UE's unique identifier, provided by UE in RLS messages
-    int ueId{};
+    int64_t ueId{};
 
     // Temporary cell-specific ID for this UE, assigned be serving gNB
     int cRnti{};
@@ -272,7 +272,7 @@ struct RrcUeContext
     /* Handover state */
 
     bool handoverInProgress{};
-    int handoverTargetPci{};
+    int64_t handoverTargetNci{};
     int handoverNewCrnti{};
     int observedRadioUeId{};
     long handoverTxId{};
@@ -315,7 +315,7 @@ struct RrcUeContext
 
     /* Last measurement report data */
 
-    int lastMeasReportPci{-1};
+    int64_t lastMeasReportNci{-1};
     int lastMeasReportRsrp{-140};
     int lastServingRsrp{-140};
     bool handoverDecisionPending{};
@@ -427,7 +427,7 @@ struct GtpTunnel
 
 struct PduSessionResource
 {
-    const int ueId;
+    const int64_t ueId;
     const int psi;
 
     AggregateMaximumBitRate sessionAmbr{};
@@ -437,7 +437,7 @@ struct PduSessionResource
     GtpTunnel downTunnel{};
     asn::Unique<ASN_NGAP_QosFlowSetupRequestList> qosFlows{};
 
-    PduSessionResource(const int ueId, const int psi) : ueId(ueId), psi(psi)
+    PduSessionResource(const int64_t ueId, const int psi) : ueId(ueId), psi(psi)
     {
     }
 };
@@ -449,10 +449,10 @@ struct PduSessionResource
 
 struct GtpUeContext
 {
-    const int ueId;
+    const int64_t ueId;
     AggregateMaximumBitRate ueAmbr{};
 
-    explicit GtpUeContext(const int ueId) : ueId(ueId)
+    explicit GtpUeContext(const int64_t ueId) : ueId(ueId)
     {
     }
 };
@@ -460,10 +460,10 @@ struct GtpUeContext
 struct GtpUeContextUpdate
 {
     bool isCreate{};
-    int ueId{};
+    int64_t ueId{};
     AggregateMaximumBitRate ueAmbr{};
 
-    GtpUeContextUpdate(bool isCreate, int ueId, const AggregateMaximumBitRate &ueAmbr)
+    GtpUeContextUpdate(bool isCreate, int64_t ueId, const AggregateMaximumBitRate &ueAmbr)
         : isCreate(isCreate), ueId(ueId), ueAmbr(ueAmbr)
     {
     }
@@ -504,7 +504,7 @@ struct SIB19Config
 
 struct SatellitePositionVelocityEntry
 {
-    int pci{};
+    int64_t nci{};
     double x{};
     double y{};
     double z{};
@@ -569,10 +569,11 @@ struct GnbNeighborConfig
         return static_cast<int>(getNrCellIdentity() & mask);
     }
 
-    [[nodiscard]] inline int getPci() const
+    [[nodiscard]] inline int64_t getNci() const
     {
-        return cons::getPciFromNci(nci);
+        return nci;
     }
+
 };
 
 struct GnbRsrpConfig
@@ -707,7 +708,6 @@ struct GnbConfig
 struct GnbStatusInfo
 {
     int64_t nci{};
-    int pci{};
     bool isNgapUp{};
     int connectedAmfs{};
     int rrcConnectedUes{};
@@ -720,8 +720,6 @@ struct GnbStatusInfoUpdate
 {
     bool nciIsPresent{false};
     int64_t nci{};
-    bool pciIsPresent{false};
-    int pci{};
     bool isNgapUpIsPresent{false    };
     bool isNgapUp{};
     bool connectedAmfsIsPresent{false};
@@ -872,8 +870,6 @@ struct TaskBase
         std::unique_lock<std::shared_mutex> lock(gnbStatusInfoMutex);
         if (info.nciIsPresent)
             gnbStatusInfo.nci = info.nci;
-        if (info.pciIsPresent)
-            gnbStatusInfo.pci = info.pci;
         if (info.isNgapUpIsPresent)
             gnbStatusInfo.isNgapUp = info.isNgapUp;
         if (info.connectedAmfsIsPresent)

@@ -27,6 +27,7 @@ class RlsUdpTask : public NtsTask
     struct UeInfo
     {
       uint64_t sti{};
+      int64_t ueId{};
       int cRnti{};
       InetAddress address;
       int64_t lastSeen{};
@@ -44,8 +45,8 @@ class RlsUdpTask : public NtsTask
     Vector3 m_phyLocation;
     int64_t m_lastLoop;
     std::mutex m_ueMutex;
-    std::unordered_map<uint64_t, int> m_stiToUe;
-    std::unordered_map<int, UeInfo> m_ueMap;
+    std::unordered_map<uint64_t, int64_t> m_stiToUe;
+    std::unordered_map<int64_t, UeInfo> m_ueMap;
 
     // map from C-RNTI to UE ID, used for quickly finding UE context by C-RNTI 
     //  when receiving RRC messages from UEs
@@ -76,14 +77,12 @@ class RlsUdpTask : public NtsTask
                        std::unique_ptr<rls::RlsMessage> &&msg);
     void sendRlsPdu(const InetAddress &addr,
                     const rls::RlsMessage &msg);
-    void heartbeatCycle(int64_t time);
-    int computeDbm(const GeoPosition &uePos, int ueId);
-//    void handleSatPositionUpdate(const rls::RlsMessage &msg);
-//    void handleRsrpUpdate(const rls::RlsMessage &msg);
+    void heartbeatCycle(int64_t time);  
+    int computeDbm(const GeoPosition &uePos, int64_t ueId);
 
   public:
     void initialize(NtsTask *ctlTask);
-    void send(int ueId, const rls::RlsMessage &msg);
+    void send(int64_t ueId, const rls::RlsMessage &msg);
 };
 
 } // namespace nr::gnb

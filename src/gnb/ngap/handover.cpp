@@ -99,7 +99,7 @@ static constexpr uint32_t CUSTOM_T2S_DEFAULT_BLOB_SIZE = 0;
 static constexpr uint8_t CUSTOM_S2T_FLAG_CHO_INDICATION = 0x01;
 static constexpr int CHO_CANDIDATE_TIMEOUT_MS = 60000;
 
-static bool ExtractTargetPciFromHandoverCommandRrcContainer(const OctetString &rrcContainer, int &targetPci)
+static bool ExtractTargetNciFromHandoverCommandRrcContainer(const OctetString &rrcContainer, int64_t &targetNci)
 {
     auto *decoded =
         rrc::encode::Decode<ASN_RRC_DL_DCCH_Message>(asn_DEF_ASN_RRC_DL_DCCH_Message, rrcContainer);
@@ -134,7 +134,7 @@ static bool ExtractTargetPciFromHandoverCommandRrcContainer(const OctetString &r
                         cellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon != nullptr &&
                         cellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon->physCellId != nullptr)
                     {
-                        targetPci = static_cast<int>(
+                        targetNci = static_cast<int64_t>(
                             *cellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon->physCellId);
                         ok = true;
                     }
@@ -156,7 +156,7 @@ struct CustomS2tTransparentContainer
     OctetString gtpContext{};
     OctetString blob{};
 
-    int sourceUeId{-1};
+    int64_t sourceUeId{-1};
     int64_t sourceAmfUeNgapId{-1};
     int64_t sourceRanUeNgapId{-1};
     int sourceAssociatedAmfId{-1};
@@ -246,10 +246,10 @@ static std::vector<HandoverMeasurementIdentity> DecodeRrcReconfigurationMeasIds(
     return out;
 }
 
-static OctetString EncodeCustomNgapContext(const NgapUeContext &ue, int sourceUeId)
+static OctetString EncodeCustomNgapContext(const NgapUeContext &ue, int64_t sourceUeId)
 {
     OctetString ngapContext{};
-    ngapContext.appendOctet4(sourceUeId);
+    ngapContext.appendOctet8(sourceUeId);
     ngapContext.appendOctet8(ue.amfUeNgapId);
     ngapContext.appendOctet8(ue.ranUeNgapId);
     ngapContext.appendOctet4(ue.associatedAmfId);
@@ -268,16 +268,16 @@ static OctetString EncodeCustomGtpContext(const NgapUeContext &ue)
 
 static bool DecodeCustomNgapContext(const OctetString &ngapContext, CustomS2tTransparentContainer &decoded)
 {
-    // sourceUeId(4) + amfUeNgapId(8) + ranUeNgapId(8) + amfId(4) + ulStream(4) + dlStream(4)
-    if (ngapContext.length() < 32)
+    // sourceUeId(8) + amfUeNgapId(8) + ranUeNgapId(8) + amfId(4) + ulStream(4) + dlStream(4)
+    if (ngapContext.length() < 36)
         return false;
 
-    decoded.sourceUeId = static_cast<int>(ngapContext.get4UI(0));
-    decoded.sourceAmfUeNgapId = static_cast<int64_t>(ngapContext.get8UL(4));
-    decoded.sourceRanUeNgapId = static_cast<int64_t>(ngapContext.get8UL(12));
-    decoded.sourceAssociatedAmfId = static_cast<int>(ngapContext.get4UI(20));
-    decoded.sourceUplinkStream = static_cast<int>(ngapContext.get4UI(24));
-    decoded.sourceDownlinkStream = static_cast<int>(ngapContext.get4UI(28));
+    decoded.sourceUeId = static_cast<int64_t>(ngapContext.get8UL(0));
+    decoded.sourceAmfUeNgapId = static_cast<int64_t>(ngapContext.get8UL(8));
+    decoded.sourceRanUeNgapId = static_cast<int64_t>(ngapContext.get8UL(16));
+    decoded.sourceAssociatedAmfId = static_cast<int>(ngapContext.get4UI(24));
+    decoded.sourceUplinkStream = static_cast<int>(ngapContext.get4UI(28));
+    decoded.sourceDownlinkStream = static_cast<int>(ngapContext.get4UI(32));
     return true;
 }
 
@@ -440,7 +440,7 @@ static OctetString MakeHoRequiredTransfer()
     return encoded;
 }
 
-static OctetString MakeRrcHandoverPreparationInformation(int sourcePci,
+static OctetString MakeRrcHandoverPreparationInformation(int64_t sourceNci,
                                                          const HandoverPreparationInfo &handoverPrep)
 {
     auto *msg = asn::New<ASN_RRC_HandoverPreparationInformation>();
@@ -454,7 +454,7 @@ static OctetString MakeRrcHandoverPreparationInformation(int sourcePci,
 
     ies->as_Context = asn::New<ASN_RRC_AS_Context>();
     ies->as_Context->reestablishmentInfo = asn::New<ASN_RRC_ReestablishmentInfo>();
-    ies->as_Context->reestablishmentInfo->sourcePhysCellId = static_cast<long>(sourcePci);
+    ies->as_Context->reestablishmentInfo->sourcePhysCellId = static_cast<long>(sourceNci);
     asn::SetBitStringInt<16>(0, ies->as_Context->reestablishmentInfo->targetCellShortMAC_I);
 
     OctetString reconfig = EncodeRrcReconfigurationMeasIds(handoverPrep);
@@ -469,12 +469,12 @@ static OctetString MakeRrcHandoverPreparationInformation(int sourcePci,
     return encoded;
 }
 
-static OctetString MakeSourceToTargetTransparentContainer(const NgapUeContext &ue, int sourceUeId,
-                                                          int sourcePci, uint32_t blobSize,
+static OctetString MakeSourceToTargetTransparentContainer(const NgapUeContext &ue, int64_t sourceUeId,
+                                                          int64_t sourceNci, uint32_t blobSize,
                                                           const HandoverPreparationInfo &handoverPrep,
                                                           bool choIndication)
 {
-    auto rrcContext = MakeRrcHandoverPreparationInformation(sourcePci, handoverPrep);
+    auto rrcContext = MakeRrcHandoverPreparationInformation(sourceNci, handoverPrep);
     if (rrcContext.length() == 0)
         return OctetString{};
 
@@ -544,12 +544,12 @@ static void LogRrcHandoverPreparationInformation(Logger &logger, const OctetStri
         targetShortMac = asn::GetBitStringInt<16>(ies->as_Context->reestablishmentInfo->targetCellShortMAC_I);
     }
 
-    logger.info("Decoded SourceToTarget container: ueCapCount=%d sourceConfig=%d rrmConfig=%d "
-                "asContext=%d sourcePhysCellId=%ld targetShortMac=0x%04x",
+    logger.info("Decoded SourceToTarget container: ueCapCount=%d sourceConfig=%s rrmConfig=%s "
+                "asContext=%s sourcePhysCellId=%ld targetShortMac=0x%04x",
                 ies->ue_CapabilityRAT_List.list.count,
-                ies->sourceConfig != nullptr,
-                ies->rrm_Config != nullptr,
-                ies->as_Context != nullptr,
+                ies->sourceConfig != nullptr ? "present" : "notPresent",
+                ies->rrm_Config != nullptr ? "present" : "notPresent",
+                ies->as_Context != nullptr ? "present" : "notPresent",
                 sourcePhysCellId,
                 targetShortMac >= 0 ? targetShortMac : 0);
 
@@ -576,7 +576,7 @@ static bool LogAndDecodeCustomSourceToTargetTransparentContainer(Logger &logger,
     }
 
     decoded = std::move(*maybeDecoded);
-    logger.info("Decoded custom SourceToTarget container: sourceUeId=%d amfUeNgapId=%ld ranUeNgapId=%ld "
+    logger.info("Decoded custom SourceToTarget container: sourceUeId=%ld amfUeNgapId=%ld ranUeNgapId=%ld "
                 "amfId=%d ulStream=%d dlStream=%d dlAmbr=%lu ulAmbr=%lu cho=%d rrc=%dB ngap=%dB gtp=%dB "
                 "blob=%dB",
                 decoded.sourceUeId,
@@ -687,10 +687,10 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
     }
 
     // get the ueId from the transferred context
-    int ueId = transferredCtx.sourceUeId;
+    int64_t ueId = transferredCtx.sourceUeId;
     if (ueId <= 0)
     {
-        m_logger->err("receiveHandoverRequest: invalid sourceUeId=%d", ueId);
+        m_logger->err("receiveHandoverRequest: invalid sourceUeId=%ld", ueId);
         sendErrorIndication(amfId, NgapCause::Protocol_semantic_error);
         return;
     }
@@ -698,16 +698,17 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
     /* create a new NGAP UE context*/
 
     // check if a handover_pending already exists for this UE Id
-    if (m_handoverPending.count(ueId))
+    //   if so, overwrite it
+    if (m_handoversPending.count(ueId))
     {
-        m_logger->warn("HandoverRequest received for UE ID %d which is already pending handover; overwriting", ueId);
-        auto *oldPending = m_handoverPending[ueId];
+        m_logger->warn("HandoverRequest received for UE ID %ld which is already pending handover; overwriting", ueId);
+        auto *oldPending = m_handoversPending[ueId];
         if (oldPending)
         {
             delete oldPending->ctx;
             delete oldPending;
         }
-        m_handoverPending.erase(ueId);
+        m_handoversPending.erase(ueId);
     }
 
     // Create a new UE NGAP context for this handover, and add to the handover pending map.
@@ -735,17 +736,17 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
 
     auto *hoPending = new NGAPHandoverPending();
     hoPending->ctx = ue;
-    hoPending->id = ueId;
+    hoPending->ueId = ueId;
     hoPending->choCandidate = transferredCtx.choIndication;
     // Note: expireTime is different for Conditional Handover (CHO), which is expected to happen much later than a
     //  classical RSRP based handover
     hoPending->expireTime =
         utils::CurrentTimeMillis() + (transferredCtx.choIndication ? CHO_CANDIDATE_TIMEOUT_MS : HANDOVER_TIMEOUT_MS);
-    m_handoverPending[ueId] = hoPending;
+    m_handoversPending[ueId] = hoPending;
 
     if (hoPending->choCandidate)
     {
-        m_logger->info("UE[%d] Target side candidate context stored for CHO (extended timeout=%dms)",
+        m_logger->info("UE[%ld] Target side candidate context stored for CHO (extended timeout=%dms)",
                        ue->ctxId,
                        CHO_CANDIDATE_TIMEOUT_MS);
     }
@@ -755,18 +756,18 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
     OctetString targetRrcContainer{};
     if (!m_base->rrcTask->addPendingHandover(ueId, transferredCtx.handoverPreparation, targetRrcContainer))
     {
-        m_logger->warn("UE[%d] HandoverRequest failed: failed to add RRC pending handover context",
+        m_logger->warn("UE[%ld] HandoverRequest failed: failed to add RRC pending handover context",
                        ue->ctxId);
 
-        if (m_handoverPending.count(ueId))
+        if (m_handoversPending.count(ueId))
         {
-            auto *pending = m_handoverPending[ueId];
+            auto *pending = m_handoversPending[ueId];
             if (pending)
             {
                 delete pending->ctx;
                 delete pending;
             }
-            m_handoverPending.erase(ueId);
+            m_handoversPending.erase(ueId);
         }
         return;
     }
@@ -774,14 +775,14 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
 
     /* User Plane Setup */
 
-    // send msg to GTP to create a UE context.
+    // send msg to GTP to create new UE context.
     auto update = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_UPDATE);
     update->update = std::make_unique<GtpUeContextUpdate>(true, ue->ctxId, ue->ueAmbr);
     m_base->gtpTask->push(std::move(update));
 
     auto sendHandoverFailure = [&](NgapCause cause, const char *reason) {
         if (reason)
-            m_logger->warn("UE[%d] HandoverRequest failed: %s", ue->ctxId, reason);
+            m_logger->warn("UE[%ld] HandoverRequest failed: %s", ue->ctxId, reason);
 
         auto *causeIe = asn::New<ASN_NGAP_HandoverFailureIEs>();
         causeIe->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
@@ -809,14 +810,14 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
         if (!item)
             continue;
 
-        m_logger->debug("UE[%d] HO PDU session[%d]: processing", ue->ctxId, (int)item->pDUSessionID);
+        m_logger->debug("UE[%ld] handover PDU session[%d]: processing", ue->ctxId, (int)item->pDUSessionID);
 
         auto *transfer = ngap_encode::Decode<ASN_NGAP_PDUSessionResourceSetupRequestTransfer>(
             asn_DEF_ASN_NGAP_PDUSessionResourceSetupRequestTransfer, item->handoverRequestTransfer);
 
         if (!transfer)
         {
-            m_logger->warn("UE[%d] HO PDU session %d: failed to decode handoverRequestTransfer", ue->ctxId,
+            m_logger->warn("UE[%ld] handover PDU session %d: failed to decode handoverRequestTransfer", ue->ctxId,
                            (int)item->pDUSessionID);
 
             OctetString encodedFail =
@@ -870,7 +871,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
         auto setupError = setupPduSessionResource(ue, resource);
         if (setupError.has_value())
         {
-            m_logger->warn("UE[%d] HO PDU session[%d]: setup failed cause=%d", ue->ctxId, resource->psi,
+            m_logger->warn("UE[%ld] handover PDU session[%d]: setup failed cause=%d", ue->ctxId, resource->psi,
                            (int)setupError.value());
 
             OctetString encodedFail = MakeHoSetupUnsuccessfulTransfer(setupError.value());
@@ -885,7 +886,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
             OctetString encodedAck = MakeHoAcknowledgeTransfer(*resource);
             if (encodedAck.length() == 0)
             {
-                m_logger->warn("UE[%d] HO PDU session %d: failed to encode acknowledge transfer", ue->ctxId,
+                m_logger->warn("UE[%ld] handover PDU session %d: failed to encode acknowledge transfer", ue->ctxId,
                                (int)item->pDUSessionID);
 
                 OctetString encodedFail = MakeHoSetupUnsuccessfulTransfer(NgapCause::Protocol_semantic_error);
@@ -902,7 +903,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
                 asn::SetOctetString(admitted->handoverRequestAcknowledgeTransfer, encodedAck);
                 admittedList.push_back(admitted);
 
-                m_logger->debug("UE[%d] HO PDU session[%d]: admitted teid=%u", ue->ctxId, resource->psi,
+                m_logger->debug("UE[%ld] handover PDU session[%d]: admitted teid=%u", ue->ctxId, resource->psi,
                                 resource->downTunnel.teid);
             }
         }
@@ -948,7 +949,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
         return;
     }
 
-    m_logger->debug("UE[%d] Built TargetToSource wrapper: rrc=%dB total=%dB", ue->ctxId,
+    m_logger->debug("UE[%ld] Built TargetToSource wrapper: rrc=%dB total=%dB", ue->ctxId,
                     targetRrcContainer.length(), targetToSourceContainer.length());
 
 
@@ -965,13 +966,13 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
     auto *ackPdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverRequestAcknowledge>(ackIes);
     sendNgapUeAssociated(ue->ctxId, ackPdu);
 
-    m_logger->info("UE[%d] HandoverRequestAcknowledge sent admitted=%d failed=%d", ue->ctxId,
+    m_logger->info("UE[%ld] HandoverRequestAcknowledge sent admitted=%d failed=%d", ue->ctxId,
                    (int)admittedList.size(), (int)failedList.size());
 }
 
 /**
  * @brief Source GNB sends a HandoverRequired message to the AMF to trigger handover for the specified UE 
- * to the target PCI. The cause parameter indicates the reason for the handover and is included in the 
+ * to the target NCI. The cause parameter indicates the reason for the handover and is included in the 
  * message to assist the AMF in making informed decisions during the handover process.
  * 
  * Note: in this simulator, the HandoverRequired message includes a custom SourceToTarget-TransparentContainer 
@@ -981,38 +982,38 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg)
  * gNB to recognize and decode the RRC handover preparation information.
  * 
  * @param ueId 
- * @param targetPci 
+ * @param targetNci 
  * @param cause 
  */
-void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bool hoForChoPreparation)
+void NgapTask::sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause cause, bool hoForChoPreparation)
 {
-    m_logger->info("UE[%d] Sending HandoverRequired to AMF targetPCI=%d", ueId, targetPci);
+    m_logger->info("UE[%ld] Sending HandoverRequired to AMF targetNCI=%ld", ueId, targetNci);
 
     auto *ue = findUeContext(ueId);
     if (!ue)
     {
-        m_logger->err("sendHandoverRequired: UE context not found UE[%d] ", ueId);
+        m_logger->err("sendHandoverRequired: UE context not found UE[%ld] ", ueId);
         return;
     }
 
-    auto neighborOpt = m_base->neighbors->findByPci(targetPci);
+    auto neighborOpt = m_base->neighbors->findByNci(targetNci);
     if (!neighborOpt)
     {
-        m_logger->err("sendHandoverRequired: target PCI=%d not found in neighborList", targetPci);
+        m_logger->err("sendHandoverRequired: target NCI=%ld not found in neighborList", targetNci);
         return;
     }
     const auto &neighbor = *neighborOpt;
 
     if (neighbor.handoverInterface == EHandoverInterface::Xn)
     {
-        m_logger->warn("neighborList entry for PCI=%d requests Xn (%s), but only N2 is implemented; "
+        m_logger->warn("neighborList entry for NCI=%ld requests Xn (%s), but only N2 is implemented; "
                        "continuing via N2",
-                       targetPci, neighbor.ipAddress.c_str());
+                       targetNci, neighbor.ipAddress.c_str());
     }
 
-    m_logger->info("Resolved target neighbor PCI=%d -> NCGI(plmn=%03d-%02d nci=0x%09llx gnbId=%u cellId=%d) "
+    m_logger->info("Resolved target neighbor NCI=%ld -> NCGI(plmn=%03d-%02d nci=0x%09llx gnbId=%u cellId=%d) "
                    "tac=%d interface=%s",
-                   targetPci,
+                   targetNci,
                    m_base->config->plmn.mcc,
                    m_base->config->plmn.mnc,
                    static_cast<unsigned long long>(neighbor.getNrCellIdentity()),
@@ -1043,7 +1044,7 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
         ies.push_back(ie);
     }
 
-    // IE: TargetID — resolve target gNB from NRT by PCI and derive NCGI fields.
+    // IE: TargetID — resolve target gNB and derive NCGI fields.
     // PLMN is assumed to be the same as the serving gNB config.
     {
         auto *ie = asn::New<ASN_NGAP_HandoverRequiredIEs>();
@@ -1082,7 +1083,7 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
     // IE: SourceToTarget-TransparentContainer
     // Populate a standards-shaped RRC HandoverPreparationInformation payload.
     {
-        int sourcePci = cons::getPciFromNci(m_base->config->nci);
+        int64_t sourceNci = m_base->config->nci;
         HandoverPreparationInfo handoverPrep{};
         handoverPrep.measIdentities = m_base->rrcTask->getHandoverMeasurementIdentities(ueId);
         handoverPrep.measConfigRrcReconfiguration =
@@ -1090,13 +1091,13 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
 
         OctetString sourceToTarget = MakeSourceToTargetTransparentContainer(*ue,
                                                                             ueId,
-                                                                            sourcePci,
+                                                                            sourceNci,
                                                                             CUSTOM_S2T_DEFAULT_BLOB_SIZE,
                                                                             handoverPrep,
                                                                             hoForChoPreparation);
         if (sourceToTarget.length() == 0)
         {
-            m_logger->err("sendHandoverRequired: failed to encode SourceToTarget transparent container");
+            m_logger->err("UE[%ld] sendHandoverRequired: failed to encode SourceToTarget transparent container", ueId);
             return;
         }
 
@@ -1109,16 +1110,17 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
                             sourceToTarget);
         ies.push_back(ie);
 
-        m_logger->info("UE[%d] Encoded SourceToTarget container sourcePCI=%d targetPCI=%d size=%dB cho=%d",
+        m_logger->info("UE[%ld] Encoded SourceToTarget container sourceNCI=%ld targetNCI=%ld size=%dB cho=%s",
                        ueId,
-                       sourcePci,
-                       targetPci,
+                       sourceNci,
+                       targetNci,
                    sourceToTarget.length(),
-                   hoForChoPreparation ? 1 : 0);
+                   hoForChoPreparation ? "true" : "false");
     }
 
     // IE: PDUSessionResourceListHORqd
     {
+        m_logger->info("UE[%ld] Building PDUSessionResourceListHORqd", ueId);
         OctetString hoRequiredTransfer = MakeHoRequiredTransfer();
         if (hoRequiredTransfer.length() == 0)
         {
@@ -1134,8 +1136,9 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
         else
         {
             // Simulation fallback: allow N2 handover signaling to proceed before user-plane setup.
+            //  NOTE: this  doesn't work, so instead we queue the request until the PDU sessions are available.
             pduSessionIds.push_back(1);
-            m_logger->warn("sendHandoverRequired: UE[%d] has no active PDU sessions; using synthetic session id=1",
+            m_logger->warn("sendHandoverRequired: UE[%ld] has no active PDU sessions; using synthetic session id=1",
                            ueId);
         }
 
@@ -1154,7 +1157,7 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
 
         ies.push_back(ie);
 
-        m_logger->info("HandoverRequired UE[%d] includes %d PDU session item(s)",
+        m_logger->info("HandoverRequired UE[%ld] includes %d PDU session item(s)",
                        ueId,
                        static_cast<int>(pduSessionIds.size()));
     }
@@ -1162,11 +1165,11 @@ void NgapTask::sendHandoverRequired(int ueId, int targetPci, NgapCause cause, bo
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverRequired>(ies);
     sendNgapUeAssociated(ue->ctxId, pdu);
 
-    // Track pending CHO preparation by target PCI, so responses can be correlated per target.
+    // Track pending CHO preparation by target NCI, so responses can be correlated per target.
     if (hoForChoPreparation)
-        m_hoReqChoPendingByTargetPci[ueId][targetPci]++;
+        m_hoReqChoPendingByTargetNci[ueId][targetNci]++;
 
-    m_logger->info("UE[%d] HandoverRequired sent to AMF (mode=%s)",
+    m_logger->info("UE[%ld] HandoverRequired sent to AMF (mode=%s)",
                    ueId,
                    hoForChoPreparation ? "cho-prepare" : "classic");
 }
@@ -1199,7 +1202,7 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
     if (ieContainer)
     {
         OctetString encodedT2s = asn::GetOctetString(ieContainer->TargetToSource_TransparentContainer);
-        m_logger->debug("Received TargetToSource wrapper UE[%d] from AMF: total=%dB", ue->ctxId,
+        m_logger->debug("Received TargetToSource wrapper UE[%ld] from AMF: total=%dB", ue->ctxId,
                         encodedT2s.length());
 
         auto decodedRrc = DecodeTargetToSourceTransparentContainer(encodedT2s);
@@ -1211,34 +1214,34 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
         }
 
         rrcContainer = std::move(decodedRrc.value());
-        m_logger->debug("UE[%d] Decoded TargetToSource wrapper rrcContainer=%dB", ue->ctxId,
+        m_logger->debug("UE[%ld] Decoded TargetToSource wrapper rrcContainer=%dB", ue->ctxId,
                         rrcContainer.length());
     }
 
-    int targetPci = -1;
-    bool targetPciExtracted = ExtractTargetPciFromHandoverCommandRrcContainer(rrcContainer, targetPci);
+    int64_t targetNci = -1;
+    bool targetNciExtracted = ExtractTargetNciFromHandoverCommandRrcContainer(rrcContainer, targetNci);
     bool hoForChoPreparation = false;
     
-    if (!targetPciExtracted)
+    if (!targetNciExtracted)
     {
-        m_logger->warn("UE[%d] Could not extract targetPCI from HO command container; defaulting mode=%s",
+        m_logger->warn("UE[%ld] Could not extract targetNCI from HO command container; defaulting mode=%s",
                        ue->ctxId,
                        hoForChoPreparation ? "cho-prepare" : "classic");
     }
     else 
     {
-        m_logger->debug("UE[%d] extracted targetPCI [%d] from HO command container; checking for CHO preparation",
+        m_logger->debug("UE[%ld] extracted targetNCI [%ld] from HO command container; checking for CHO preparation",
                         ue->ctxId,
-                        targetPci);
+                        targetNci);
 
-        // check to see if this is a response to a CHO preparation we initiated for this UE and target PCI; 
+        // check to see if this is a response to a CHO preparation we initiated for this UE and target NCI; 
         // if so, mark it so RRC can handle accordingly, and remove from the UE's pending cho list.
 
-        auto itByUe = m_hoReqChoPendingByTargetPci.find(ue->ctxId);
-        if (itByUe != m_hoReqChoPendingByTargetPci.end())
+        auto itByUe = m_hoReqChoPendingByTargetNci.find(ue->ctxId);
+        if (itByUe != m_hoReqChoPendingByTargetNci.end())
         {
             auto &targetMap = itByUe->second;
-            auto itTarget = targetMap.find(targetPci);
+            auto itTarget = targetMap.find(targetNci);
             if (itTarget != targetMap.end() && itTarget->second > 0)
             {
                 hoForChoPreparation = true;
@@ -1246,15 +1249,15 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
                 if (itTarget->second <= 0)
                     targetMap.erase(itTarget);
                 if (targetMap.empty())
-                    m_hoReqChoPendingByTargetPci.erase(itByUe);
+                    m_hoReqChoPendingByTargetNci.erase(itByUe);
 
-                m_logger->info("UE[%d] HO command matches pending CHO preparation for targetPCI=%d; marking for CHO handling in RRC",
+                m_logger->info("UE[%ld] HO command matches pending CHO preparation for targetNCI=%ld; marking for CHO handling in RRC",
                                ue->ctxId,
-                               targetPci);
+                               targetNci);
             }
         }
         else {
-            m_logger->debug("UE[%d] has no pending CHO preparations; treating HO command as classic handover", ue->ctxId);
+            m_logger->debug("UE[%ld] has no pending CHO preparations; treating HO command as classic handover", ue->ctxId);
         }
     }
 
@@ -1263,14 +1266,14 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
     auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::HANDOVER_COMMAND_DELIVERY);
     w->ueId = ue->ctxId;
     w->rrcContainer = std::move(rrcContainer);
-    w->hoTargetPci = targetPci;
+    w->hoTargetNci = targetNci;
     w->hoForChoPreparation = hoForChoPreparation;
     m_base->rrcTask->push(std::move(w));
 
-    m_logger->info("UE[%d] HandoverCommand forwarded to RRC rrcContainer=%dB targetPCI=%d mode=%s",
+    m_logger->info("UE[%ld] HandoverCommand forwarded to RRC rrcContainer=%ld targetNCI=%ld mode=%s",
                    ue->ctxId,
                    rrcContainer.length(),
-                   targetPci,
+                   targetNci,
                    hoForChoPreparation ? "cho-prepare" : "classic");
 }
 
@@ -1283,8 +1286,8 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
  */
 void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPreparationFailure *msg)
 {
-    // FIX - need to figure out how to determine which targetPCI this message came from
-    int hoTargetPci = -1;
+    // FIX - need to figure out how to determine which targetNCI this message came from
+    int hoTargetNci = -1;
     m_logger->warn("HandoverPreparationFailure received from AMF");
 
     auto *ue = findUeByNgapIdPair(amfId, ngap_utils::FindNgapIdPair(msg));
@@ -1297,23 +1300,23 @@ void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPre
 
     // remove from pending CHO list if present, so that subsequent handover attempts to the same target can be properly correlated.
     
-    auto itByUe = m_hoReqChoPendingByTargetPci.find(ue->ctxId);
-    if (itByUe != m_hoReqChoPendingByTargetPci.end())
+    auto itByUe = m_hoReqChoPendingByTargetNci.find(ue->ctxId);
+    if (itByUe != m_hoReqChoPendingByTargetNci.end())
     {
-        // targetPCIs are tracked as a map in the second value
+        // targetNCIs are tracked as a map in the second value
         auto &targetMap = itByUe->second;
-        // if the targetPCI is in the map, remove it
-        if (targetMap.count(hoTargetPci) != 0)
+        // if the targetNCI is in the map, remove it
+        if (targetMap.count(hoTargetNci) != 0)
         {
-            targetMap.erase(hoTargetPci);
+            targetMap.erase(hoTargetNci);
 
             // if the map is now empty, remove the UE entry as well
             if (targetMap.empty())
-                m_hoReqChoPendingByTargetPci.erase(itByUe);
+                m_hoReqChoPendingByTargetNci.erase(itByUe);
         }
         else
         {
-            m_logger->warn("UE[%d] HO prep failure cannot be target-correlated; keeping %zu pending target(s)",
+            m_logger->warn("UE[%ld] HO prep failure cannot be target-correlated; keeping %zu pending target(s)",
                            ue->ctxId,
                            targetMap.size());
         }
@@ -1323,16 +1326,16 @@ void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPre
     auto *ieCause = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_Cause);
     if (ieCause)
     {
-        m_logger->warn("UE[%d] Handover preparation failed cause present=%d",
+        m_logger->warn("UE[%ld] Handover preparation failed cause present=%d",
                        ue->ctxId, ieCause->Cause.present);
     }
 
     auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::HANDOVER_FAILURE);
     w->ueId = ue->ctxId;
-    w->hoTargetPci = hoTargetPci;
+    w->hoTargetNci = hoTargetNci;
     m_base->rrcTask->push(std::move(w));
 
-    m_logger->warn("UE[%d] Handover preparation failed. UE remains on source cell.", ue->ctxId);
+    m_logger->warn("UE[%ld] Handover preparation failed. UE remains on source cell.", ue->ctxId);
 }
 
 /**
@@ -1345,13 +1348,13 @@ void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPre
  * 
  * @param ueId 
  */
-void NgapTask::sendHandoverNotify(int ueId)
+void NgapTask::sendHandoverNotify(int64_t ueId)
 {
 
     auto *ue = findUeContext(ueId);
     if (!ue)
     {
-        m_logger->err("sendHandoverNotify: UE context not found UE[%d] ", ueId);
+        m_logger->err("sendHandoverNotify: UE context not found UE[%ld] ", ueId);
         return;
     }
 
@@ -1385,7 +1388,7 @@ void NgapTask::sendHandoverNotify(int ueId)
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverNotify>(ies);
     sendNgapUeAssociated(ue->ctxId, pdu);
 
-    m_logger->info("UE[%d] HandoverNotify sent to AMF", ueId);
+    m_logger->info("UE[%ld] HandoverNotify sent to AMF", ueId);
 }
 
 /**
@@ -1395,14 +1398,14 @@ void NgapTask::sendHandoverNotify(int ueId)
  * 
  * @param ueId 
  */
-void NgapTask::sendPathSwitchRequest(int ueId)
+void NgapTask::sendPathSwitchRequest(int64_t ueId)
 {
-    m_logger->info("UE[%d] Sending PathSwitchRequest", ueId);
+    m_logger->info("UE[%ld] Sending PathSwitchRequest", ueId);
 
     auto *ue = findUeContext(ueId);
     if (!ue)
     {
-        m_logger->err("sendPathSwitchRequest: UE context not found UE[%d] ", ueId);
+        m_logger->err("sendPathSwitchRequest: UE context not found UE[%ld] ", ueId);
         return;
     }
 
@@ -1433,7 +1436,7 @@ void NgapTask::sendPathSwitchRequest(int ueId)
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_PathSwitchRequest>(ies);
     sendNgapUeAssociated(ue->ctxId, pdu);
 
-    m_logger->info("UE[%d] PathSwitchRequest sent to AMF", ueId);
+    m_logger->info("UE[%ld] PathSwitchRequest sent to AMF", ueId);
 }
 
 /**
@@ -1454,7 +1457,7 @@ void NgapTask::receivePathSwitchRequestAcknowledge(int amfId, ASN_NGAP_PathSwitc
         return;
     }
 
-    m_logger->info("UE[%d] Path switch complete. AMF path updated.", ue->ctxId);
+    m_logger->info("UE[%ld] Path switch complete. AMF path updated.", ue->ctxId);
 
     // Notify RRC that path switch is acknowledged
     auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::PATH_SWITCH_REQUEST_ACK);
@@ -1490,7 +1493,7 @@ void NgapTask::receivePathSwitchRequestFailure(int amfId, ASN_NGAP_PathSwitchReq
         return;
     }
 
-    m_logger->warn("UE[%d] Path switch failed.", ue->ctxId);
+    m_logger->warn("UE[%ld] Path switch failed.", ue->ctxId);
 
     if (m_base->xnTask)
     {
@@ -1511,22 +1514,22 @@ void NgapTask::receivePathSwitchRequestFailure(int amfId, ASN_NGAP_PathSwitchReq
  * @param ueId 
  */
 
-void NgapTask::handleHandoverNotifyFromRrc(int ueId)
+void NgapTask::handleHandoverNotifyFromRrc(int64_t ueId)
 {
     // move the UE context from handover pending map to ueCtx map
-    auto it = m_handoverPending.find(ueId);
-    if (it == m_handoverPending.end() || it->second == nullptr || it->second->ctx == nullptr)
+    auto it = m_handoversPending.find(ueId);
+    if (it == m_handoversPending.end() || it->second == nullptr || it->second->ctx == nullptr)
     {
-        m_logger->warn("UE[%d] Ignoring handover complete: no pending NGAP handover context", ueId);
+        m_logger->warn("UE[%ld] Ignoring handover complete: no pending NGAP handover context", ueId);
         return;
     }
 
-    m_logger->info("UE[%d] Processing handover complete, sending HandoverNotify", ueId);
+    m_logger->info("UE[%ld] Processing handover complete, sending HandoverNotify", ueId);
 
     auto *hoPending = it->second;
     m_ueCtx[ueId] = hoPending->ctx;
     delete hoPending;
-    m_handoverPending.erase(it);
+    m_handoversPending.erase(it);
 
     // Send HandoverNotify to AMF to indicate handover completion and update UE location.
     sendHandoverNotify(ueId);

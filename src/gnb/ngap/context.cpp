@@ -75,7 +75,7 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
         return;
     }
 
-    m_logger->debug("UE[%d] Initial Context Setup Request mapped to UE", ue->ctxId);
+    m_logger->debug("UE[%ld] Initial Context Setup Request mapped to UE", ue->ctxId);
 
     // User plane - Initial context setup
     auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_UPDATE);
@@ -151,7 +151,7 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
             }
 
             // Instructs GTP to setup the UP Tunnel
-            m_logger->debug("UE[%d] PDU Session Resource Setup sent to GTP psi=%d", ue->ctxId, resource->psi);
+            m_logger->debug("UE[%ld] PDU Session Resource Setup sent to GTP psi=%d", ue->ctxId, resource->psi);
             auto error = setupPduSessionResource(ue, resource);
 
             if (error.has_value())
@@ -215,7 +215,7 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
     if (reqIe)
     {
         deliverDownlinkNas(ue->ctxId, asn::GetOctetString(reqIe->NAS_PDU));
-        m_logger->debug("UE[%d] Initial Context Setup Request NAS PDU sent to RRC", ue->ctxId);
+        m_logger->debug("UE[%ld] Initial Context Setup Request NAS PDU sent to RRC", ue->ctxId);
     }
 
     std::vector<ASN_NGAP_InitialContextSetupResponseIEs *> responseIes;
@@ -250,7 +250,7 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
     auto *response = asn::ngap::NewMessagePdu<ASN_NGAP_InitialContextSetupResponse>(responseIes);
     sendNgapUeAssociated(ue->ctxId, response);
 
-    m_logger->debug("UE[%d] Initial Context Setup Response sent to AMF", ue->ctxId);
+    m_logger->debug("UE[%ld] Initial Context Setup Response sent to AMF", ue->ctxId);
 }
 
 void NgapTask::receiveContextRelease(int amfId, ASN_NGAP_UEContextReleaseCommand *msg)
@@ -264,7 +264,7 @@ void NgapTask::receiveContextRelease(int amfId, ASN_NGAP_UEContextReleaseCommand
         return;
     }
     
-    m_logger->debug("UE[%d] Context Release Command mapped to UE", ue->ctxId);
+    m_logger->debug("UE[%ld] Context Release Command mapped to UE", ue->ctxId);
 
     // Notify RRC task
     auto w1 = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::AN_RELEASE);
@@ -279,7 +279,7 @@ void NgapTask::receiveContextRelease(int amfId, ASN_NGAP_UEContextReleaseCommand
     auto *response = asn::ngap::NewMessagePdu<ASN_NGAP_UEContextReleaseComplete>({});
     sendNgapUeAssociated(ue->ctxId, response);
 
-    m_logger->info("UE[%d] NGAP Context released.", ue->ctxId);
+    m_logger->info("UE[%ld] NGAP Context released.", ue->ctxId);
 
     deleteUeContext(ue->ctxId);
 
@@ -293,7 +293,7 @@ void NgapTask::receiveContextModification(int amfId, ASN_NGAP_UEContextModificat
     if (ue == nullptr)
         return;
 
-    m_logger->debug("UE[%d] Context Modification Request mapped to UE", ue->ctxId);
+    m_logger->debug("UE[%ld] Context Modification Request mapped to UE", ue->ctxId);
 
     auto *ie = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UEAggregateMaximumBitRate);
     if (ie)
@@ -307,7 +307,7 @@ void NgapTask::receiveContextModification(int amfId, ASN_NGAP_UEContextModificat
     {
         int64_t old = ue->amfUeNgapId;
         ue->amfUeNgapId = asn::GetSigned64(ie->AMF_UE_NGAP_ID_1);
-        m_logger->debug("UE[%d} AMF-UE-NGAP-ID changed from %ld to %ld", ue->ctxId, old, ue->amfUeNgapId);
+        m_logger->debug("UE[%ld} AMF-UE-NGAP-ID changed from %ld to %ld", ue->ctxId, old, ue->amfUeNgapId);
     }
 
     auto *response = asn::ngap::NewMessagePdu<ASN_NGAP_UEContextModificationResponse>({});
@@ -318,9 +318,9 @@ void NgapTask::receiveContextModification(int amfId, ASN_NGAP_UEContextModificat
     m_base->gtpTask->push(std::move(w));
 }
 
-void NgapTask::sendContextRelease(int ueId, NgapCause cause)
+void NgapTask::sendContextRelease(int64_t ueId, NgapCause cause)
 {
-    m_logger->debug("UE[%d] Sending UE Context release request to AMF (NG-RAN node initiated)", ueId);
+    m_logger->debug("UE[%ld] Sending UE Context release request to AMF (NG-RAN node initiated)", ueId);
 
     auto *ue = findUeContext(ueId);
     if (ue == nullptr)

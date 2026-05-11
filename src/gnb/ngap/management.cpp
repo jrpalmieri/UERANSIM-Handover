@@ -33,7 +33,7 @@ void NgapTask::createAmfContext(const GnbAmfConfig &conf)
     m_amfCtx[ctx->ctxId] = ctx;
 }
 
-void NgapTask::createUeContext(int ueId, int32_t &requestedSliceType)
+void NgapTask::createUeContext(int64_t ueId, int32_t &requestedSliceType)
 {
     auto *ctx = new NgapUeContext(ueId);
 
@@ -42,25 +42,26 @@ void NgapTask::createUeContext(int ueId, int32_t &requestedSliceType)
 
     // RAN UE NGAP ID is assigned by the gNB, so assign a new unique ID
     ctx->ranUeNgapId = generateRanUeNgapId(ueId);
-    m_logger->debug("UE[%d] NGAP context created: ranUeNgapId=%ld", ueId, ctx->ranUeNgapId);
+    m_logger->debug("UE[%ld] NGAP context created: ranUeNgapId=%ld", ueId, ctx->ranUeNgapId);
 
+    // store in the UE context map
     m_ueCtx[ctx->ctxId] = ctx;
 
     // Perform AMF selection
     auto *amf = selectAmf(ueId, requestedSliceType);
     if (amf == nullptr)
-        m_logger->err("UE[%d] AMF selection failed. Could not find a suitable AMF.", ueId);
+        m_logger->err("UE[%ld] AMF selection failed. Could not find a suitable AMF.", ueId);
     else
         ctx->associatedAmfId = amf->ctxId;
 }
 
-NgapUeContext *NgapTask::findUeContext(int ctxId)
+NgapUeContext *NgapTask::findUeContext(int64_t ctxId)
 {
     NgapUeContext *ctx = nullptr;
     if (m_ueCtx.count(ctxId))
         ctx = m_ueCtx[ctxId];
     if (ctx == nullptr)
-        m_logger->err("UE[%d] NGAP context not found", ctxId);
+        m_logger->err("UE[%ld] NGAP context not found", ctxId);
     return ctx;
 }
 
@@ -147,18 +148,18 @@ NgapUeContext *NgapTask::findUeByNgapIdPair(int amfCtxId, const NgapIdPair &idPa
     return ue;
 }
 
-void NgapTask::deleteUeContext(int ueId)
+void NgapTask::deleteUeContext(int64_t ueId)
 {
     auto it = m_ueCtx.find(ueId);
     if (it == m_ueCtx.end())
     {
-        m_logger->err("UE[%d] NGAP context not found, no deletion performed", ueId);
+        m_logger->err("UE[%ld] NGAP context not found, no deletion performed", ueId);
         return;
     }
 
     delete it->second;
     m_ueCtx.erase(it);
-    m_logger->debug("UE[%d] NGAP context deleted", ueId);
+    m_logger->debug("UE[%ld] NGAP context deleted", ueId);
 }
 
 void NgapTask::deleteAmfContext(int amfId)
@@ -176,23 +177,22 @@ void NgapTask::deleteAmfContext(int amfId)
 
 /**
  * @brief Generates the RAN UE NGAP ID for a new UE context. The generation logic is a combination of
- * the physical cell id (PCI) and the UE Id, so that the generated ID is unique across all UEs and gnbs.
+ * the low 16 bits of the NCI and the low 16 bits of the UE Id (NGAP constrains to 32 bits), so that the generated ID is likely unique 
+ * across all UEs and gnbs.
  *  
  * @param ueId 
  * @return int64_t 
  */
-int64_t NgapTask::generateRanUeNgapId(int ueId) 
+int64_t NgapTask::generateRanUeNgapId(int64_t ueId) 
 {
 
-    int pci = m_base->config->getCellId() & 0x3FF;
-    if (pci < 0)
-        pci = 0;
+    int64_t nci = m_base->config->nci;
 
     // The RAN UE NGAP ID is constructed as follows:
-    // | 10 bits PCI | 22 bits UeId |
+    // | 16 bits NCI | 16 bits UeId |
     // NGAP constrains RAN_UE_NGAP_ID to 0..4294967295 (32 bits), so keep it strictly within 32 bits.
-    uint32_t localUeBits = static_cast<uint32_t>(ueId) & ((1u << 22) - 1u);
-    uint32_t ranUeNgapId = (static_cast<uint32_t>(pci) << 22) | localUeBits;
+    uint32_t localUeBits = static_cast<uint32_t>(ueId) & ((1u << 16) - 1u);
+    uint32_t ranUeNgapId = (static_cast<uint32_t>(nci) << 16) | localUeBits;
     return static_cast<int64_t>(ranUeNgapId);
 
 }

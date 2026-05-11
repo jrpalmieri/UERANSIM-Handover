@@ -320,7 +320,7 @@ void NgapTask::receiveSessionResourceReleaseCommand(int amfId, ASN_NGAP_PDUSessi
     auto *respPdu = asn::ngap::NewMessagePdu<ASN_NGAP_PDUSessionResourceReleaseResponse>({ieResp});
     sendNgapUeAssociated(ue->ctxId, respPdu);
 
-    m_logger->info("UE[%d] PDU session resource(s) released, count[%d]", ue->ctxId, static_cast<int>(psIds.size()));
+    m_logger->info("UE[%ld] PDU session resource(s) released, count[%d]", ue->ctxId, static_cast<int>(psIds.size()));
 }
 
 } // namespace nr::gnb

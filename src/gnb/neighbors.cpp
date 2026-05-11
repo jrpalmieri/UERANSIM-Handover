@@ -71,17 +71,17 @@ GnbNeighborConfig ReadNeighborConfig(const YAML::Node &neighborNode,
     return neighbor;
 }
 
-void ValidateUniqueNeighborPci(const std::vector<GnbNeighborConfig> &neighbors, const std::string &listPath)
+void ValidateUniqueNeighborNci(const std::vector<GnbNeighborConfig> &neighbors, const std::string &listPath)
 {
-    std::unordered_set<int> seenNeighborPci{};
+    std::unordered_set<int64_t> seenNeighborNci{};
 
     for (const auto &neighbor : neighbors)
     {
-        auto pci = neighbor.getPci();
-        if (seenNeighborPci.count(pci) != 0)
-            throw std::runtime_error(listPath + " contains duplicate PCI=" + std::to_string(pci));
+        auto nci = neighbor.nci;
+        if (seenNeighborNci.count(nci) != 0)
+            throw std::runtime_error(listPath + " contains duplicate NCI=" + std::to_string(nci));
 
-        seenNeighborPci.insert(pci);
+        seenNeighborNci.insert(nci);
     }
 }
 
@@ -89,7 +89,7 @@ void ValidateUniqueNeighborPci(const std::vector<GnbNeighborConfig> &neighbors, 
 void GnbNeighbors::upsertLocked(const GnbNeighborConfig &entry)
 {
     auto it = std::find_if(m_neighbors.begin(), m_neighbors.end(), [&entry](const GnbNeighborConfig &e) {
-        return e.getPci() == entry.getPci();
+        return e.getNci() == entry.getNci();
     });
     if (it != m_neighbors.end())
         *it = entry;
@@ -116,36 +116,26 @@ void GnbNeighbors::replaceAll(const std::vector<GnbNeighborConfig> &entries)
     m_neighbors = entries;
 }
 
-void GnbNeighbors::remove(int pci)
+void GnbNeighbors::remove(int64_t nci)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_neighbors.erase(
         std::remove_if(m_neighbors.begin(), m_neighbors.end(),
-                       [pci](const GnbNeighborConfig &e) { return e.getPci() == pci; }),
+                       [nci](const GnbNeighborConfig &e) { return e.getNci() == nci; }),
         m_neighbors.end());
-}
-
-std::optional<GnbNeighborConfig> GnbNeighbors::findByPci(int pci) const
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    auto it = std::find_if(m_neighbors.begin(), m_neighbors.end(), [pci](const GnbNeighborConfig &e) {
-        return e.getPci() == pci;
-    });
-    if (it == m_neighbors.end())
-        return std::nullopt;
-    return *it;
 }
 
 std::optional<GnbNeighborConfig> GnbNeighbors::findByNci(int64_t nci) const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = std::find_if(m_neighbors.begin(), m_neighbors.end(), [nci](const GnbNeighborConfig &e) {
-        return e.nci == nci;
+        return e.getNci() == nci;
     });
     if (it == m_neighbors.end())
         return std::nullopt;
     return *it;
 }
+
 
 std::vector<GnbNeighborConfig> GnbNeighbors::getAll() const
 {

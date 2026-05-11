@@ -134,7 +134,7 @@ void NgapTask::sendNgapNonUe(int associatedAmf, ASN_NGAP_NGAP_PDU *pdu)
     asn::Free(asn_DEF_ASN_NGAP_NGAP_PDU, pdu);
 }
 
-void NgapTask::sendNgapUeAssociated(int ueId, ASN_NGAP_NGAP_PDU *pdu)
+void NgapTask::sendNgapUeAssociated(int64_t ueId, ASN_NGAP_NGAP_PDU *pdu)
 {
     /* Find UE and AMF contexts */
 
@@ -146,14 +146,14 @@ void NgapTask::sendNgapUeAssociated(int ueId, ASN_NGAP_NGAP_PDU *pdu)
 
     if (ue == nullptr)
     {
-        auto it = m_handoverPending.find(ueId);
-        if (it != m_handoverPending.end() && it->second != nullptr)
+        auto it = m_handoversPending.find(ueId);
+        if (it != m_handoversPending.end() && it->second != nullptr)
             ue = it->second->ctx;
     }
 
     if (ue == nullptr)
     {
-        m_logger->err("UE context not found with id: %d", ueId);
+        m_logger->err("UE context not found with id: %ld", ueId);
         asn::Free(asn_DEF_ASN_NGAP_NGAP_PDU, pdu);
         return;
     }

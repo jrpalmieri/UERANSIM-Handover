@@ -124,11 +124,11 @@ void GnbRrcTask::onLoop()
             break;
         }
         case NmGnbNgapToRrc::HANDOVER_FAILURE: {
-            handleNgapHandoverFailure(w.ueId, w.hoTargetPci, w.hoForChoPreparation);
+            handleNgapHandoverFailure(w.ueId, w.hoTargetNci, w.hoForChoPreparation);
             break;
         }
         case NmGnbNgapToRrc::PATH_SWITCH_REQUEST_ACK: {
-            m_logger->info("UE[%d] PathSwitchRequestAck received, handover fully complete", w.ueId);
+            m_logger->info("UE[%ld] PathSwitchRequestAck received, handover fully complete", w.ueId);
             break;
         }
         }
@@ -139,13 +139,13 @@ void GnbRrcTask::onLoop()
         switch (w.present)
         {
         case NmGnbXnToRrc::HANDOVER_COMMAND_READY:
-            m_logger->debug("UE[%d] Xn handover command ready", w.ueId);
+            m_logger->debug("UE[%ld] Xn handover command ready", w.ueId);
             break;
         case NmGnbXnToRrc::HANDOVER_PREP_FAILURE:
-            m_logger->warn("UE[%d] Xn handover preparation failed cause=%d", w.ueId, w.causeCode);
+            m_logger->warn("UE[%ld] Xn handover preparation failed cause=%d", w.ueId, w.causeCode);
             break;
         case NmGnbXnToRrc::SOURCE_CONTEXT_RELEASE:
-            m_logger->debug("UE[%d] Xn source context release requested", w.ueId);
+            m_logger->debug("UE[%ld] Xn source context release requested", w.ueId);
             break;
         }
         break;
@@ -194,7 +194,7 @@ GeoPosition GnbRrcTask::getTrueGeoPosition() const
 
 void GnbRrcTask::upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value)
 {
-    m_satellitePvByPci[value.pci] = value;
+    m_satellitePvByNci[value.nci] = value;
 }
 
 void GnbRrcTask::onUpdateLocationTimerExpired()
@@ -209,10 +209,10 @@ void GnbRrcTask::onUpdateLocationTimerExpired()
     }
 
     // pull the current TLE from the TLE store
-    int ownPci = cons::getPciFromNci(m_config->nci);
-    auto ownTle = m_base->satStates->getTle(ownPci);
+    int64_t ownNci = m_config->nci;
+    auto ownTle = m_base->satStates->getTle(ownNci);
     if (!ownTle.has_value()){
-        m_logger->warn("Own TLE not found for PCI %d; cannot update location", ownPci);
+        m_logger->warn("Own TLE not found for NCI %ld; cannot update location", ownNci);
         return;
     }
 
@@ -220,7 +220,7 @@ void GnbRrcTask::onUpdateLocationTimerExpired()
     auto satNow = m_base->satTime->CurrentSatTimeMillis();
     libsgp4::DateTime now = nr::sat::UnixMillisToDateTime(satNow);
 
-    gnbGeo = EcefToGeo(m_base->satStates->getSgp4(ownPci)->FindPositionEcef(satNow));
+    gnbGeo = EcefToGeo(m_base->satStates->getSgp4(ownNci)->FindPositionEcef(satNow));
     // get the current geodetic coordinates of the gNB by propagating its TLE to the current time
     // if (!nr::sat::PropagateTleToGeo(ownTle->line1, ownTle->line2, now, gnbGeo))
     // {
@@ -237,6 +237,7 @@ void GnbRrcTask::onUpdateLocationTimerExpired()
 void GnbRrcTask::onUpdateGnbStatusTimerExpired()
 {
     GnbStatusInfoUpdate update;
+    update.nci = m_config->nci;
     update.rrcConnectedUesIsPresent = true;
     update.rrcConnectedUes = static_cast<int>(m_ueCtx.size());
     

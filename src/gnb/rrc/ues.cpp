@@ -14,14 +14,7 @@
 namespace nr::gnb
 {
 
-// RrcUeContext *GnbRrcTask::createUe(int crnti, int ueId)
-// {
-//     auto *ctx = new RrcUeContext(crnti);
-//     ctx->ueId = ueId;
-//     m_ueCtx[crnti] = ctx;
-//     return ctx;
-// }
-RrcUeContext *GnbRrcTask::createUe(int ueId, int crnti)
+RrcUeContext *GnbRrcTask::createUe(int64_t ueId, int crnti)
 {
     auto *ctx = new RrcUeContext(crnti);
     ctx->ueId = ueId;
@@ -44,7 +37,7 @@ RrcUeContext *GnbRrcTask::tryFindUeByCrnti(int crnti)
     return nullptr;
 }
 
-RrcUeContext *GnbRrcTask::tryFindUeByUeId(int ueId)
+RrcUeContext *GnbRrcTask::tryFindUeByUeId(int64_t ueId)
 {
     auto it = m_ueCtx.find(ueId);
     if (it == m_ueCtx.end() || it->second == nullptr)
@@ -53,7 +46,7 @@ RrcUeContext *GnbRrcTask::tryFindUeByUeId(int ueId)
     auto *ctx = it->second;
     if (ctx->ueId != ueId)
     {
-        m_logger->warn("UE[%d] RRC context key mismatch: keyUeId=%d ctxUeId=%d cRnti=%d",
+        m_logger->warn("UE[%ld] RRC context key mismatch: keyUeId=%d ctxUeId=%d cRnti=%d",
                        ueId, ueId, ctx->ueId, ctx->cRnti);
         return nullptr;
     }

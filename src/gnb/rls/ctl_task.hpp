@@ -22,11 +22,11 @@ class RlsControlTask : public NtsTask
   private:
     std::unique_ptr<Logger> m_logger;
     uint64_t m_sti;
-    uint32_t m_cellId;
+    int64_t m_cellId;
     NtsTask *m_mainTask;
     RlsUdpTask *m_udpTask;
     std::unordered_map<uint32_t, rls::PduInfo> m_pduMap;
-    std::unordered_map<int, std::vector<uint32_t>> m_pendingAck;
+    std::unordered_map<int64_t, std::vector<uint32_t>> m_pendingAck;
     int m_timerPeriodAckControl;
     int m_timerPeriodAckSend;
 
@@ -43,11 +43,11 @@ class RlsControlTask : public NtsTask
     void initialize(NtsTask *mainTask, RlsUdpTask *udpTask);
 
   private:
-    void handleSignalDetected(int ueId);
-    void handleSignalLost(int ueId);
+    void handleSignalDetected(int64_t ueId);
+    void handleSignalLost(int64_t ueId);
     void handleRlsMessage(NmGnbRlsToRls &w);
-    void handleDownlinkRrcDelivery(int ueId, uint32_t pduId, rrc::RrcChannel channel, OctetString &&data);
-    void handleDownlinkDataDelivery(int ueId, int psi, OctetString &&data);
+    void handleDownlinkRrcDelivery(int64_t ueId, uint32_t pduId, rrc::RrcChannel channel, OctetString &&data);
+    void handleDownlinkDataDelivery(int64_t ueId, int psi, OctetString &&data);
     void onAckControlTimerExpired();
     void onAckSendTimerExpired();
 };

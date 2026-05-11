@@ -59,7 +59,7 @@ static constexpr uint32_t SIB19_MAX_ENTRIES = 256;
 // Offset of the first common field within a standard (PosVel/Orbital) entry.
 static constexpr size_t SIB19_STD_COMMON_OFF = 52;
 // Offset of the first common field within a TLE entry.
-// Layout: 4 (PCI) + 25 (name) + 70 (line1) + 70 (line2) + 3 (pad) = 172
+// Layout: 8 (NCI) + 25 (name) + 70 (line1) + 70 (line2) + 3 (pad) = 172
 static constexpr size_t SIB19_TLE_COMMON_OFF = 172;
 
 template <typename T>
@@ -165,7 +165,7 @@ void GnbRrcTask::triggerSysInfoBroadcast()
 /**
  * @brief Sends a SIB19 message conataining satellite ephemeris data.
  * Relies on the TLE store to provide the current TLE for the serving satellite 
- * (identified by own PCI) and nearby satellites.  The top 7 nearby satellites are determined 
+ * (identified by own NCI) and nearby satellites.  The top 7 nearby satellites are determined 
  * during the periodic satellite position update and stored in m_sib19RangeCache.
  * 
  */
@@ -175,32 +175,31 @@ void GnbRrcTask::triggerSib19Broadcast()
     if (!m_config->ntn.sib19.sib19On)
         return;
 
-    int ownPci = cons::getPciFromNci(m_config->nci);
+    int64_t ownNci = m_config->nci;
 
     // config sets what type of ephemeris data to include in SIB19, either pos/vel or orbital elements
     const auto ephType = m_config->ntn.sib19.ephType;
 
     // Own TLE must be loaded — it is always included as the serving satellite.
-    auto ownTleOpt = m_base->satStates->getTle(ownPci);
+    auto ownTleOpt = m_base->satStates->getTle(ownNci);
     if (!ownTleOpt.has_value())
     {
-        m_logger->debug("SIB19: own TLE not loaded (pci=%d), skipping broadcast", ownPci);
+        m_logger->debug("SIB19: own TLE not loaded (nci=%ld), skipping broadcast", ownNci);
         return;
     }
 
-    // Build the ordered PCI list: own satellite first, then SIB19-range neighbors.
-    std::vector<int> pcis;
-    pcis.push_back(ownPci);
-    for (int pci : m_sib19RangeCache)
+    // Build the ordered NCI list: own satellite first, then SIB19-range neighbors.
+    std::vector<int64_t> ncis;
+    ncis.push_back(ownNci);
+    for (int64_t nci : m_sib19RangeCache)
     {
-        if (pci != ownPci)
-            pcis.push_back(pci);
+        if (nci != ownNci)
+            ncis.push_back(nci);
     }
 
     // Coherent time base for all TLE operations.
     const int64_t nowMs = utils::CurrentTimeMillis();
     const int64_t satNowMs = m_base->satTime->CurrentSatTimeMillis();
-    //const libsgp4::DateTime now = nr::rrc::common::UnixMillisToDateTime(satNowMs);
 
     static constexpr double TWO_PI = 2.0 * M_PI;
     static constexpr double GM     = 3.986004418e14;  // m³/s²
@@ -215,30 +214,30 @@ void GnbRrcTask::triggerSib19Broadcast()
     };
 
     std::vector<nr::sat::EphEntry> entries;
-    entries.reserve(pcis.size());
+    entries.reserve(ncis.size());
 
     // Pre-compute t0+1 s only when needed for velocity (pos/vel path).
     const int64_t satNowPlus1 = satNowMs + 1000;
 
-    // loop through each PCI, calculating ephemeris data based on the TLE and the configured ephType
-    for (int pci : pcis)
+    // loop through each NCI, calculating ephemeris data based on the TLE and the configured ephType
+    for (int64_t nci : ncis)
     {
-        auto tle = m_base->satStates->getTle(pci);
+        auto tle = m_base->satStates->getTle(nci);
         if (!tle.has_value())
         {
-            m_logger->debug("SIB19: TLE not found for pci=%d, skipping", pci);
+            m_logger->debug("SIB19: TLE not found for nci=%ld, skipping", nci);
             continue;
         }
 
         try
         {
             nr::sat::EphEntry e{};
-            e.pci = pci;
+            e.nci = nci;
 
             if (ephType == ESib19EphemerisMode::PosVel)
             {
                 // SGP4 propagate to now + numerical velocity
-                auto propagator = m_base->satStates->getSgp4(pci);
+                auto propagator = m_base->satStates->getSgp4(nci);
                 EcefPosition p0 = propagator->FindPositionEcef(satNowMs);
                 EcefPosition p1 = propagator->FindPositionEcef(satNowPlus1);
 
@@ -250,7 +249,7 @@ void GnbRrcTask::triggerSib19Broadcast()
             else if (ephType == ESib19EphemerisMode::Orbital)
             {
                 // Extract Keplerian elements from SGP4 state
-                auto propagator = m_base->satStates->getSgp4(pci);
+                auto propagator = m_base->satStates->getSgp4(nci);
                 auto k = propagator->GetKeplerianElements(satNowMs);
 
                 e.semiMajorAxis = k.semiMajorAxis;
@@ -273,7 +272,7 @@ void GnbRrcTask::triggerSib19Broadcast()
         }
         catch (const std::exception &ex)
         {
-            m_logger->debug("SIB19: TLE processing failed for pci=%d (%s)", pci, ex.what());
+            m_logger->debug("SIB19: TLE processing failed for nci=%ld (%s)", nci, ex.what());
         }
     }
 
@@ -286,8 +285,8 @@ void GnbRrcTask::triggerSib19Broadcast()
     // -----------------------------------------------------------------------
     // Serialise payload: version=2, ephType from config.
     //
-    // PosVel / Orbital entry (96 bytes): 4 (PCI) + 48 (ephemeris) + 44 (common)
-    // TLE entry          (216 bytes): 4 (PCI) + 25 (name) + 70 (line1) +
+    // PosVel / Orbital entry (96 bytes): 4 (NCI) + 48 (ephemeris) + 44 (common)
+    // TLE entry          (216 bytes): 4 (NCI) + 25 (name) + 70 (line1) +
     //                                 70 (line2) + 3 (pad) + 44 (common)
     // -----------------------------------------------------------------------
     const bool isTle = (ephType == ESib19EphemerisMode::Tle);
@@ -313,7 +312,7 @@ void GnbRrcTask::triggerSib19Broadcast()
         const auto &e = entries[i];
         const size_t base = SIB19_HEADER_SIZE + static_cast<size_t>(i) * entrySize;
 
-        WriteLe(payload, base, static_cast<int32_t>(e.pci));
+        WriteLe(payload, base, static_cast<int32_t>(e.nci));
 
         if (ephType == ESib19EphemerisMode::PosVel)
         {
@@ -356,8 +355,8 @@ void GnbRrcTask::triggerSib19Broadcast()
         WriteLe(payload, base + commonOff + 40, taDriftTop);
     }
 
-    m_logger->debug("SIB19: broadcasting %u entries ephType=%d (own pci=%d + %zu neighbors)",
-                    entryCount, static_cast<int>(ephType), ownPci, entries.size() - 1);
+    m_logger->debug("SIB19: broadcasting %u entries ephType=%d (own nci=%ld + %zu neighbors)",
+                    entryCount, static_cast<int>(ephType), ownNci, entries.size() - 1);
 
     sendRrcMessage(rrc::RrcChannel::DL_SIB19, OctetString(std::move(payload)));
 }

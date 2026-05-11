@@ -25,41 +25,6 @@ static constexpr int TIMER_ID_T304 = 2;
 namespace nr::ue
 {
 
-/* ================================================================== */
-/*  Find a detected cell that matches the target PCI                  */
-/* ================================================================== */
-
-int UeRrcTask::findCellByPci(int physCellId)
-{
-    int currentCellId =
-        m_base->shCtx.currentCell.get<int>([](auto &v) { return v.cellId; });
-
-    // Strategy 1: direct match of PCI value to an RLS cellId
-    //   (covers simulation setups where cellId == PCI)
-    if (physCellId != currentCellId && m_cellDesc.count(physCellId))
-    {
-        m_logger->debug("Handover: PCI %d matched directly to cell[%d]", physCellId, physCellId);
-        return physCellId;
-    }
-
-    // Strategy 2: match by NCI – some cells may expose their NCI via SIB1;
-    //   if physCellId happens to match the lower bits, use it.
-    for (auto &[id, desc] : m_cellDesc)
-    {
-        if (id == currentCellId)
-            continue;
-        int nciLowBits = cons::getPciFromNci(desc.sib1.nci);
-        if (nciLowBits == physCellId)
-        {
-            m_logger->debug("Handover: PCI %d matched via NCI lower bits to cell[%d]", physCellId, id);
-            return id;
-        }
-    }
-
-    m_logger->err("Handover: PCI %d could not be resolved to any detected cell", physCellId);
-    return 0;
-}
-
 
 /*  Suspend / resume measurement evaluation during handover           */
 void UeRrcTask::suspendMeasurements()
@@ -90,7 +55,7 @@ void UeRrcTask::resumeMeasurements()
 void UeRrcTask::refreshSecurityKeys()
 {
     // Per TS 38.331 §5.3.5.4: During handover the UE derives a new
-    // KgNB* from the current KgNB and the target PCI / DL-ARFCN.
+    // KgNB* from the current KgNB and the target NCI / DL-ARFCN.
     // In UERANSIM's simplified security model we log the event but
     // do not actually recompute keys (integrity/ciphering are simulated).
     m_logger->debug("Handover - Security key refresh (KgNB* derivation) - not performed in simulated RF environment");
@@ -125,30 +90,29 @@ void UeRrcTask::performHandover(long txId, int64_t targetCellId, int newCRNTI,
         return;
     }
 
-
-    // ---- 0. Suspend measurements during handover (TS 38.331 §5.5.6.1) ----
+    // Suspend measurements during handover (TS 38.331 §5.5.6.1)
     suspendMeasurements();
 
-    // ---- 1. Start T304 (handover supervision timer) ----
+    // Start T304 (handover supervision timer)
     m_handoverInProgress = true;
     m_hoTxId = txId;
-    m_hoTargetPci = targetCellId;
+    m_hoTargetNci = targetCellId;
     setTimer(TIMER_ID_T304, t304Ms);
 
-    // ---- 2. Security key refresh (TS 38.331 §5.3.5.4) ----
+    // Security key refresh (TS 38.331 §5.3.5.4)
     refreshSecurityKeys();
 
 
-    // ---- 4. Save previous serving-cell information ----
+    // Save previous serving-cell information
     ActiveCellInfo previousCell =
         m_base->shCtx.currentCell.get<ActiveCellInfo>([](auto &v) { return v; });
 
-    // ---- 5. MAC reset indication (TS 38.331 §5.3.5.4) ----
+    // MAC reset indication (TS 38.331 §5.3.5.4)
     //  In a real UE the MAC entity is reset here.  UERANSIM does not model
     //  the MAC layer in detail, so we log the event for traceability.
     m_logger->debug("Handover - MAC reset for handover to cell[%ld] - not performed in simulated RF environment", targetCellId);
 
-    // ---- 6. Switch serving cell ----
+    // Switch serving cell
     auto &targetDesc = m_cellDesc[targetCellId];
     ActiveCellInfo newCellInfo{};
     newCellInfo.cellId = targetCellId;
@@ -198,14 +162,14 @@ void UeRrcTask::performHandover(long txId, int64_t targetCellId, int newCRNTI,
     //  Keep existing MeasConfigs in place.
     m_logger->debug("Handover - Existing measurement configuration preserved");
 
-    // ---- 9. Handover complete – stop supervision ----
+    // Handover complete – reset flag
     m_handoverInProgress = false;
     // (T304 will fire later and be silently ignored since the flag is cleared.)
 
-    // ---- 10. Resume measurements on the new serving cell ----
+    // Resume measurements
     resumeMeasurements();
 
-    // ---- 11. Notify NAS of the cell change ----
+    // Notify NAS layer of the cell change
     auto w2 = std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::ACTIVE_CELL_CHANGED);
     w2->previousTai = Tai{previousCell.plmn, previousCell.tac};
     m_base->nasTask->push(std::move(w2));
@@ -221,8 +185,8 @@ void UeRrcTask::handleT304Expiry()
         // Handover already completed before T304 fired – nothing to do.
         return;
     }
-
-    m_logger->err("T304 expired - handover to cell %ld failed", m_hoTargetPci);
+    
+    m_logger->err("T304 expired - handover to cell %ld failed", m_hoTargetNci);
     m_handoverInProgress = false;
 
     // Resume measurements so the UE can attempt re-establishment

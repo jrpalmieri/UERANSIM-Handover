@@ -42,20 +42,20 @@ static constexpr int MAX_LOOKAHEAD_SEC = 7200; // 2-hour horizon
  * propagation and UE's position.  Allows for proactive handover decisions based on satellite location predictions.
  *  * 
  * @param dynTriggerParams 
- * @param ownPci 
- * @param ue 
+ * @param ownNci
+ * @param ue
  */
-void GnbRrcTask::satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, const int ownPci, RrcUeContext *ue)
+void GnbRrcTask::satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, int64_t ownNci, RrcUeContext *ue)
 {
 
     // min elevation angle to trigger handover, in degrees (set in config)
     const int theta  = m_config->ntn.elevationMinDeg;
 
-    auto ownTleOpt   = m_base->satStates->getTle(ownPci);
+    auto ownTleOpt   = m_base->satStates->getTle(ownNci);
 
     if (!ownTleOpt.has_value())
     {
-        m_logger->warn("UE[%d] Dynamic trigger: own TLE unavailable, using trigger defaults (t=%ds d=%dm)",
+        m_logger->warn("UE[%ld] Dynamic trigger: own TLE unavailable, using trigger defaults (t=%ds d=%dm)",
                         ue->ueId, dynTriggerParams.condT1_thresholdSec, dynTriggerParams.condD1_distanceThresholdFromReference1);
         return;
     }
@@ -68,14 +68,14 @@ void GnbRrcTask::satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerPara
     //      since all UEs report their positions to all gNBs in heartbeats.))
     if (!uePos.has_value() || !uePos->isValid)
     {
-        m_logger->warn("UE[%d] Dynamic trigger: UE position unavailable, using trigger defaults (t=%ds d=%dm)",
+        m_logger->warn("UE[%ld] Dynamic trigger: UE position unavailable, using trigger defaults (t=%ds d=%dm)",
                         ue->ueId, dynTriggerParams.condT1_thresholdSec, dynTriggerParams.condD1_distanceThresholdFromReference1);
         return;
     }
 
     const SatTleEntry &ownTle = ownTleOpt.value();
     
-    m_logger->debug("UE[%d]: Calculating Dynamic trigger conditions for NTN using TLE: %s / %s",
+    m_logger->debug("UE[%ld]: Calculating Dynamic trigger conditions for NTN using TLE: %s / %s",
                         ue->ueId, ownTle.line1.c_str(), ownTle.line2.c_str());
 
     // convert ue position from lat/long/alt to ECEF for the calculation
@@ -83,21 +83,21 @@ void GnbRrcTask::satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerPara
 
     // get current sat time
     const int64_t satNowMs = m_base->satTime->CurrentSatTimeMillis();
-    const int satNowSec = static_cast<int>(satNowMs / 1000);
+    const int64_t satNowSec = satNowMs / 1000;
 
     // get the Ecef of the current gnb location
-    auto sgp4 = m_base->satStates->getSgp4(ownPci);
+    auto sgp4 = m_base->satStates->getSgp4(ownNci);
     SatEcefState curState{};
     curState.pos = sgp4->FindPositionEcef(satNowMs);
     curState.nadir = ComputeNadir(curState.pos);
 
     // compute current elevation angle to satellite from UE location
     auto elevAngle = ElevationAngleDeg(ueEcef, curState.pos);
-    m_logger->debug("UE[%d]: Current elevation angle to satellite is %.2f deg (threshold is %d deg)",
+    m_logger->debug("UE[%ld]: Current elevation angle to satellite is %.2f deg (threshold is %d deg)",
                     ue->ueId, elevAngle, theta);
 
     EcefPosition nadirAtExitM{};
-    long tExit = 0;
+    int64_t tExit = 0;
 
     // If already below the threshold right now, set triggers for right now
     if (elevAngle < static_cast<double>(theta))
@@ -136,7 +136,7 @@ void GnbRrcTask::satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerPara
     dynTriggerParams.d1_referenceLocation2 = dynTriggerParams.condD1_referenceLocation2;
     dynTriggerParams.d1_hysteresisLocation = dynTriggerParams.condD1_hysteresisLocation;
 
-    m_logger->debug("UE[%d]: NTN trigger conditions: t_thresh=%d sec (%d sec from sat-now), "
+    m_logger->debug("UE[%ld]: NTN trigger conditions: t_thresh=%d sec (%d sec from sat-now), "
                 "d1_ref1=[%.4f,%.4f], d1_thresh1=%d m, d1_ref2=[%.4f,%.4f], d1_thresh2=%d m",
                         ue->ueId, dynTriggerParams.condT1_thresholdSec, tExit,
                         dynTriggerParams.condD1_referenceLocation1.latitudeDeg, dynTriggerParams.condD1_referenceLocation1.longitudeDeg, dynTriggerParams.condD1_distanceThresholdFromReference1,
@@ -153,15 +153,15 @@ void GnbRrcTask::satHandoverTriggerCalc(nr::rrc::common::DynamicEventTriggerPara
 // m_satNeighborhoodCache (50 nearest by 3-D ECEF distance) and
 // m_sib19RangeCache (7 nearest to the gNB's own nadir, selected from the 50).
 //
-// Step 1 – The gNB's own TLE (keyed by own PCI) is propagated to obtain the
+// Step 1 – The gNB's own TLE (keyed by own NCI) is propagated to obtain the
 //           gNB's current ECEF position and nadir (sub-satellite ground point).
 // Step 2 – All other TLEs are propagated at the same instant.  For each, both
 //           the 3-D ECEF distance (used for the 50-neighbor cache) and the
 //           nadir-to-nadir distance (used for the SIB19 coverage cache) are
 //           computed.
-// Step 3 – Partial-sort by ECEF distance → m_satNeighborhoodCache (≤ 50 PCIs).
+// Step 3 – Partial-sort by ECEF distance → m_satNeighborhoodCache (≤ 50 NCIs).
 // Step 4 – Within those 50, partial-sort by nadir distance → m_sib19RangeCache
-//           (≤ 7 PCIs).  These are the satellites most likely to have overlapping
+//           (≤ 7 NCIs).  These are the satellites most likely to have overlapping
 //           coverage footprints with the gNB, making them relevant for SIB19.
 // ---------------------------------------------------------------------------
 void GnbRrcTask::roughNeighborhoodSats()
@@ -172,14 +172,14 @@ void GnbRrcTask::roughNeighborhoodSats()
     if (allEntries.empty())
         return;
 
-    // Determine this gNB's own PCI
-    int ownPci = cons::getPciFromNci(m_config->nci);
+    // Determine this gNB's own NCI
+    int64_t ownNci = m_config->nci;
 
     // check t we have our own TLE data to propagate
-    auto ownTle = m_base->satStates->getTle(ownPci);
+    auto ownTle = m_base->satStates->getTle(ownNci);
     if (!ownTle.has_value())
     {
-        m_logger->warn("roughNeighborhoodSats: own TLE not loaded (pci=%d), skipping", ownPci);
+        m_logger->warn("roughNeighborhoodSats: own TLE not loaded (nci=%ld), skipping", ownNci);
         return;
     }
 
@@ -188,13 +188,13 @@ void GnbRrcTask::roughNeighborhoodSats()
 
     // Propagate own TLE → gNB ECEF position + nadir
     SatEcefState gnbState{};
-    gnbState.pos = m_base->satStates->getSgp4(ownPci)->FindPositionEcef(satNowMs);
+    gnbState.pos = m_base->satStates->getSgp4(ownNci)->FindPositionEcef(satNowMs);
     gnbState.nadir = ComputeNadir(gnbState.pos);
 
     // Compute per-satellite ECEF and nadir distances
     struct SatInfo
     {
-        int pci{};
+        int64_t nci{};
         double ecefDistM{};   // 3-D distance to gNB (for neighborhood cache)
         double nadirDistM{};  // ground-track nadir distance (for SIB19 cache)
     };
@@ -204,15 +204,15 @@ void GnbRrcTask::roughNeighborhoodSats()
     for (const auto &entry : allEntries)
     {
         // skip ourselves
-        if (entry.pci == ownPci)
+        if (entry.nci == ownNci)
             continue;
 
         SatEcefState state{};
-        state.pos = m_base->satStates->getSgp4(entry.pci)->FindPositionEcef(satNowMs);
+        state.pos = m_base->satStates->getSgp4(entry.nci)->FindPositionEcef(satNowMs);
         state.nadir = ComputeNadir(state.pos);
 
         SatInfo si{};
-        si.pci       = entry.pci;
+        si.nci       = entry.nci;
         si.ecefDistM  = EcefDistance(gnbState.pos,   state.pos);
         si.nadirDistM = EcefDistance(gnbState.nadir, state.nadir);
         infos.push_back(si);
@@ -230,7 +230,7 @@ void GnbRrcTask::roughNeighborhoodSats()
     m_satNeighborhoodCache.clear();
     m_satNeighborhoodCache.reserve(neighborCount);
     for (size_t i = 0; i < neighborCount; ++i)
-        m_satNeighborhoodCache.push_back(infos[i].pci);
+        m_satNeighborhoodCache.push_back(infos[i].nci);
 
     // --- Step 4: top-7 by nadir distance (within the 50) → m_sib19RangeCache ---
     size_t sib19Count = std::min(neighborCount, SAT_SIB19_MAX);
@@ -244,11 +244,11 @@ void GnbRrcTask::roughNeighborhoodSats()
     m_sib19RangeCache.clear();
     m_sib19RangeCache.reserve(sib19Count);
     for (size_t i = 0; i < sib19Count; ++i)
-        m_sib19RangeCache.push_back(infos[i].pci);
+        m_sib19RangeCache.push_back(infos[i].nci);
 
     m_logger->debug("roughNeighborhoodSats: %zu neighbors cached, %zu sib19-range sats "
-                    "(own pci=%d, total tles=%zu)",
-                    neighborCount, sib19Count, ownPci, allEntries.size());
+                    "(own nci=%ld, total tles=%zu)",
+                    neighborCount, sib19Count, ownNci, allEntries.size());
 }
 
 } // namespace nr::gnb

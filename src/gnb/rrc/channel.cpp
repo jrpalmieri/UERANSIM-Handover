@@ -21,7 +21,7 @@ namespace nr::gnb
 {
 
 
-void GnbRrcTask::handleUplinkRrc(int ueId, int cRnti, rrc::RrcChannel channel, const OctetString &rrcPdu)
+void GnbRrcTask::handleUplinkRrc(int64_t ueId, int cRnti, rrc::RrcChannel channel, const OctetString &rrcPdu)
 {
 
     switch (channel)
@@ -122,7 +122,7 @@ void GnbRrcTask::sendRrcMessage(rrc::RrcChannel channel, OctetString &&pdu)
     m_base->rlsTask->push(std::move(w));
 }
 
-void GnbRrcTask::sendRrcMessage(int ueId, ASN_RRC_DL_CCCH_Message *msg)
+void GnbRrcTask::sendRrcMessage(int64_t ueId, ASN_RRC_DL_CCCH_Message *msg)
 {
     OctetString pdu = rrc::encode::EncodeS(asn_DEF_ASN_RRC_DL_CCCH_Message, msg);
     if (pdu.length() == 0)
@@ -137,8 +137,8 @@ void GnbRrcTask::sendRrcMessage(int ueId, ASN_RRC_DL_CCCH_Message *msg)
     w->pdu = std::move(pdu);
     m_base->rlsTask->push(std::move(w));
 }
-
-void GnbRrcTask::sendRrcMessage(int ueId, ASN_RRC_DL_DCCH_Message *msg)
+    
+void GnbRrcTask::sendRrcMessage(int64_t ueId, ASN_RRC_DL_DCCH_Message *msg)
 {
     OctetString pdu = rrc::encode::EncodeS(asn_DEF_ASN_RRC_DL_DCCH_Message, msg);
     if (pdu.length() == 0)
@@ -176,13 +176,13 @@ void GnbRrcTask::sendRrcMessage(ASN_RRC_PCCH_Message *msg)
  **************************************************************************/
 
 
-void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_BCCH_BCH_Message *msg)
+void GnbRrcTask::receiveRrcMessage(int64_t ueId, ASN_RRC_BCCH_BCH_Message *msg)
 {
     // TODO
 }
 
 // Handles RRCSetupRequest
-void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH_Message *msg)
+void GnbRrcTask::receiveRrcMessage(int64_t ueId, ASN_RRC_UL_CCCH_Message *msg)
 {
     if (msg->message.present != ASN_RRC_UL_CCCH_MessageType_PR_c1)
         return;
@@ -206,13 +206,13 @@ void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH_Message *msg)
     }
 }
 
-void GnbRrcTask::receiveRrcMessage(int ueId, ASN_RRC_UL_CCCH1_Message *msg)
+void GnbRrcTask::receiveRrcMessage(int64_t ueId, ASN_RRC_UL_CCCH1_Message *msg)
 {
     // TODO
 }
 
 // Handles RRCReconfigurationComplete, MeasurementReport, and ULInformationTransfer
-void GnbRrcTask::receiveRrcMessage(int ueId, int cRnti, ASN_RRC_UL_DCCH_Message *msg)
+void GnbRrcTask::receiveRrcMessage(int64_t ueId, int cRnti, ASN_RRC_UL_DCCH_Message *msg)
 {
     if (msg->message.present != ASN_RRC_UL_DCCH_MessageType_PR_c1)
         return;

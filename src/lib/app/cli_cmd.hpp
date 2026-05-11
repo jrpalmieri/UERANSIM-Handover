@@ -69,7 +69,7 @@ struct GnbCliCommand
     int amfId{};
 
     // UE_RELEASE_REQ
-    int ueId{};
+    int64_t ueId{};
 
     // SET_LOC_WGS84
     double geoLat{};

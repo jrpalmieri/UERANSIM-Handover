@@ -39,7 +39,7 @@
 namespace nr::gnb
 {
 
-void GnbRrcTask::handleDownlinkNasDelivery(int ueId, const OctetString &nasPdu)
+void GnbRrcTask::handleDownlinkNasDelivery(int64_t ueId, const OctetString &nasPdu)
 {
     auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
     pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
@@ -58,7 +58,7 @@ void GnbRrcTask::handleDownlinkNasDelivery(int ueId, const OctetString &nasPdu)
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
 }
 
-void GnbRrcTask::deliverUplinkNas(int ueId, OctetString &&nasPdu)
+void GnbRrcTask::deliverUplinkNas(int64_t ueId, OctetString &&nasPdu)
 {
     auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::UPLINK_NAS_DELIVERY);
     w->ueId = ueId;
@@ -66,14 +66,14 @@ void GnbRrcTask::deliverUplinkNas(int ueId, OctetString &&nasPdu)
     m_base->ngapTask->push(std::move(w));
 }
 
-void GnbRrcTask::receiveUplinkInformationTransfer(int ueId, const ASN_RRC_ULInformationTransfer &msg)
+void GnbRrcTask::receiveUplinkInformationTransfer(int64_t ueId, const ASN_RRC_ULInformationTransfer &msg)
 {
     if (msg.criticalExtensions.present == ASN_RRC_ULInformationTransfer__criticalExtensions_PR_ulInformationTransfer)
         deliverUplinkNas(
             ueId, asn::GetOctetString(*msg.criticalExtensions.choice.ulInformationTransfer->dedicatedNAS_Message));
 }
 
-void GnbRrcTask::releaseConnection(int ueId)
+void GnbRrcTask::releaseConnection(int64_t ueId)
 {
  
     // Send RRC Release message
@@ -86,7 +86,7 @@ void GnbRrcTask::releaseConnection(int ueId)
     rrcRelease->criticalExtensions.present = ASN_RRC_RRCRelease__criticalExtensions_PR_rrcRelease;
     rrcRelease->criticalExtensions.choice.rrcRelease = asn::New<ASN_RRC_RRCRelease_IEs>();
 
-    m_logger->info("UE[%d] Sending RRC Release message to UE", ueId);
+    m_logger->info("UE[%ld] Sending RRC Release message to UE", ueId);
 
     sendRrcMessage(ueId, pdu);
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
@@ -94,7 +94,7 @@ void GnbRrcTask::releaseConnection(int ueId)
     handoverContextRelease(ueId);
 }
 
-void GnbRrcTask::handleRadioLinkFailure(int ueId)
+void GnbRrcTask::handleRadioLinkFailure(int64_t ueId)
 {
     // Notify NGAP task
     auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::RADIO_LINK_FAILURE);

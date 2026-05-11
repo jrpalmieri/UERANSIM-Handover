@@ -42,7 +42,7 @@ struct NmGnbRlsToRrc : NtsMessage
 
     // SIGNAL_DETECTED
     // UPLINK_RRC
-    int ueId{};
+    int64_t ueId{};
 
     // SIGNAL_DETECTED
     // UPLINK_RRC
@@ -70,7 +70,7 @@ struct NmGnbRlsToGtp : NtsMessage
     } present;
 
     // DATA_PDU_DELIVERY
-    int ueId{};
+    int64_t ueId{};
     int cRnti{};
     int psi{};
     OctetString pdu;
@@ -88,7 +88,7 @@ struct NmGnbGtpToRls : NtsMessage
     } present;
 
     // DATA_PDU_DELIVERY
-    int ueId{};
+    int64_t ueId{};
     int cRnti{};
     int psi{};
     OctetString pdu{};
@@ -119,7 +119,7 @@ struct NmGnbRlsToRls : NtsMessage
     // DOWNLINK_DATA
     // UPLINK_DATA
     // UPLINK_RRC
-    int ueId{};
+    int64_t ueId{};
 
     // SIGNAL_DETECTED
     // UPLINK_DATA
@@ -165,7 +165,7 @@ struct NmGnbRrcToRls : NtsMessage
     } present;
 
     // RRC_PDU_DELIVERY
-    int ueId{};
+    int64_t ueId{};
     int cRnti{};
     rrc::RrcChannel channel{};
     OctetString pdu{};
@@ -191,13 +191,13 @@ struct NmGnbNgapToRrc : NtsMessage
 
     // HANDOVER_COMMAND_DELIVERY
     OctetString rrcContainer{};
-    int hoTargetPci{};
+    int64_t hoTargetNci{};
     int hoNewCrnti{};
     bool hoForChoPreparation{};
 
     // NAS_DELIVERY
     // AN_RELEASE
-    int ueId{};
+    int64_t ueId{};
     int cRnti{};
 
     // NAS_DELIVERY
@@ -224,8 +224,7 @@ struct NmGnbRrcToNgap : NtsMessage
     } present;
 
     // HANDOVER_REQUIRED
-    int hoTargetPci{};
-    int hoTargetNci{};
+    int64_t hoTargetNci{};
     NgapCause hoCause{};
     bool hoForChoPreparation{};
     int retries=0;
@@ -233,7 +232,7 @@ struct NmGnbRrcToNgap : NtsMessage
     // INITIAL_NAS_DELIVERY
     // UPLINK_NAS_DELIVERY
     // RADIO_LINK_FAILURE
-    int ueId{};
+    int64_t ueId{};
     int cRnti{};
 
     // INITIAL_NAS_DELIVERY
@@ -267,7 +266,7 @@ struct NmGnbNgapToGtp : NtsMessage
 
     // UE_CONTEXT_RELEASE
     // SESSION_RELEASE
-    int ueId{};
+    int64_t ueId{};
     int cRnti{};
 
 
@@ -289,10 +288,10 @@ struct NmGnbRrcToXn : NtsMessage
 
     // HANDOVER_REQUIRED_XN
     // HANDOVER_COMPLETE_XN
-    int ueId{};
+    int64_t ueId{};
 
     // HANDOVER_REQUIRED_XN
-    int hoTargetPci{};
+    int64_t hoTargetNci{};
     NgapCause hoCause{};
 
     explicit NmGnbRrcToXn(PR present) : NtsMessage(NtsMessageType::GNB_RRC_TO_XN), present(present)
@@ -312,10 +311,10 @@ struct NmGnbXnToRrc : NtsMessage
     // HANDOVER_COMMAND_READY
     // HANDOVER_PREP_FAILURE
     // SOURCE_CONTEXT_RELEASE
-    int ueId{};
+    int64_t ueId{};
 
     // HANDOVER_COMMAND_READY
-    int targetPci{};
+    int64_t targetNci{};
     int newCrnti{};
     int t304Ms{};
 
@@ -335,7 +334,7 @@ struct NmGnbXnToNgap : NtsMessage
     } present;
 
     // PATH_SWITCH_REQUEST_REQUIRED
-    int ueId{};
+    int64_t ueId{};
 
     explicit NmGnbXnToNgap(PR present) : NtsMessage(NtsMessageType::GNB_XN_TO_NGAP), present(present)
     {
@@ -350,7 +349,7 @@ struct NmGnbNgapToXn : NtsMessage
     } present;
 
     // PATH_SWITCH_ACK
-    int ueId{};
+    int64_t ueId{};
     bool success{};
 
     explicit NmGnbNgapToXn(PR present) : NtsMessage(NtsMessageType::GNB_NGAP_TO_XN), present(present)

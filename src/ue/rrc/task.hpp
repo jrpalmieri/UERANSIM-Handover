@@ -59,7 +59,7 @@ class UeRrcTask : public NtsTask
     UeMeasConfig m_measConfig{};  // Current list of measurement identities from network
     bool m_handoverInProgress{};  // flag to indicate a handover is in progress
     long m_hoTxId{};             // RRC transaction ID of the pending handover
-    int64_t m_hoTargetPci{};        // Target cell PCI from ReconfigurationWithSync
+    int64_t m_hoTargetNci{};        // Target cell NCI from ReconfigurationWithSync
     bool m_measurementEvalSuspended{};  // measurements paused during handover
 
     /* Conditional Handover (CHO) state */
@@ -155,7 +155,6 @@ class UeRrcTask : public NtsTask
     /* Handover execution */
     void performHandover(long txId, int64_t targetCellId, int newCRNTI,
                          int t304Ms, bool hasRachConfig = false);
-    int  findCellByPci(int physCellId);
     void handleT304Expiry();
     void suspendMeasurements();
     void resumeMeasurements();

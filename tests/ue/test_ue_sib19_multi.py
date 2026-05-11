@@ -17,7 +17,7 @@ def _build_sib19_multi_payload(entries: list[dict]) -> bytes:
 
     for i, entry in enumerate(entries):
         base = 8 + i * 96
-        struct.pack_into("<i", payload, base, int(entry["pci"]))
+        struct.pack_into("<l", payload, base, int(entry["nci"]))
         struct.pack_into("<d", payload, base + 4, float(entry["x"]))
         struct.pack_into("<d", payload, base + 12, float(entry["y"]))
         struct.pack_into("<d", payload, base + 20, float(entry["z"]))
@@ -39,7 +39,7 @@ def _build_sib19_multi_payload(entries: list[dict]) -> bytes:
 
 @ue_binary_exists
 class TestUeSib19Multi:
-    def test_ue_parses_multi_entry_sib19_and_keeps_pci_map(self, ue_process, fake_gnb):
+    def test_ue_parses_multi_entry_sib19_and_keeps_nci_map(self, ue_process, fake_gnb):
         ue_process.start()
         assert fake_gnb.wait_for_heartbeat(timeout_s=10)
 
@@ -50,7 +50,7 @@ class TestUeSib19Multi:
         epoch10ms = int(time.time() * 100)
         pdu = _build_sib19_multi_payload([
             {
-                "pci": 1,
+                "nci": 1,
                 "x": 1000.0,
                 "y": 2000.0,
                 "z": 3000.0,
@@ -68,7 +68,7 @@ class TestUeSib19Multi:
                 "taDrift": 19,
             },
             {
-                "pci": 222,
+                "nci": 222,
                 "x": 1100.0,
                 "y": 2200.0,
                 "z": 3300.0,
@@ -89,5 +89,5 @@ class TestUeSib19Multi:
 
         fake_gnb.send_rrc(RrcChannel.DL_SIB19, pdu)
 
-        # Parser log includes the count from entriesByPci, proving multi-entry map storage.
-        assert ue_process.wait_for_log(r"SIB19 received for cell 1: multi-entry count=2 selectedPci=1", timeout_s=8)
+        # Parser log includes the count from entriesByNci, proving multi-entry map storage.
+        assert ue_process.wait_for_log(r"SIB19 received for cell 1: multi-entry count=2 selectedNci=1", timeout_s=8)

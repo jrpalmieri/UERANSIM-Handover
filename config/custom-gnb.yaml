@@ -6,9 +6,9 @@ idLength: 32        # NR gNB ID length in bits [22...32]
 tac: 1              # Tracking Area Code
 
 # Optional staged node name template (preview only, not active yet):
-# Supported gNB token: {pci}
+# Supported gNB token: {nci}
 # Example result for this file: gnb-16
-# nodeNameTemplate: 'gnb-{pci}'
+# nodeNameTemplate: 'gnb-{nci}'
 
 linkIp: 127.0.0.1   # gNB's local IP address for Radio Link Simulation (Usually same with local IP)
 ngapIp: 127.0.0.1   # gNB's local IP address for N2 Interface (Usually same with local IP)

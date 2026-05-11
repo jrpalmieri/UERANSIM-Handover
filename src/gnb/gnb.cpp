@@ -44,8 +44,6 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     GnbStatusInfoUpdate update{};
     update.nciIsPresent = true;
     update.nci = config->nci;
-    update.pciIsPresent = true;
-    update.pci = cons::getPciFromNci(config->nci);
     base->setGnbStatusInfo(update);
 
     // set initial gnb position from config
@@ -59,7 +57,7 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     // load from config if present
     if (config->ntn.ownTle.has_value()){
         base->satStates->upsert(config->ntn.ownTle.value());
-        m_logger->info("Loaded own TLE from config (pci=%d)", config->ntn.ownTle->pci);
+        m_logger->info("Loaded own TLE from config (nci=%ld)", config->ntn.ownTle->nci);
 
     }
 

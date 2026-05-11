@@ -30,7 +30,7 @@ class GtpTask : public NtsTask
     std::unique_ptr<Logger> m_logger;
 
     udp::UdpServerTask *m_udpServer;
-    std::unordered_map<int, std::unique_ptr<GtpUeContext>> m_ueContexts;
+    std::unordered_map<int64_t, std::unique_ptr<GtpUeContext>> m_ueContexts;
     std::unique_ptr<IRateLimiter> m_rateLimiter;
     std::unordered_map<uint64_t, std::unique_ptr<PduSessionResource>> m_pduSessions;
     PduSessionTree m_sessionTree;
@@ -50,11 +50,11 @@ class GtpTask : public NtsTask
     void handleUdpReceive(const udp::NwUdpServerReceive &msg);
     void handleUeContextUpdate(const GtpUeContextUpdate &msg);
     void handleSessionCreate(PduSessionResource *session);
-    void handleSessionRelease(int ueId, int psi);
-    void handleUeContextDelete(int ueId);
-    void handleUplinkData(int ueId, int psi, OctetString &&data);
+    void handleSessionRelease(int64_t ueId, int psi);
+    void handleUeContextDelete(int64_t ueId);
+    void handleUplinkData(int64_t ueId, int psi, OctetString &&data);
 
-    void updateAmbrForUe(int ueId);
+    void updateAmbrForUe(int64_t ueId);
     void updateAmbrForSession(uint64_t pduSession);
 };
 

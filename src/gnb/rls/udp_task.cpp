@@ -32,10 +32,16 @@
 
 static constexpr const int BUFFER_SIZE = 16384;
 
-static constexpr const int MIN_ALLOWED_DBM = -120;
+//static constexpr const int MIN_ALLOWED_DBM = -120;
 
 namespace nr::gnb
 {
+
+static int64_t getUeIdFromSti(uint64_t sti)
+{
+    // STI contains the UeId (Supi) in the high order bits (above bit 9)
+    return static_cast<int64_t>(sti >> 10);
+}
 
 RlsUdpTask::RlsUdpTask(TaskBase *base, uint64_t sti,
                         Vector3 phyLocation)
@@ -109,6 +115,7 @@ void RlsUdpTask::receiveRlsPdu(
 {
 
     int64_t currentTime = utils::CurrentTimeMillis();
+    int64_t ueId = getUeIdFromSti(msg->sti);
 
     // UEs provide heartbeat messages to on-net GNBs with their STI and simulated position.
     //   The gNB responds with a simulated RSRP value. The gNB also tracks the UE's address 
@@ -120,40 +127,21 @@ void RlsUdpTask::receiveRlsPdu(
     {
         auto &hb = static_cast<const rls::RlsHeartBeat &>(*msg);
 
-        int ueId = 0;
         bool isNewUe = false;
         {
             // add a lock here to protect against use by the send function while updating
             std::lock_guard<std::mutex> lock(m_ueMutex);
 
-            // if the STI is in the the stiToUE Map, update the UE info in the UE Map with the
-            // provided address and set its last seen time to now.
-            if (m_stiToUe.count(msg->sti))
-            {
-                ueId = m_stiToUe[msg->sti];
-                m_ueMap[ueId].address = addr;
-                if (msg->senderId2 != 0)
-                    m_ueMap[ueId].cRnti = static_cast<int>(msg->senderId2);
-                m_ueMap[ueId].lastSeen    = currentTime;
-                m_ueMap[ueId].lastPos     = hb.simPos;
-                m_ueMap[ueId].hasPosData  = true;
-            }
-            // If the STI is not in the stiToUE Map, add it and assign it a UE ID.
-            else
-            {
-                // although this ternary allows for a gnb-generated UEID, in practice this should
-                // never happen as the RLS packet format always includes the senderID.
-                ueId = msg->senderId != 0 ? static_cast<int>(msg->senderId) : ++m_newIdCounter;
+            isNewUe = m_stiToUe[msg->sti] == 0;
 
-                m_stiToUe[msg->sti] = ueId;
-                m_ueMap[ueId].sti        = msg->sti;
-                m_ueMap[ueId].address    = addr;
-                m_ueMap[ueId].cRnti      = static_cast<int>(msg->senderId2);
-                m_ueMap[ueId].lastSeen   = currentTime;
-                m_ueMap[ueId].lastPos    = hb.simPos;
-                m_ueMap[ueId].hasPosData = true;
-                isNewUe = true;
-            }
+            m_stiToUe[msg->sti] = ueId;
+
+            m_ueMap[ueId].ueId = ueId;
+            m_ueMap[ueId].sti        = msg->sti;
+            m_ueMap[ueId].address = addr;
+            m_ueMap[ueId].lastSeen    = currentTime;
+            m_ueMap[ueId].lastPos     = hb.simPos;
+            m_ueMap[ueId].hasPosData  = true;
         }
 
         // For newly seen UEs, push a SIGNAL_DETECTED message to the control task with the new UE ID, which will
@@ -165,12 +153,11 @@ void RlsUdpTask::receiveRlsPdu(
         {
             auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::SIGNAL_DETECTED);
             w->ueId = ueId;
-            w->cRnti = static_cast<int>(msg->senderId2);
             m_ctlTask->push(std::move(w));
         }
 
         // Send a HEARTBEAT_ACK back to the sender with the simulated signal strength in dBm
-        rls::RlsHeartBeatAck ack{m_sti, m_cellId};
+        rls::RlsHeartBeatAck ack{m_sti};
 
         // compute the RSRP in dBm
         ack.dbm = computeDbm(hb.simPos, ueId);
@@ -182,24 +169,16 @@ void RlsUdpTask::receiveRlsPdu(
         return;
     }
 
-    // Derive the UeID and C-RNTI from the message's STI and senderId2, respectively, and update the UE info with the new C-RNTI if provided.
-    int ueId = 0;
-    int cRnti = static_cast<int>(msg->senderId2);
+    // if no HB received yet, and the message is not HB, then ignore the message
+    if (!m_stiToUe.count(msg->sti))
+    {
+        return;
+    }
+
     GeoPosition uePos{};
     bool hasPosData = false;
     {
         std::lock_guard<std::mutex> lock(m_ueMutex);
-        if (!m_stiToUe.count(msg->sti))
-        {
-            // if no HB received yet, and the message is not HB, then ignore the message
-            return;
-        }
-
-        ueId = m_stiToUe[msg->sti];
-
-        // update the cRnti (catches the RRC assignment)
-        if (msg->senderId2 != 0)
-            m_ueMap[ueId].cRnti = cRnti;
 
         // snapshot the last known UE position for this message
         uePos      = m_ueMap[ueId].lastPos;
@@ -212,11 +191,10 @@ void RlsUdpTask::receiveRlsPdu(
     if (hasPosData)
         m_base->setUePosition(ueId, uePos, currentTime);
 
-    //  Forward it to the control task for processing, including the UE ID, C-RNTI, and last known UE position.
+    //  Forward it to the control task for processing, including the UE ID.
     auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RECEIVE_RLS_MESSAGE);
     w->ueId       = ueId;
     w->msg        = std::move(msg);
-    w->cRnti      = cRnti;
     m_ctlTask->push(std::move(w));
 }
 
@@ -230,7 +208,7 @@ void RlsUdpTask::sendRlsPdu(const InetAddress &addr, const rls::RlsMessage &msg)
 
 void RlsUdpTask::heartbeatCycle(int64_t time)
 {
-    std::set<int> lostUeId{};
+    std::set<int64_t> lostUeId{};
     std::set<uint64_t> lostSti{};
 
     {
@@ -247,11 +225,11 @@ void RlsUdpTask::heartbeatCycle(int64_t time)
         for (uint64_t sti : lostSti)
             m_stiToUe.erase(sti);
 
-        for (int lostId : lostUeId)
+        for (int64_t lostId : lostUeId)
             m_ueMap.erase(lostId);
     }
 
-    for (int lostId : lostUeId)
+    for (int64_t lostId : lostUeId)
     {
         auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::SIGNAL_LOST);
         w->ueId = lostId;
@@ -264,8 +242,9 @@ void RlsUdpTask::initialize(NtsTask *ctlTask)
     m_ctlTask = ctlTask;
 }
 
-void RlsUdpTask::send(int ueId, const rls::RlsMessage &msg)
+void RlsUdpTask::send(int64_t ueId, const rls::RlsMessage &msg)
 {
+    // UeId == 0 : send to all UEs (broadcast)
     if (ueId == 0)
     {
         std::vector<InetAddress> broadcastPeers;
@@ -305,7 +284,7 @@ void RlsUdpTask::send(int ueId, const rls::RlsMessage &msg)
  * @param uePos - UE's current position in lat/lon/alt, which is provided by the UE in the heartbeat message
  * @return int - RSRP in dbm
  */
-int RlsUdpTask::computeDbm(const GeoPosition &uePos, int ueId)
+int RlsUdpTask::computeDbm(const GeoPosition &uePos, int64_t ueId)
 {
     auto *cfg = m_base->config;
     int dbm = 0;
@@ -332,7 +311,7 @@ int RlsUdpTask::computeDbm(const GeoPosition &uePos, int ueId)
     //   debug log this to help with testing and verification
     if (dbm < cons::MIN_RSRP) 
     {
-        m_logger->debug("UE[%d} - below horizon, clamping to min RSRP %d dBm.", ueId, cons::MIN_RSRP);
+        m_logger->debug("UE[%ld} - below horizon, clamping to min RSRP %d dBm.", ueId, cons::MIN_RSRP);
         dbm = cons::MIN_RSRP;
     }
     return dbm;

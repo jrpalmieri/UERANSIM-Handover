@@ -16,10 +16,18 @@
 namespace nr::gnb
 {
 
+static uint64_t generateSti(int64_t nci)
+{
+    // STI for gNB is created as NCI as high-order bits above bit 9,
+    //   and a random value as low-order bits.
+    //   Use the current time as the random seed.
+    return (static_cast<uint64_t>(nci) << 10) | Random::Mixed(utils::CurrentTimeMillis()).nextUL() & 0x3FF;
+}
+
 GnbRlsTask::GnbRlsTask(TaskBase *base) : m_base{base}
 {
     m_logger = m_base->logBase->makeUniqueLogger("rls");
-    m_sti = Random::Mixed(base->config->name).nextUL();
+    m_sti = generateSti(base->config->nci);
 
     m_udpTask = new RlsUdpTask(base, m_sti,
                                 base->config->phyLocation);
