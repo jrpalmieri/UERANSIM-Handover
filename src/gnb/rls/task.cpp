@@ -21,7 +21,8 @@ static uint64_t generateSti(int64_t nci)
     // STI for gNB is created as NCI as high-order bits above bit 9,
     //   and a random value as low-order bits.
     //   Use the current time as the random seed.
-    return (static_cast<uint64_t>(nci) << 10) | Random::Mixed(utils::CurrentTimeMillis()).nextUL() & 0x3FF;
+    //return (static_cast<uint64_t>(nci) << 10) | (Random::Mixed(utils::CurrentTimeMillis()).nextUL() & 0x3FF);
+    return (static_cast<uint64_t>(nci) << 10) + Random::Mixed(utils::CurrentTimeMillis()).nextI(0, 1024);
 }
 
 GnbRlsTask::GnbRlsTask(TaskBase *base) : m_base{base}

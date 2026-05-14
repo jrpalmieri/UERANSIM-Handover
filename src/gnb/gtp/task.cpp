@@ -99,22 +99,28 @@ void GtpTask::onLoop()
 
 void GtpTask::handleUeContextUpdate(const GtpUeContextUpdate &msg)
 {
+    m_logger->debug("UE[%ld]: Context update received. isCreate=%d, AMBR: UL=%lu bps, DL=%lu bps",
+        msg.ueId, msg.isCreate, msg.ueAmbr.ulAmbr, msg.ueAmbr.dlAmbr);
+        
     if (!m_ueContexts.count(msg.ueId))
+    {
         m_ueContexts[msg.ueId] = std::make_unique<GtpUeContext>(msg.ueId);
+        m_logger->debug("UE[%ld]: New GTP context created.", msg.ueId);
+    }
 
     auto &ue = m_ueContexts[msg.ueId];
     ue->ueAmbr = msg.ueAmbr;
 
     updateAmbrForUe(ue->ueId);
 
-    m_logger->debug("UE[%d] Context updated. AMBR: UL=%lu bps, DL=%lu bps", ue->ueId, ue->ueAmbr.ulAmbr, ue->ueAmbr.dlAmbr);
+    m_logger->debug("UE[%ld]: Context updated. AMBR: UL=%lu bps, DL=%lu bps", ue->ueId, ue->ueAmbr.ulAmbr, ue->ueAmbr.dlAmbr);
 }
 
 void GtpTask::handleSessionCreate(PduSessionResource *session)
 {
     if (!m_ueContexts.count(session->ueId))
     {
-        m_logger->err("UE[%d] PDU session resource could not be created, UE context not found", session->ueId);
+        m_logger->err("UE[%ld] PDU session resource could not be created, UE context not found", session->ueId);
         return;
     }
 
@@ -129,14 +135,14 @@ void GtpTask::handleSessionCreate(PduSessionResource *session)
     updateAmbrForUe(session->ueId);
     updateAmbrForSession(sessionInd);
 
-    m_logger->debug("UE[%d] PDU session resource created. PSI[%d]", session->ueId, session->psi);
+    m_logger->debug("UE[%ld] PDU session resource created. PSI[%d]", session->ueId, session->psi);
 }
 
 void GtpTask::handleSessionRelease(int64_t ueId, int psi)
 {
     if (!m_ueContexts.count(ueId))
     {
-        m_logger->err("UE[%d] PDU session resource could not be released, UE context not found", ueId);
+        m_logger->err("UE[%ld] PDU session resource could not be released, UE context not found", ueId);
         return;
     }
 
@@ -156,7 +162,7 @@ void GtpTask::handleSessionRelease(int64_t ueId, int psi)
         m_sessionTree.remove(sessionInd, teid);
     }
 
-    m_logger->debug("UE[%d] PDU session resource released. PSI[%d]", ueId, psi);
+    m_logger->debug("UE[%ld] PDU session resource released. PSI[%d]", ueId, psi);
 }
 
 void GtpTask::handleUeContextDelete(int64_t ueId)
@@ -188,7 +194,7 @@ void GtpTask::handleUeContextDelete(int64_t ueId)
     // Remove UE context
     m_ueContexts.erase(ueId);
 
-    m_logger->debug("UE[%d] Context(s) deleted [count=%d]", ueId, count);
+    m_logger->debug("UE[%ld] Context(s) deleted [count=%d]", ueId, count);
 }
 
 void GtpTask::handleUplinkData(int64_t ueId, int psi, OctetString &&pdu)
@@ -203,7 +209,7 @@ void GtpTask::handleUplinkData(int64_t ueId, int psi, OctetString &&pdu)
 
     if (!m_pduSessions.count(sessionInd))
     {
-        m_logger->err("UE[%d] Uplink data failure, PDU session not found. PSI[%d]", ueId, psi);
+        m_logger->err("UE[%ld] Uplink data failure, PDU session not found. PSI[%d]", ueId, psi);
         return;
     }
 
@@ -226,11 +232,11 @@ void GtpTask::handleUplinkData(int64_t ueId, int psi, OctetString &&pdu)
 
         OctetString gtpPdu;
         if (!gtp::EncodeGtpMessage(gtp, gtpPdu))
-            m_logger->err("UE[%d] Uplink data failure, GTP encoding failed", ueId);
+            m_logger->err("UE[%ld] Uplink data failure, GTP encoding failed", ueId);
         else
         {
             auto ip_addr = InetAddress(pduSession->upTunnel.address, cons::GtpPort);
-            m_logger->debug("UE[%d] Uplink GTP data sent. ip=[%s], port=[%d], TEID=[%u]", ueId, ip_addr.getIpAddrString().c_str(), cons::GtpPort, gtp.teid);
+            m_logger->debug("UE[%ld] Uplink GTP data sent. ip=[%s], port=[%d], TEID=[%u]", ueId, ip_addr.getIpAddrString().c_str(), cons::GtpPort, gtp.teid);
 
             m_udpServer->send(ip_addr, gtpPdu);
         }
@@ -254,7 +260,7 @@ void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
 
         if (m_rateLimiter->allowDownlinkPacket(sessionInd, gtp->payload.length()))
         {
-            m_logger->debug("UE[%d] Downlink GTP data received. TEID=[%u], payload_size=[%zu]", GetUeId(sessionInd), gtp->teid, gtp->payload.length());
+            m_logger->debug("UE[%ld] Downlink GTP data received. TEID=[%u], payload_size=[%zu]", GetUeId(sessionInd), gtp->teid, gtp->payload.length());
             auto w = std::make_unique<NmGnbGtpToRls>(NmGnbGtpToRls::DATA_PDU_DELIVERY);
             w->ueId = GetUeId(sessionInd);
             w->psi = GetPsi(sessionInd);

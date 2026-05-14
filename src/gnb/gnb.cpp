@@ -38,7 +38,8 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
 
     auto m_logger = base->logBase->makeUniqueLogger("gnb");
 
-    m_logger->info("GNodeB object created with gNB ID %u, Cell ID %d, TAC %d", config->getGnbId(), config->getCellId(), config->tac);
+    m_logger->info("GNodeB object created with NCI=%u (gNB ID=%d, cell ID=%d), TAC=%d", 
+        config->nci, config->getGnbId(), config->getCellId(), config->tac);
 
     // put the ids in the status info so they are easily available for CLI commands
     GnbStatusInfoUpdate update{};
@@ -55,10 +56,10 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
     // create storage object for Two-Line Elements
     base->satStates = new nr::sat::SatStates();
     // load from config if present
-    if (config->ntn.ownTle.has_value()){
+    if (config->ntn.ownTle.has_value())
+    {
         base->satStates->upsert(config->ntn.ownTle.value());
         m_logger->info("Loaded own TLE from config (nci=%ld)", config->ntn.ownTle->nci);
-
     }
 
     // initialize the sat clock

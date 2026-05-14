@@ -80,6 +80,9 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
     // User plane - Initial context setup
     auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_UPDATE);
     w->update = std::make_unique<GtpUeContextUpdate>(true, ue->ctxId, ue->ueAmbr);
+    w->ueId = ue->ctxId;
+    m_logger->debug("UE[%ld] Initial Context Setup: sending UE_CONTEXT_UPDATE to GTP with AMBR UL=%lu bps, DL=%lu bps", 
+        w->update->ueId, w->update->ueAmbr.ulAmbr, w->update->ueAmbr.dlAmbr);
     m_base->gtpTask->push(std::move(w));
 
     // Extract User Plane information.

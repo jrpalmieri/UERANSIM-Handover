@@ -49,9 +49,15 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
     if (ue == nullptr)
         return;
 
+    m_logger->info("UE[%ld]: Received PDU session resource setup request with %d items", ue->ctxId, 
+        msg->protocolIEs.list.count);
+
     auto *ieList = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceSetupListSUReq);
     if (ieList)
     {
+        m_logger->debug("UE[%ld]: Processing IE PDU session resource setup list", ue->ctxId, 
+            ieList->PDUSessionResourceSetupListSUReq.list.count);
+
         auto &list = ieList->PDUSessionResourceSetupListSUReq.list;
         for (int i = 0; i < list.count; i++)
         {
@@ -61,7 +67,7 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
             if (transfer == nullptr)
             {
                 m_logger->err(
-                    "Unable to decode a PDU session resource setup request transfer. Ignoring the relevant item");
+                    "UE[%ld]: Unable to decode a PDU session resource setup request transfer. Ignoring the relevant item", ue->ctxId);
                 asn::Free(asn_DEF_ASN_NGAP_PDUSessionResourceSetupRequestTransfer, transfer);
                 continue;
             }
@@ -106,6 +112,7 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
                 resource->qosFlows = asn::WrapUnique(ptr, asn_DEF_ASN_NGAP_QosFlowSetupRequestList);
             }
 
+            m_logger->debug("UE[%ld]: Processing PDU session resource setup request item with PSI=%d", ue->ctxId, resource->psi);
             auto error = setupPduSessionResource(ue, resource);
             if (error.has_value())
             {
@@ -128,6 +135,7 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
             }
             else
             {
+                m_logger->debug("UE[%ld]: PDU session resource setup successful with PSI=%d", ue->ctxId, resource->psi);
                 if (item->pDUSessionNAS_PDU)
                     deliverDownlinkNas(ue->ctxId, asn::GetOctetString(*item->pDUSessionNAS_PDU));
 
@@ -168,7 +176,10 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
 
     auto *ieNasPdu = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_NAS_PDU);
     if (ieNasPdu)
+    {
+        m_logger->debug("UE[%ld]: Processing IE NAS PDU", ue->ctxId);
         deliverDownlinkNas(ue->ctxId, asn::GetOctetString(ieNasPdu->NAS_PDU));
+    }
 
     std::vector<ASN_NGAP_PDUSessionResourceSetupResponseIEs *> responseIes;
 
@@ -203,13 +214,13 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
     sendNgapUeAssociated(ue->ctxId, respPdu);
 
     if (failedList.empty())
-        m_logger->info("UE[%d] PDU session resource(s) setup count[%d]", ue->ctxId,
+        m_logger->info("UE[%ld] PDU session resource(s) setup count[%d]", ue->ctxId,
                        static_cast<int>(successList.size()));
     else if (successList.empty())
-        m_logger->err("UE[%d] PDU session resource(s) setup failed count[%d]", ue->ctxId,
+        m_logger->err("UE[%ld] PDU session resource(s) setup failed count[%d]", ue->ctxId,
                       static_cast<int>(failedList.size()));
     else
-        m_logger->err("UE[%d] PDU session establishment partially successful success[%d] failed[%d]",
+        m_logger->err("UE[%ld] PDU session establishment partially successful success[%d] failed[%d]",
                       ue->ctxId,
                       static_cast<int>(successList.size()), static_cast<int>(failedList.size()));
 }
@@ -226,19 +237,19 @@ std::optional<NgapCause> NgapTask::setupPduSessionResource(NgapUeContext *ue, Pd
 {
     if (resource->sessionType != PduSessionType::IPv4)
     {
-        m_logger->err("PDU session resource could not setup: Only IPv4 is supported");
+        m_logger->err("UE[%ld]: PDU session resource could not setup: Only IPv4 is supported", ue->ctxId);
         return NgapCause::RadioNetwork_unspecified;
     }
 
     if (resource->upTunnel.address.length() == 0)
     {
-        m_logger->err("PDU session resource could not setup: Uplink TNL information is missing");
+        m_logger->err("UE[%ld]: PDU session resource could not setup: Uplink TNL information is missing", ue->ctxId);
         return NgapCause::Protocol_transfer_syntax_error;
     }
 
     if (resource->qosFlows == nullptr || resource->qosFlows->list.count == 0)
     {
-        m_logger->err("PDU session resource could not setup: QoS flow list is null or empty");
+        m_logger->err("UE[%ld]: PDU session resource could not setup: QoS flow list is null or empty", ue->ctxId);
         return NgapCause::Protocol_semantic_error;
     }
 
@@ -253,6 +264,8 @@ std::optional<NgapCause> NgapTask::setupPduSessionResource(NgapUeContext *ue, Pd
 
     // Add the PDUSessionID to the UE's session list
     ue->pduSessions.insert(resource->psi);
+    m_logger->debug("UE[%ld]: PDU session resource setup, added to session list with PSI=%d",
+        ue->ctxId, resource->psi);
 
     return {};
 }

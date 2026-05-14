@@ -26,8 +26,7 @@ static uint64_t makeSti(const Supi supi)
 {
     const auto &imsi =supi.value;
     // IMSI is a 15-char decimal string; convert to uint64
-    uint64_t sti = static_cast<uint64_t>(
-        std::stoul(imsi));
+    uint64_t sti = static_cast<uint64_t>(std::stoul(imsi));
 
     // shift left by 10 bits
     sti <<= 10;
