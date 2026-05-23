@@ -77,6 +77,7 @@ void GtpTask::onLoop()
         }
         break;
     }
+    // uplink from UE
     case NtsMessageType::GNB_RLS_TO_GTP: {
         auto &w = dynamic_cast<NmGnbRlsToGtp &>(*msg);
         switch (w.present)
@@ -88,6 +89,7 @@ void GtpTask::onLoop()
         }
         break;
     }
+    // downlink to UE
     case NtsMessageType::UDP_SERVER_RECEIVE:
         handleUdpReceive(dynamic_cast<udp::NwUdpServerReceive &>(*msg));
         break;
@@ -136,6 +138,7 @@ void GtpTask::handleSessionCreate(PduSessionResource *session)
     updateAmbrForSession(sessionInd);
 
     m_logger->debug("UE[%ld] PDU session resource created. PSI[%d]", session->ueId, session->psi);
+
 }
 
 void GtpTask::handleSessionRelease(int64_t ueId, int psi)
@@ -163,6 +166,7 @@ void GtpTask::handleSessionRelease(int64_t ueId, int psi)
     }
 
     m_logger->debug("UE[%ld] PDU session resource released. PSI[%d]", ueId, psi);
+
 }
 
 void GtpTask::handleUeContextDelete(int64_t ueId)
@@ -243,6 +247,7 @@ void GtpTask::handleUplinkData(int64_t ueId, int psi, OctetString &&pdu)
     }
 }
 
+// Downlink PDU delivery to UE
 void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
 {
     OctetView buffer{msg.packet};
@@ -251,6 +256,7 @@ void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
     switch (gtp->msgType)
     {
     case gtp::GtpMessage::MT_G_PDU: {
+        // find the session Id using the TEID in the GTP header
         auto sessionInd = m_sessionTree.findByDownTeid(gtp->teid);
         if (sessionInd == 0)
         {
@@ -258,15 +264,42 @@ void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
             return;
         }
 
-        if (m_rateLimiter->allowDownlinkPacket(sessionInd, gtp->payload.length()))
+        m_logger->debug("UE[%ld] Downlink GTP data received. TEID=[%u], payload_size=[%zu]", GetUeId(sessionInd), gtp->teid, gtp->payload.length());
+
+        // check if this session is part of a handover.  If so, forward to the GTP-U tunnel set up to the target gNB instead of sending to RLS
+        // TODO: add handover logic
+
+        // apply the brute-force rate limiter - drops packets if the session or UE has exceeded the AMBR
+        if (!m_rateLimiter->allowDownlinkPacket(sessionInd, gtp->payload.length()))
         {
-            m_logger->debug("UE[%ld] Downlink GTP data received. TEID=[%u], payload_size=[%zu]", GetUeId(sessionInd), gtp->teid, gtp->payload.length());
-            auto w = std::make_unique<NmGnbGtpToRls>(NmGnbGtpToRls::DATA_PDU_DELIVERY);
-            w->ueId = GetUeId(sessionInd);
-            w->psi = GetPsi(sessionInd);
-            w->pdu = std::move(gtp->payload);
-            m_base->rlsTask->push(std::move(w));
+            m_logger->debug("UE[%ld] Downlink packet dropped by rate limiter. SessionInd=[%lu], payload_size=[%zu]", GetUeId(sessionInd), sessionInd, gtp->payload.length());
+            return;
         }
+
+        // get the QFI for this packet from the GTP-U extension header, if it exists
+        int qfi = -1;
+        for (auto &ext : gtp->extHeaders)
+        {
+            if (ext->type == gtp::ExtHeaderType::PduSessionContainerExtHeader)
+            {
+                auto &pduCont = dynamic_cast<gtp::PduSessionContainerExtHeader &>(*ext);
+                // this should be a downlink packet
+                if (pduCont.pduSessionInformation->pduType == gtp::PduSessionInformation::PDU_TYPE_DL)
+                {
+                    auto &dlInfo = dynamic_cast<gtp::DlPduSessionInformation &>(*pduCont.pduSessionInformation);
+                    qfi = dlInfo.qfi;
+                }
+            }
+        }
+
+            
+        // send to RLS for transport to UE
+        auto w = std::make_unique<NmGnbGtpToRls>(NmGnbGtpToRls::DATA_PDU_DELIVERY);
+        w->ueId = GetUeId(sessionInd);
+        w->psi = GetPsi(sessionInd);
+        w->qfi = qfi;
+        w->pdu = std::move(gtp->payload);
+        m_base->rlsTask->push(std::move(w));
         return;
     }
     case gtp::GtpMessage::MT_ECHO_REQUEST: {
@@ -284,6 +317,9 @@ void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
     }
     case gtp::GtpMessage::MT_END_MARKER: {
         m_logger->debug("Received GTP-U End Marker for TEID %u", gtp->teid);
+
+        // TODO: handover logic
+
         return;
     }
     default: {
@@ -311,6 +347,43 @@ void GtpTask::updateAmbrForSession(uint64_t pduSession)
     auto &sess = m_pduSessions[pduSession];
     m_rateLimiter->updateSessionUplinkLimit(pduSession, sess->sessionAmbr.ulAmbr);
     m_rateLimiter->updateSessionDownlinkLimit(pduSession, sess->sessionAmbr.dlAmbr);
+}
+
+// returns a copy of the current UE context for the given UE ID.
+//  If no context exists for the given UE ID, returns false.
+bool GtpTask::getUeContext(int64_t ueId, std::optional<GtpUeContext> &out)
+{
+    auto it = m_ueContexts.find(ueId);
+    if (it != m_ueContexts.end())
+    {
+        out.emplace(*it->second);
+        return true;
+    }
+    return false;
+}
+
+PduSessionResource *GtpTask::getPduSession(int64_t ueId, int psi)
+{
+    uint64_t key = MakeSessionResInd(ueId, psi);
+    auto it = m_pduSessions.find(key);
+    if (it == m_pduSessions.end())
+        return nullptr;
+    return it->second.get();
+}
+
+bool GtpTask::getPduSessions(int64_t ueId, std::vector<PduSessionResource *> &out)
+{
+    std::vector<uint64_t> sessionInds;
+    m_sessionTree.enumerateByUe(ueId, sessionInds);
+    if (sessionInds.empty())
+        return false;
+    for (auto ind : sessionInds)
+    {
+        auto it = m_pduSessions.find(ind);
+        if (it != m_pduSessions.end())
+            out.push_back(it->second.get());
+    }
+    return true;
 }
 
 } // namespace nr::gnb

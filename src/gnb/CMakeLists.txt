@@ -9,5 +9,6 @@ target_include_directories(gnb PUBLIC ${CMAKE_SOURCE_DIR}/src/asn/rrc)
 
 target_link_libraries(gnb asn-ngap)
 target_link_libraries(gnb asn-rrc)
+target_link_libraries(gnb asn-xnap)
 target_link_libraries(gnb common-lib)
 

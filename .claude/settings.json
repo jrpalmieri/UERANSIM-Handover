@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(xargs cat -n)"
+      "Bash(xargs cat -n)",
+      "Bash(grep \"\\\\.h$\")",
+      "Bash(git -C /home/joe/repos/GT/cs8903/UERANSIM-Handover show HEAD:src/gnb/xn/task.hpp)",
+      "Bash(xargs -n1 basename)"
     ]
   }
 }

@@ -57,12 +57,22 @@ void NasSm::handleUplinkDataRequest(int psi, OctetString &&data)
         return;
 
     if (m_pduSessions[psi]->psState != EPsState::ACTIVE)
+    {
+        m_logger->err("Uplink data request for PSI[%d] received while PS state is not ACTIVE.  Dropping packet.", psi);
         return;
+    }
 
     if (m_mm->m_cmState == ECmState::CM_CONNECTED)
     {
-        // TODO: We should also check if radio resources are established by RRC.
-        //  Checking CM state is not sufficient
+
+        // Check for RRC_CONNECTED state
+        if (state != EMmSubState::MM_REGISTERED_NORMAL_SERVICE && state != EMmSubState::MM_REGISTERED_NON_ALLOWED_SERVICE &&
+            state != EMmSubState::MM_REGISTERED_LIMITED_SERVICE)
+        {
+            m_logger->err("Uplink data request for PSI[%d] received while RRC state is not CONNECTED.  Dropping packet.", psi);
+            return;
+        }
+
 
         if (m_pduSessions[psi]->uplinkPending)
         {
@@ -88,15 +98,21 @@ void NasSm::handleUplinkDataRequest(int psi, OctetString &&data)
 void NasSm::handleDownlinkDataRequest(int psi, OctetString &&data)
 {
     if (m_mm->m_cmState == ECmState::CM_IDLE)
+    {
+        m_logger->err("Downlink data request for PSI[%d] received while CM state is IDLE.  Dropping packet.", psi);
         return;
+    }
 
     auto state = m_mm->m_mmSubState;
     if (state != EMmSubState::MM_REGISTERED_INITIATED_PS && state != EMmSubState::MM_REGISTERED_NORMAL_SERVICE &&
         state != EMmSubState::MM_REGISTERED_NON_ALLOWED_SERVICE &&
         state != EMmSubState::MM_REGISTERED_LIMITED_SERVICE && state != EMmSubState::MM_DEREGISTERED_INITIATED_PS &&
         state != EMmSubState::MM_SERVICE_REQUEST_INITIATED_PS)
+    {
+        m_logger->err("Downlink data request for PSI[%d] received while MM substate is not valid.  Dropping packet.", psi);
         return;
-
+    }
+    
     auto w = std::make_unique<NmUeNasToApp>(NmUeNasToApp::DOWNLINK_DATA_DELIVERY);
     w->psi = psi;
     w->data = std::move(data);

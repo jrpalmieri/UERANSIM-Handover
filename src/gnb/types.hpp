@@ -19,8 +19,8 @@
 
 #include <lib/app/monitor.hpp>
 #include <lib/asn/utils.hpp>
+#include <lib/rls/rls_base.hpp>
 #include <lib/rrc/common/event_types.hpp>
-
 #include <lib/sat/sat_time.hpp>
 #include <lib/sat/sat_state.hpp>
 
@@ -35,12 +35,6 @@
 #include <asn/rrc/ASN_RRC_InitialUE-Identity.h>
 
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
-
-// namespace nr::sat
-// {
-// class SatTime;
-// class SatStates;
-// }
 
 namespace nr::gnb
 {
@@ -58,6 +52,28 @@ struct RrcUeContext;
 
 class GnbNeighbors;    // fwd decl (neighbors.hpp)
 
+
+struct RlsUeContext {
+    uint64_t sti{0};
+    int64_t ueId{0};
+    int cRnti{0};
+
+    // Bearer Sequence Number Trackers
+    std::vector<RadioBearer> radioBearers{};
+
+    // ACK trackers
+
+    std::map<uint64_t, rls::PduInfo> m_pduMap;
+    std::vector<uint64_t> m_pendingAck;
+
+    // SDAP mapping
+    std::vector<SdapMapping> sdapMappings{};
+
+    explicit RlsUeContext(int64_t ueId) : ueId(ueId)
+    {
+    }
+
+};
 enum class EAmfState
 {
     NOT_CONNECTED = 0,
@@ -164,16 +180,100 @@ struct NgapAmfContext
     std::vector<PlmnSupport *> plmnSupportList{};
 };
 
-struct RlsUeContext
+enum class ENREncryptionAlgorithm
 {
-    const int64_t ueId;
-    uint64_t sti{};
-    InetAddress addr{};
-    int64_t lastSeen{};
+    NEA0 = 0,
+    NEA1,
+    NEA2,
+    NEA3
+};
 
-    explicit RlsUeContext(int64_t ueId) : ueId(ueId)
-    {
-    }
+enum class ENRIntegrityProtectionAlgorithm
+{
+    NIA0 = 0,
+    NIA1,
+    NIA2,
+    NIA3
+};
+
+enum class EUTRAEncryptionAlgorithm
+{
+    EEA0 = 0,
+    EEA1,
+    EEA2,
+    EEA3
+};
+
+enum class EUTRAIntegrityProtectionAlgorithm
+{
+    EIA0 = 0,
+    EIA1,
+    EIA2,
+    EIA3
+};
+
+/* UE Security capabilities received from AMF
+ 
+Bit String interpretations
+
+    NR Encryption Algorithms:
+
+    Each position in the bitmap represents an encryption algorithm:
+    "all bits equal to 0" – UE supports no other algorithm than NEA0,
+    "first bit" – 128-NEA1,
+    "second bit" – 128-NEA2,
+    "third bit" – 128-NEA3,
+    “fourth to seventh bit” are mapped from bit 4 to bit 1 of octet 3 in the UE Security Capability IE defined in TS 24.501 [26],
+    other bits reserved for future use. Value '1' indicates support and value '0' indicates no support of the algorithm.
+    Algorithms are defined in TS 33.501 [13].
+
+    NR Integrity Protection Algorithms:
+
+    Each position in the bitmap represents an integrity protection algorithm:
+    "all bits equal to 0" – UE supports no other algorithm than NIA0,
+    "first bit" – 128-NIA1,
+    "second bit" – 128-NIA2,
+    "third bit" – 128-NIA3,
+    “fourth to seventh bit” are mapped from bit 4 to bit 1 of octet 4 in the UE Security Capability IE defined in TS 24.501 [26],
+    other bits reserved for future use.
+    Value '1' indicates support and value '0' indicates no support of the algorithm.
+    Algorithms are defined in TS 33.501 [13].
+
+    E-UTRA Encryption Algorithms:
+
+    Each position in the bitmap represents an encryption algorithm:
+    "all bits equal to 0" – UE supports no other algorithm than EEA0,
+    "first bit" – 128-EEA1,
+    "second bit" – 128-EEA2,
+    "third bit" – 128-EEA3,
+    “fourth to seventh bit” are mapped from bit 4 to bit 1 of octet 5 in the UE Security Capability IE defined in TS 24.501 [26],
+    other bits reserved for future use. Value '1' indicates support and value '0' indicates no support of the algorithm.
+    Algorithms are defined in TS 33.401 [27].
+
+    E-UTRA Integrity Protection Algorithms:
+
+    Each position in the bitmap represents an encryption algorithm:
+    "all bits equal to 0" – UE supports no other algorithm than EIA0,
+    "first bit" – 128-EIA1,
+    "second bit" – 128-EIA2,
+    "third bit" – 128-EIA3,
+    “fourth to seventh bit” are mapped from bit 4 to bit 1 of octet 6 in the UE Security Capability IE defined in TS 24.501 [26],
+    other bits reserved for future use. Value '1' indicates support and value '0' indicates no support of the algorithm.
+    Algorithms are defined in TS 33.401 [27].
+
+*/
+struct UeSecurityInfo {
+
+    // Capabilities
+    // These are all 16-bit bit strings, as received from AMF
+    uint32_t nRencryptionAlgorithmsBitmap{};
+    uint32_t eUTRAencryptionAlgorithmsBitmap{};
+    uint32_t nRintegrityProtectionAlgorithmsBitmap{};
+    uint32_t eUTRAintegrityProtectionAlgorithmsBitmap{};
+
+    // Security Key - K_gnb (received from AMF) (256 bits)
+    std::array<uint8_t, 32> k_gnb{};
+
 };
 
 struct AggregateMaximumBitRate
@@ -213,6 +313,10 @@ struct NgapUeContext
     AggregateMaximumBitRate ueAmbr{};
     // All PDU Session IDs associated with this UE
     std::set<int> pduSessions{};
+
+    UeSecurityInfo ueSecInfo{};
+
+    std::vector<SingleSlice> allowedNssais;
 
     explicit NgapUeContext(int64_t ctxId) : ctxId(ctxId)
     {
@@ -263,11 +367,30 @@ struct RrcUeContext
     bool isInitialIdSTmsi{}; // TMSI-part-1 or a random value
     int64_t establishmentCause{};
 
+    // next transactionId Counter - used for RRC message transaction IDs
+    int nextTransactionId{0};
+    int getNextTid()
+    {
+        int counter = nextTransactionId;
+        nextTransactionId = (nextTransactionId + 1) % 4;
+        return counter;
+    }
+
     // RRC connection state of the UE
     UE_RRC_CONNECTION_STATE rrcState{UE_RRC_CONNECTION_STATE::RRC_NOT_CONNECTED};
 
     // 5G GUTI
     std::optional<GutiMobileIdentity> sTmsi{};
+
+    // AMF GUAMI
+    Guami guami{};
+
+    // UE Security Information (received from AMF, forwarded by NGAP)
+    UeSecurityInfo ueSecInfo{};
+    bool ueSecurityInfoValid{false};
+
+    int nextHopChainingCount{};
+    std::array<uint8_t, 32> nextHopParameter{};
 
     /* Handover state */
 
@@ -328,6 +451,11 @@ struct RrcUeContext
     explicit RrcUeContext(const int cRnti) : cRnti(cRnti)
     {
     }
+ 
+    explicit RrcUeContext(const int64_t ueId) : ueId(ueId)
+    {
+    }
+
 };
 
 struct NgapIdPair
@@ -423,6 +551,11 @@ struct GtpTunnel
 {
     uint32_t teid{};
     OctetString address{};
+
+    GtpTunnel() = default;
+    GtpTunnel(GtpTunnel &&) = default;
+    GtpTunnel &operator=(GtpTunnel &&) = default;
+    GtpTunnel(const GtpTunnel &o) : teid(o.teid), address(o.address.copy()) {}
 };
 
 struct PduSessionResource
@@ -437,9 +570,26 @@ struct PduSessionResource
     GtpTunnel downTunnel{};
     asn::Unique<ASN_NGAP_QosFlowSetupRequestList> qosFlows{};
 
-    PduSessionResource(const int64_t ueId, const int psi) : ueId(ueId), psi(psi)
+    PduSessionResource(const int64_t ueId, const int psi) : ueId(ueId), psi(psi) {}
+
+    PduSessionResource(PduSessionResource &&) = default;
+    PduSessionResource &operator=(PduSessionResource &&) = default;
+    PduSessionResource(const PduSessionResource &o)
+        : ueId(o.ueId), psi(o.psi), sessionAmbr(o.sessionAmbr),
+          dataForwardingNotPossible(o.dataForwardingNotPossible), sessionType(o.sessionType),
+          upTunnel(o.upTunnel), downTunnel(o.downTunnel),
+          qosFlows(o.qosFlows ? asn::UniqueCopy(*o.qosFlows, asn_DEF_ASN_NGAP_QosFlowSetupRequestList) : nullptr)
     {
     }
+};
+
+struct PduSessionSdapUpdate
+{
+    bool isDelete{};
+    int64_t ueId{};
+    int psi{};
+    std::vector<int> qosFlowIdsToAdd{};
+    std::vector<int> qosFlowIdsToRemove{};
 };
 
 // struct GnbStatusInfo
@@ -540,15 +690,15 @@ struct GnbRfLinkConfig
 };
 
 
-struct GnbNeighborConfig
+struct GnbNeighborState
 {
     int64_t nci{};     // 36-bit
-    int idLength{};    // 22..32 bits
     int tac{};         // 24-bit
-    std::string ipAddress{};
-    EHandoverInterface handoverInterface{EHandoverInterface::N2};
+    Plmn plmn{};       // MCC/MNC of the neighbor cell
+    EHandoverInterface handoverInterface{EHandoverInterface::N2};  // Interface to use for handover - Xn or N2
     std::optional<std::string> xnAddress{};
     std::optional<uint16_t> xnPort{};
+    int idLength{32}; // number of bits used for the gNB ID portion of the NCI (e.g. 22, 24, 32)
 
     [[nodiscard]] inline uint32_t getGnbId() const
     {
@@ -596,11 +746,8 @@ struct GnbChoCandidateProfileConfig
 struct GnbXnConfig
 {
     bool enabled{false};
-    std::string bindAddress{"127.0.0.1"};
-    uint16_t bindPort{9487};
-    int requestTimeoutMs{1000};
-    int contextTtlMs{5000};
-    bool fallbackToN2{true};
+    std::string xnIp{"127.0.0.1"};
+    uint16_t xnPort{38422};
 };
 
 
@@ -611,15 +758,23 @@ struct GnbHandoverConfig
     std::map<int, nr::rrc::common::ReportConfigEvent> eventsById{};
     std::vector<int> basicHandoverMeasIdentities{};
     std::vector<GnbChoCandidateProfileConfig> candidateProfiles{};
-    GnbXnConfig xn{};
+};
+
+struct GnbHandoverUeContexts {
+
+    std::optional<NgapUeContext> ngapUeContext;
+    std::optional<RrcUeContext> rrcUeContext;
+    std::optional<GtpUeContext> gtpUeContext;
+    std::vector<PduSessionResource*> pduSessions;
+
 };
 
 struct ScoredNeighbor
 {
-    const GnbNeighborConfig * neighbor;
+    const GnbNeighborState * neighbor;
     int score;
 
-    ScoredNeighbor(const GnbNeighborConfig * neighbor, int score) : neighbor(neighbor), score(score)
+    ScoredNeighbor(const GnbNeighborState * neighbor, int score) : neighbor(neighbor), score(score)
     {
     }
 };
@@ -671,12 +826,13 @@ struct GnbConfig
     std::string linkIp{};
     std::string ngapIp{};
     std::string gtpIp{};
+    GnbXnConfig xn{};
     std::optional<std::string> gtpAdvertiseIp{};
     bool ignoreStreamIds{};
     GnbRfLinkConfig rfLink{};
     GnbRlsConfig rls{};
     GnbHandoverConfig handover{};
-    std::vector<GnbNeighborConfig> neighborList{};
+    std::vector<GnbNeighborState> neighborList{};
     std::optional<std::string> nodeNameTemplate{};
 
     NtnConfig ntn{};

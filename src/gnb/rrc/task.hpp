@@ -21,6 +21,7 @@
 #include <utils/nts.hpp>
 
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
+#include <asn/rrc/ASN_RRC_SecurityModeComplete.h>
 
 namespace nr::gnb
 {
@@ -40,7 +41,7 @@ class GnbRrcTask : public NtsTask
     // Pending Handover Contexts, indexed by UE ID
     std::unordered_map<int64_t, RRCHandoverPending *> m_handoversPending;
 
-    std::unordered_map<int64_t, int> m_tidCountersByUe;
+    //std::unordered_map<int64_t, int> m_tidCountersByUe - moved to UE ctx;
 
     bool m_isBarred = true;
     bool m_cellReserved = false;
@@ -83,6 +84,7 @@ class GnbRrcTask : public NtsTask
     PositionVelocity getTruePositionVelocity() const;
     void upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value);
     void upsertSatTles(const std::vector<nr::sat::SatTleEntry> &entries);
+    bool getUeContext(int64_t ueId, std::optional<RrcUeContext> &out);
 
   protected:
     void onStart() override;
@@ -95,7 +97,6 @@ class GnbRrcTask : public NtsTask
 
   /* Management - management.cpp */
 
-    int getNextTid(int64_t ueId);
     int allocateCrnti() const;
     RrcUeContext* findCtxByCrnti(int cRnti);
     RrcUeContext* findCtxByUeId(int64_t ueId);
@@ -104,11 +105,15 @@ class GnbRrcTask : public NtsTask
 
     void handleUplinkRrc(int64_t ueId, int cRnti, rrc::RrcChannel channel, const OctetString &rrcPdu);
     void handleDownlinkNasDelivery(int64_t ueId, const OctetString &nasPdu);
+    void handleDownlinkNasAccept(int64_t ueId, const OctetString &nasPdu, std::unique_ptr<std::vector<PduSessionResource>> sessionList);
     void deliverUplinkNas(int64_t ueId, OctetString &&nasPdu);
     void releaseConnection(int64_t ueId);
     void handleRadioLinkFailure(int64_t ueId);
     void handlePaging(const asn::Unique<ASN_NGAP_FiveG_S_TMSI> &tmsi,
                       const asn::Unique<ASN_NGAP_TAIListForPaging> &taiList);
+    void handleNgapSecurityInfo(int64_t ueId, std::unique_ptr<UeSecurityInfo> secInfo);
+    void handleNgapPduSessionUpdate(int64_t ueId, std::unique_ptr<PduSessionSdapUpdate> sdapUpdate);
+
 
     void receiveUplinkInformationTransfer(int64_t ueId, const ASN_RRC_ULInformationTransfer &msg);
 
@@ -154,6 +159,7 @@ class GnbRrcTask : public NtsTask
 
     void receiveRrcSetupRequest(int64_t ueId, const ASN_RRC_RRCSetupRequest &msg);
     void receiveRrcSetupComplete(int64_t ueId, const ASN_RRC_RRCSetupComplete &msg);
+    void receiveSecurityModeComplete(int64_t ueId, int cRnti, const ASN_RRC_SecurityModeComplete &msg);
 
     /* Handover - handover.cpp */
 
@@ -171,7 +177,7 @@ class GnbRrcTask : public NtsTask
     void handoverContextRelease(int64_t ueId);
     void completeConditionalHandover(RrcUeContext *ue, const OctetString &rrcContainer);
     std::vector<ScoredNeighbor> prioritizeNeighbors(
-      const std::vector<GnbNeighborConfig> &neighborList,
+      const std::vector<GnbNeighborState> &neighborList,
       int64_t servingNci,
       const nr::sat::EcefPosition &ueEcef,
       int tExitSec);

@@ -131,7 +131,7 @@ void SctpTask::onLoop()
         {
         case NmGnbSctp::CONNECTION_REQUEST: {
             receiveSctpConnectionSetupRequest(w.clientId, w.localAddress, w.localPort, w.remoteAddress,
-                                              w.remotePort, w.ppid, w.associatedTask);
+                                              w.remotePort, w.ppid, w.associatedTask, w.maxTxStreams, w.maxRxStreams);
             break;
         }
         case NmGnbSctp::CONNECTION_CLOSE: {
@@ -191,11 +191,11 @@ void SctpTask::DeleteClientEntry(ClientEntry *entry)
 
 void SctpTask::receiveSctpConnectionSetupRequest(int clientId, const std::string &localAddress, uint16_t localPort,
                                                  const std::string &remoteAddress, uint16_t remotePort,
-                                                 sctp::PayloadProtocolId ppid, NtsTask *associatedTask)
+                                                 sctp::PayloadProtocolId ppid, NtsTask *associatedTask, uint16_t maxTxStreams, uint16_t maxRxStreams)
 {
     m_logger->info("Trying to establish SCTP connection... (%s:%d)", remoteAddress.c_str(), remotePort);
 
-    auto *client = new sctp::SctpClient(ppid, localAddress);
+    auto *client = new sctp::SctpClient(ppid, localAddress, maxTxStreams, maxRxStreams);
 
     try
     {

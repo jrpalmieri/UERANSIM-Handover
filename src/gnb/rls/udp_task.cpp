@@ -175,21 +175,21 @@ void RlsUdpTask::receiveRlsPdu(
         return;
     }
 
-    GeoPosition uePos{};
-    bool hasPosData = false;
-    {
-        std::lock_guard<std::mutex> lock(m_ueMutex);
+    // GeoPosition uePos{};
+    // bool hasPosData = false;
+    // {
+    //     std::lock_guard<std::mutex> lock(m_ueMutex);
 
-        // snapshot the last known UE position for this message
-        uePos      = m_ueMap[ueId].lastPos;
-        hasPosData = m_ueMap[ueId].hasPosData;
-    }
+    //     // snapshot the last known UE position for this message
+    //     uePos      = m_ueMap[ueId].lastPos;
+    //     hasPosData = m_ueMap[ueId].hasPosData;
+    // }
 
-    // If we get here, this is a non-heartbeat message from a known UE.
+    // // If we get here, this is a non-heartbeat message from a known UE.
 
-    // update the global measurement data with the reported UE position
-    if (hasPosData)
-        m_base->setUePosition(ueId, uePos, currentTime);
+    // // update the global measurement data with the reported UE position
+    // if (hasPosData)
+    //     m_base->setUePosition(ueId, uePos, currentTime);
 
     //  Forward it to the control task for processing, including the UE ID.
     auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RECEIVE_RLS_MESSAGE);

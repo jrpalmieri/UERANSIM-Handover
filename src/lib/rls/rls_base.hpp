@@ -6,6 +6,8 @@
 // See README, LICENSE, and CONTRIBUTING files for licensing details.
 //
 
+#pragma once
+
 #include "rls_pdu.hpp"
 
 #include <lib/rrc/rrc.hpp>
@@ -16,6 +18,7 @@ namespace rls
 struct PduInfo
 {
     uint32_t id{};
+    uint8_t radioBearer{};
     OctetString pdu;
     rrc::RrcChannel rrcChannel{};
     int64_t sentTime{};

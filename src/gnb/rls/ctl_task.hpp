@@ -10,6 +10,10 @@
 
 #include "udp_task.hpp"
 
+#include <map>
+#include <optional>
+#include <shared_mutex>
+
 #include <gnb/nts.hpp>
 #include <gnb/types.hpp>
 #include <utils/nts.hpp>
@@ -25,8 +29,16 @@ class RlsControlTask : public NtsTask
     int64_t m_cellId;
     NtsTask *m_mainTask;
     RlsUdpTask *m_udpTask;
-    std::unordered_map<uint32_t, rls::PduInfo> m_pduMap;
-    std::unordered_map<int64_t, std::vector<uint32_t>> m_pendingAck;
+
+    // keyed by (ueId, pduId, radioBearer) to avoid collisions across UEs
+    //std::map<std::tuple<int64_t, uint32_t, uint8_t>, rls::PduInfo> m_pduMap;
+    //std::unordered_map<int64_t, std::vector<std::pair<uint32_t, uint8_t>>> m_pendingAck;
+
+    // UE Contexts, keyed by UE ID
+    std::map<int64_t, RlsUeContext> m_ueCtx;
+    // Handlers (RLS task thread) hold unique_lock; copyUeContext (caller thread) holds shared_lock.
+    mutable std::shared_mutex m_ueCtxMutex;
+
     int m_timerPeriodAckControl;
     int m_timerPeriodAckSend;
 
@@ -42,12 +54,23 @@ class RlsControlTask : public NtsTask
   public:
     void initialize(NtsTask *mainTask, RlsUdpTask *udpTask);
 
+    // Thread-safe copy of a single UE's RLS context for use by other tasks (RRC, Xn).
+    // Returns nullopt if no context exists for ueId.
+    std::optional<RlsUeContext> copyUeContext(int64_t ueId) const;
+
   private:
+    void createRlsUeContext(int64_t ueId);
+    void deleteRlsUeContext(int64_t ueId);
+    RlsUeContext *getRlsUeContext(int64_t ueId);
+    //void updateUeBearer(int64_t ueId, uint8_t radioBearer, uint32_t pduId);
+    void getBearerFromSdap(RlsUeContext &ctx, int psi, int qfi, uint8_t *radioBearer, uint32_t *pduId);
+
     void handleSignalDetected(int64_t ueId);
     void handleSignalLost(int64_t ueId);
     void handleRlsMessage(NmGnbRlsToRls &w);
-    void handleDownlinkRrcDelivery(int64_t ueId, uint32_t pduId, rrc::RrcChannel channel, OctetString &&data);
-    void handleDownlinkDataDelivery(int64_t ueId, int psi, OctetString &&data);
+    void handleDownlinkRrcDelivery(int64_t ueId, rrc::RrcChannel channel, OctetString &&data);
+    void handleDownlinkDataDelivery(int64_t ueId, int psi, int qfi, OctetString &&data);
+    void handleRadioBearerUpdate(int64_t ueId, std::unique_ptr<RadioBearerUpdate> rbUpdate, std::unique_ptr<SdapUpdate> sdapUpdate);
     void onAckControlTimerExpired();
     void onAckSendTimerExpired();
 };

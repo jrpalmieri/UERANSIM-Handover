@@ -58,7 +58,7 @@ struct NeighborsUpdateRequest
 {
     ENeighborsUpdateMode mode{};
     std::string modeText{};
-    std::vector<GnbNeighborConfig> neighbors{};
+    std::vector<GnbNeighborState> neighbors{};
 };
 
 struct NeighborsUpdateResult
@@ -370,11 +370,11 @@ static SatLocPvRequest ParseSatLocPvRequest(const std::string &jsonPayload)
 }
 
 static std::vector<std::string> CollectStaleTargetWarnings(const GnbConfig &config,
-                                                           const std::vector<GnbNeighborConfig> &neighbors)
+                                                           const std::vector<GnbNeighborState> &neighbors)
 {
     std::vector<std::string> warnings{};
     auto hasNeighborNci = [&neighbors](int64_t nci) {
-        return std::any_of(neighbors.begin(), neighbors.end(), [nci](const GnbNeighborConfig &neighbor) {
+        return std::any_of(neighbors.begin(), neighbors.end(), [nci](const GnbNeighborState &neighbor) {
             return neighbor.nci == nci;
         });
     };
@@ -396,16 +396,14 @@ static std::vector<std::string> CollectStaleTargetWarnings(const GnbConfig &conf
     return warnings;
 }
 
-static Json ToJsonNeighborList(const std::vector<GnbNeighborConfig> &neighbors)
+static Json ToJsonNeighborList(const std::vector<GnbNeighborState> &neighbors)
 {
     Json entries = Json::Arr({});
     for (const auto &neighbor : neighbors)
     {
         Json entry = Json::Obj({
             {"nci", neighbor.nci},
-            {"idLength", neighbor.idLength},
             {"tac", neighbor.tac},
-            {"ipAddress", neighbor.ipAddress},
             {"handoverInterface", neighbor.handoverInterface == EHandoverInterface::Xn ? "Xn" : "N2"}
         });
         if (neighbor.xnAddress.has_value())
@@ -455,7 +453,7 @@ static NeighborsUpdateResult ApplyNeighborsUpdate(GnbNeighbors &neighbors,
         for (const auto &neighbor : request.neighbors)
             removeNci.insert(neighbor.getNci());
 
-        std::vector<GnbNeighborConfig> filtered{};
+        std::vector<GnbNeighborState> filtered{};
         filtered.reserve(candidate.size());
         for (const auto &neighbor : candidate)
         {

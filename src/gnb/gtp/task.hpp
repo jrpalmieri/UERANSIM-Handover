@@ -41,6 +41,10 @@ class GtpTask : public NtsTask
     explicit GtpTask(TaskBase *base);
     ~GtpTask() override = default;
 
+    bool getUeContext(int64_t ueId, std::optional<GtpUeContext> &out);
+    PduSessionResource *getPduSession(int64_t ueId, int psi);
+    bool getPduSessions(int64_t ueId, std::vector<PduSessionResource *> &out);
+
   protected:
     void onStart() override;
     void onLoop() override;

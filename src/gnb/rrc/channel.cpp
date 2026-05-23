@@ -239,7 +239,9 @@ void GnbRrcTask::receiveRrcMessage(int64_t ueId, int cRnti, ASN_RRC_UL_DCCH_Mess
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_rrcResumeComplete:
         break; // TODO
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_securityModeComplete:
-        break; // TODO
+        // Received from UE to indicate successful completion of the security mode setup.
+        receiveSecurityModeComplete(ueId, cRnti, *c1->choice.securityModeComplete);
+        break; 
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_securityModeFailure:
         break; // TODO
     case ASN_RRC_UL_DCCH_MessageType__c1_PR_ulInformationTransfer:

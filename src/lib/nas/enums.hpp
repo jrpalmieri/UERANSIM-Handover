@@ -726,8 +726,11 @@ enum class EAcknowledgement
 
 enum class ESscMode
 {
+    // Stable IP address, even during mobility (all UEs support this mode)
     SSC_MODE_1 = 0b001,
+    // Network can release the PDU session and re-establish it with a new IP address (break-before-make)
     SSC_MODE_2 = 0b010,
+    // Network can transition UE to new IP over new path, but uses make-before-break
     SSC_MODE_3 = 0b011,
     UNUSED_1 = 0b100,
     UNUSED_2 = 0b101,

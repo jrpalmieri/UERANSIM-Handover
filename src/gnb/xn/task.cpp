@@ -1,157 +1,256 @@
-//
-// Xn control-plane task.
-//
-
 #include "task.hpp"
 
-#include <gnb/neighbors.hpp>
 #include <gnb/nts.hpp>
-#include <lib/udp/server_task.hpp>
+#include <utils/nts.hpp>
+#include <gnb/neighbors.hpp>
 
 namespace nr::gnb
 {
 
-XnTask::XnTask(TaskBase *base)
-    : m_base(base),
-      m_config(base->config),
-      m_udpTask(nullptr),
-      m_transactionCounter(1)
+XnTask::XnTask(TaskBase *base) : m_base{base}
 {
-    m_logger = m_base->logBase->makeUniqueLogger("xn");
-
-    if (m_config->handover.xn.enabled)
-        m_udpTask = new XnUdpTask(base, this);
+    m_logger = base->logBase->makeUniqueLogger("xn");
 }
 
 void XnTask::onStart()
 {
-    if (m_udpTask)
-    {
-        m_logger->info("Xn enabled. Binding UDP %s:%u",
-                       m_config->handover.xn.bindAddress.c_str(),
-                       static_cast<unsigned>(m_config->handover.xn.bindPort));
-        m_udpTask->start();
-    }
-    else
-    {
-        m_logger->info("Xn is disabled");
-    }
+    m_logger->info("XnTask started");
+
+    // set up initial connections
+    updateXnConnections();
+
+    setTimer(TIMER_NEIGHBOR_CHECK, TIMER_NEIGHBOR_CHECK_INTERVAL_MS);
+    setTimer(TIMER_DEFERRED_QUEUE, DEFERRED_QUEUE_INTERVAL_MS);
+
 }
 
 void XnTask::onLoop()
 {
-    auto message = take();
-    if (!message)
+    auto msg = take();
+    if (!msg)
         return;
 
-    switch (message->msgType)
+    switch (msg->msgType)
     {
-    case NtsMessageType::GNB_RRC_TO_XN:
-        handleRrcMessage(dynamic_cast<NmGnbRrcToXn &>(*message));
+    case NtsMessageType::GNB_RRC_TO_XN: {
+        auto &w = dynamic_cast<NmGnbRrcToXn &>(*msg);
+        switch (w.present)
+        {
+        case NmGnbRrcToXn::HANDOVER_REQUEST_SEND:
+        {
+            m_logger->info("UE[%ld] HandoverRequest received from RRC, targetNCI=%ld", w.ueId, w.targetNci);
+            // get contexts for handover request
+            auto contexts = std::make_unique<GnbHandoverUeContexts>();
+            if (!GetUeContexts(w.ueId, *contexts))
+            {
+                m_logger->warn("UE[%ld] Core Network resources not yet assigned, deferring HandoverRequired", w.ueId);
+                auto deferred = std::make_unique<NmGnbRrcToXn>(NmGnbRrcToXn::HANDOVER_REQUEST_SEND);
+                deferred->ueId = w.ueId;
+                deferred->targetNci = w.targetNci;
+                deferred->reason = w.reason;
+                deferred->isCho = w.isCho;
+                deferred->retries = w.retries;
+                enqueueDeferred(std::move(deferred));
+                break;
+            }
+
+            xnHandoverRequestSource(w.ueId, w.targetNci, w.isCho, std::move(contexts));
+            break;
+        }
+        case NmGnbRrcToXn::HANDOVER_REQUEST_ACK_SEND:
+            xnHandoverRequestAckTarget(w.ueId, w.targetNci, w.isCho, std::move(w.rrcReconfigIe));
+            break;
+        case NmGnbRrcToXn::HANDOVER_CANCEL_SEND:
+            xnHandoverCancelSource(w.ueId, w.targetNci, w.isCho);
+            break;
+        case NmGnbRrcToXn::HANDOVER_PREPARATION_FAILURE_SEND:
+            xnHandoverPreparationFailureTarget(w.ueId, w.targetNci, w.isCho, w.reason);
+            break;
+        case NmGnbRrcToXn::UE_CONTEXT_RELEASE_SEND:
+            xnUeContextReleaseTarget(w.ueId, w.targetNci);
+            break;
+        case NmGnbRrcToXn::SN_STATUS_TRANSFER_SEND:
+            xnSnStatusTransferSource(w.ueId, w.targetNci, w.isCho);
+            break;
+        case NmGnbRrcToXn::HANDOVER_SUCCESS_SEND:
+            xnHandoverSuccessTarget(w.ueId, w.targetNci);
+            break;
+        case NmGnbRrcToXn::CONDITION_HANDOVER_CANCEL_SEND:
+            xnConditionalHandoverCancelSource(w.ueId, w.targetNci);
+            break;
+        }
         break;
-    case NtsMessageType::GNB_NGAP_TO_XN:
-        handleNgapMessage(dynamic_cast<NmGnbNgapToXn &>(*message));
+    }
+    case NtsMessageType::GNB_SCTP: {
+        auto &w = dynamic_cast<NmGnbSctp &>(*msg);
+        if (w.present == NmGnbSctp::RECEIVE_MESSAGE)
+            xnHandleSctpMessage(w.clientId, w.stream, w.buffer);
+        if (w.present == NmGnbSctp::ASSOCIATION_SETUP)
+            handleAssociationSetup(w.clientId, w.associationId, w.inStreams, w.outStreams);
+        if (w.present == NmGnbSctp::ASSOCIATION_SHUTDOWN)
+            handleAssociationShutdown(w.clientId);
         break;
-    case NtsMessageType::UDP_SERVER_RECEIVE:
-        handleUdpPacket(dynamic_cast<udp::NwUdpServerReceive &>(*message));
+    }
+    case NtsMessageType::TIMER_EXPIRED: {
+        auto &w = dynamic_cast<NmTimerExpired &>(*msg);
+        if (w.timerId == TIMER_NEIGHBOR_CHECK)
+        {
+            m_logger->debug("Xn neighbor check timer fired");
+            updateXnConnections();
+            setTimer(TIMER_NEIGHBOR_CHECK, TIMER_NEIGHBOR_CHECK_INTERVAL_MS);
+        }
+        else if (w.timerId == TIMER_DEFERRED_QUEUE)
+        {
+            processDeferredQueue();
+            setTimer(TIMER_DEFERRED_QUEUE, DEFERRED_QUEUE_INTERVAL_MS);
+        }
+        else
+        {
+            xnHandleTimerPrep(w.timerId);
+        }
         break;
+    }
     default:
-        m_logger->unhandledNts(*message);
+        m_logger->unhandledNts(*msg);
         break;
     }
 }
 
 void XnTask::onQuit()
 {
-    if (m_udpTask)
-    {
-        m_udpTask->quit();
-        delete m_udpTask;
-        m_udpTask = nullptr;
-    }
+    m_logger->info("XnTask stopped");
 }
 
-std::optional<InetAddress> XnTask::resolveNeighborXnEndpoint(int64_t targetNci) const
+// Update the Xn Connections based on the current neighbor list
+void XnTask::updateXnConnections()
 {
-    auto neighborOpt = m_base->neighbors->findByNci(targetNci);
-    if (!neighborOpt)
-        return std::nullopt;
 
-    auto address = neighborOpt->xnAddress ? *neighborOpt->xnAddress : neighborOpt->ipAddress;
-    auto port = neighborOpt->xnPort ? *neighborOpt->xnPort : m_config->handover.xn.bindPort;
+    std::vector<int> connectionsToRemove;
 
-    return InetAddress{address, port};
-}
+    // get current neighbor list
+    auto neighborList = m_base->neighbors->getAll();
 
-void XnTask::handleRrcMessage(NmGnbRrcToXn &message)
-{
-    switch (message.present)
+    // add connection to remove list if not in current neighbor list
+    auto &pt = m_xnPeerTable.getAllPeers();
+    for (const auto &peer : pt)
     {
-    case NmGnbRrcToXn::HANDOVER_REQUIRED_XN: {
-        auto endpoint = resolveNeighborXnEndpoint(static_cast<int>(message.hoTargetNci));
-        if (!endpoint)
+        auto it = std::find_if(neighborList.begin(), neighborList.end(), [&peer](const GnbNeighborState &neighbor) {
+            return neighbor.getNci() == peer.nci;
+        });
+
+        if (it == neighborList.end())
         {
-            m_logger->warn("UE[%ld] Xn handover request dropped, targetNCI=%ld not found",
-                           message.ueId, message.hoTargetNci);
-            return;
+            connectionsToRemove.push_back(peer.gnbId);
         }
+    }
 
-        xn::XnMessage xnMessage{};
-        xnMessage.type = xn::XnMessageType::HandoverRequest;
-        xnMessage.transactionId = m_transactionCounter++;
-        xnMessage.ueId = message.ueId;
-        xnMessage.sourceNci = m_base->config->nci;
-        xnMessage.targetNci = static_cast<int64_t>(message.hoTargetNci);
-        xnMessage.causeCode = static_cast<int>(message.hoCause);
+    // remove connections that are no longer in neighbor list
+    for (int gnbId : connectionsToRemove)
+    {
+        // SCTP teardown
+        auto msg = std::make_unique<NmGnbSctp>(NmGnbSctp::CONNECTION_CLOSE);
+        msg->clientId = gnbId;
+        msg->associatedTask = this;
+        m_base->sctpTask->push(std::move(msg));
 
-        if (m_udpTask)
+        // remove from peer table
+        m_xnPeerTable.removePeerInfo(gnbId);
+    }
+
+
+    // Add new connections from neighbor list
+    for (auto &neighborState : neighborList)
+    {
+        // only consider neighbors with Xn interface and valid address/port
+        if (neighborState.handoverInterface == EHandoverInterface::Xn && neighborState.xnAddress && neighborState.xnPort)
         {
-            auto packet = xn::EncodeXnMessage(xnMessage);
-            m_udpTask->sendPacket(*endpoint, packet);
+            // find in current peer table by NCI
+            auto peer = m_xnPeerTable.getPeerInfo(neighborState.getGnbId());
+
+            if (!peer)
+            {
+                // not found, add new connection
+
+                // add to peer table
+                XnPeerInfo peerInfo;
+                peerInfo.gnbId = neighborState.getGnbId();
+                peerInfo.nci = neighborState.getNci();
+                peerInfo.addr = InetAddress(neighborState.xnAddress.value(), *neighborState.xnPort);
+                m_xnPeerTable.addPeerInfo(peerInfo);
+
+                // SCTP setup
+                auto msg = std::make_unique<NmGnbSctp>(NmGnbSctp::CONNECTION_REQUEST);
+                msg->clientId = neighborState.getGnbId(); // use gnbId as clientId
+                msg->localAddress = m_base->config->xn.xnIp;
+                msg->localPort = 0;
+                msg->remoteAddress = neighborState.xnAddress.value();
+                msg->remotePort = neighborState.xnPort.value();
+                msg->ppid = sctp::PayloadProtocolId::XNAP;
+                msg->associatedTask = this;
+                msg->maxTxStreams = 10000;
+                msg->maxRxStreams = 10000;
+                m_base->sctpTask->push(std::move(msg));
+
+                m_logger->info("Adding Xn connection to gNB %d (NCI 0x%09x)", peerInfo.gnbId, peerInfo.nci);
+            }
+            else
+            {
+                // already exists
+                //  TODO: Update connection parameters if needed
+            }
         }
+    }
 
-        m_logger->info("Xn HandoverRequest sent UE[%ld] -> ipV%d:%u targetNCI=%ld tx=%u",
-                       message.ueId,
-                       endpoint->getIpVersion(),
-                       static_cast<unsigned>(endpoint->getPort()),
-                       message.hoTargetNci,
-                       xnMessage.transactionId);
-        break;
+} // updateXnConnections
+
+// get copies of all UE Contexts for the given UE ID.
+// Returns true if all contexts were found and copied, false if any did not exist.
+bool XnTask::GetUeContexts(int64_t ueId, GnbHandoverUeContexts &out)
+{
+    if (m_base->ngapTask->getUeContext(ueId, out.ngapUeContext) &&
+        m_base->rrcTask->getUeContext(ueId, out.rrcUeContext) &&
+        m_base->gtpTask->getUeContext(ueId, out.gtpUeContext) &&
+        m_base->gtpTask->getPduSessions(ueId, out.pduSessions))
+    {
+        return true;
     }
-    case NmGnbRrcToXn::HANDOVER_COMPLETE_XN:
-        m_logger->info("UE[%ld] Xn HandoverComplete notification received", message.ueId);
-        break;
-    }
+    return false;
 }
 
-void XnTask::handleNgapMessage(NmGnbNgapToXn &message)
+void XnTask::enqueueDeferred(std::unique_ptr<NmGnbRrcToXn> msg)
 {
-    switch (message.present)
-    {
-    case NmGnbNgapToXn::PATH_SWITCH_ACK:
-        m_logger->info("UE[%d] Xn observed PathSwitch ACK success=%s",
-                       message.ueId, message.success ? "true" : "false");
-        break;
-    }
+    m_deferredQueue.push_back(std::move(msg));
 }
 
-void XnTask::handleUdpPacket(udp::NwUdpServerReceive &packetMsg)
-{
-    auto decoded = xn::DecodeXnMessage(packetMsg.packet);
-    if (!decoded)
-    {
-        m_logger->warn("Dropping malformed Xn packet from ipV%d:%u",
-                       packetMsg.fromAddress.getIpVersion(),
-                       static_cast<unsigned>(packetMsg.fromAddress.getPort()));
-        return;
-    }
 
-    m_logger->info("Received Xn %s from ipV%d:%u (ue=%d tx=%u)",
-                   xn::ToString(decoded->type),
-                   packetMsg.fromAddress.getIpVersion(),
-                   static_cast<unsigned>(packetMsg.fromAddress.getPort()),
-                   decoded->ueId,
-                   decoded->transactionId);
+// pull msg from the deferred queue and process if information is ready
+void XnTask::processDeferredQueue()
+{
+    int count = static_cast<int>(m_deferredQueue.size());
+    for (int i = 0; i < count; ++i)
+    {
+        // remove from queue
+        auto msg = std::move(m_deferredQueue.front());
+        m_deferredQueue.pop_front();
+
+        // copy contexts for handover request
+        auto contexts = std::make_unique<GnbHandoverUeContexts>();
+        if (GetUeContexts(msg->ueId, *contexts))
+        {
+            xnHandoverRequestSource(msg->ueId, msg->targetNci, msg->isCho, std::move(contexts));
+        }
+        // if still not ready after the retry threshold, drop the request
+        else if (msg->retries >= DEFERRED_MAX_RETRIES)
+        {
+            m_logger->err("UE[%ld] Dropping deferred HandoverRequired after %d retries", msg->ueId, msg->retries);
+        }
+        // otherwise, re-enqueue for another retry after some delay
+        else
+        {
+            msg->retries++;
+            m_deferredQueue.push_back(std::move(msg));
+        }
+    }
 }
 
 } // namespace nr::gnb

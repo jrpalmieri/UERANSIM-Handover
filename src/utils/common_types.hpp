@@ -172,6 +172,32 @@ enum class ECellCategory
     SUITABLE_CELL,
 };
 
+// Defines a PDCP radio bearer (SRB or DRB) with its associated sequence number tracking information.
+struct RadioBearer {
+    uint8_t bearerId{0}; // bearer ID value.  bits 0-5 define the ID.  Bit 6 defines Signaling (0) or Data (1).
+    uint32_t dlSn{0};  // downlink data radio bearer sequence number.  Combines HLN and SN.
+    uint32_t ulSn{0};  // uplink data radio bearer sequence number.  Combines HLN and SN
+};
+
+struct SdapMapping
+{
+    int psi{};   // Session ID
+    int qfi{};   // QoS Flow ID
+    uint8_t radioBearer{}; // bearer ID value.  bits 0-5 define the ID.  Bit 6 defines Signaling (0) or Data (1).
+};
+
+struct RadioBearerUpdate
+{
+    std::vector<RadioBearer> upsertBearers{};
+    std::vector<uint8_t> deleteBearers{};
+};
+
+struct SdapUpdate
+{
+    std::vector<SdapMapping> upsertSdapMappings{};
+    std::vector<SdapMapping> deleteSdapMappings{};
+};
+
 struct Vector3
 {
     int x{};

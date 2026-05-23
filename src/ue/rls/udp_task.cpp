@@ -34,7 +34,7 @@ RlsCellMap::RlsCellMap(int64_t last_seen_threshold_ms) : m_lastSeenThreshold(las
 void RlsCellMap::upsertCell(const uint64_t sti, const int64_t last_seen_ts, const InetAddress &address)
 {
     // update if present
-    for (int i = 0; i < stis.size(); i++)
+    for (size_t i = 0; i < stis.size(); i++)
     {
         if (stis[i] == sti)
         {

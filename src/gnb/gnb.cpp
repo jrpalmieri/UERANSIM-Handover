@@ -11,6 +11,7 @@
 #include "gtp/task.hpp"
 #include "neighbors.hpp"
 #include "ngap/task.hpp"
+#include "xn/task.hpp"
 #include "rls/task.hpp"
 #include "rrc/task.hpp"
 
@@ -19,7 +20,6 @@
 #include "sat_time.hpp"
 
 #include "sctp/task.hpp"
-#include "xn/task.hpp"
 
 #include <lib/app/cli_base.hpp>
 #include <utils/common.hpp>
@@ -114,8 +114,8 @@ GNodeB::~GNodeB()
     taskBase->rrcTask->quit();
     taskBase->gtpTask->quit();
     taskBase->rlsTask->quit();
-    if (taskBase->config->handover.xn.enabled)
-        taskBase->xnTask->quit();
+    // if (taskBase->config->xn.enabled)
+    //     taskBase->xnTask->quit();
 
     delete taskBase->appTask;
     delete taskBase->sctpTask;
@@ -123,7 +123,7 @@ GNodeB::~GNodeB()
     delete taskBase->rrcTask;
     delete taskBase->gtpTask;
     delete taskBase->rlsTask;
-    delete taskBase->xnTask;
+    // delete taskBase->xnTask;
 
     sat_time::SetSatTimeSource(nullptr);
     delete taskBase->satTime;
@@ -146,8 +146,8 @@ void GNodeB::start()
     taskBase->rlsTask->start();
     taskBase->gtpTask->start();
 
-    if (taskBase->config->handover.xn.enabled)
-        taskBase->xnTask->start();
+    // if (taskBase->config->xn.enabled)
+    //     taskBase->xnTask->start();
 }
 
 void GNodeB::pushCommand(std::unique_ptr<app::GnbCliCommand> cmd, const InetAddress &address)

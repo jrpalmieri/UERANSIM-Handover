@@ -19,7 +19,6 @@
 #include <gnb/gtp/task.hpp>
 #include <gnb/neighbors.hpp>
 #include <gnb/rrc/task.hpp>
-#include <gnb/xn/task.hpp>
 #include <lib/rrc/encode.hpp>
 #include <utils/common.hpp>
 
@@ -1006,9 +1005,10 @@ void NgapTask::sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause c
 
     if (neighbor.handoverInterface == EHandoverInterface::Xn)
     {
+        const char *addrText = neighbor.xnAddress ? neighbor.xnAddress->c_str() : "unknown";
         m_logger->warn("neighborList entry for NCI=%ld requests Xn (%s), but only N2 is implemented; "
                        "continuing via N2",
-                       targetNci, neighbor.ipAddress.c_str());
+                       targetNci, addrText);
     }
 
     m_logger->info("Resolved target neighbor NCI=%ld -> NCGI(plmn=%03d-%02d nci=0x%09llx gnbId=%u cellId=%d) "
@@ -1464,13 +1464,6 @@ void NgapTask::receivePathSwitchRequestAcknowledge(int amfId, ASN_NGAP_PathSwitc
     w->ueId = ue->ctxId;
     m_base->rrcTask->push(std::move(w));
 
-    if (m_base->xnTask)
-    {
-        auto x = std::make_unique<NmGnbNgapToXn>(NmGnbNgapToXn::PATH_SWITCH_ACK);
-        x->ueId = ue->ctxId;
-        x->success = true;
-        m_base->xnTask->push(std::move(x));
-    }
 }
 
 /**
@@ -1495,13 +1488,11 @@ void NgapTask::receivePathSwitchRequestFailure(int amfId, ASN_NGAP_PathSwitchReq
 
     m_logger->warn("UE[%ld] Path switch failed.", ue->ctxId);
 
-    if (m_base->xnTask)
-    {
-        auto x = std::make_unique<NmGnbNgapToXn>(NmGnbNgapToXn::PATH_SWITCH_ACK);
-        x->ueId = ue->ctxId;
-        x->success = false;
-        m_base->xnTask->push(std::move(x));
-    }
+    // Notify RRC
+    auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::PATH_SWITCH_REQUEST_FAILURE);
+    w->ueId = ue->ctxId;
+    m_base->rrcTask->push(std::move(w));
+
 }
 
 /**

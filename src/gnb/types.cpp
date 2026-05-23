@@ -144,13 +144,11 @@ Json ToJson(const GnbConfig &v)
     for (const auto &neighbor : v.neighborList)
     {
         Json neighborEntry = Json::Obj({
-            {"nci", neighbor.nci},
             {"nr-cell-identity", static_cast<int64_t>(neighbor.getNrCellIdentity())},
-            {"id-length", neighbor.idLength},
             {"gnb-id", static_cast<int64_t>(neighbor.getGnbId())},
             {"cell-id", neighbor.getCellId()},
             {"tac", neighbor.tac},
-            {"ip-address", neighbor.ipAddress},
+            {"plmn", ToJson(neighbor.plmn)},
             {"handover-interface", ToString(neighbor.handoverInterface)},
             {"nci", neighbor.getNci()},
         });
@@ -198,6 +196,11 @@ Json ToJson(const GnbConfig &v)
         {"nssai", ToJson(v.nssai)},
         {"ngap-ip", v.ngapIp},
         {"gtp-ip", v.gtpIp},
+        {"xn", Json::Obj({
+            {"enabled", v.xn.enabled},
+            {"xn-ip", v.xn.xnIp},
+            {"xn-port", static_cast<int>(v.xn.xnPort)},
+        })},
         {"paging-drx", ToJson(v.pagingDrx)},
         {"ignore-sctp-id", v.ignoreStreamIds},
         {"rf-link", Json::Obj({
@@ -208,28 +211,31 @@ Json ToJson(const GnbConfig &v)
             {"tx-gain-dbi", std::to_string(v.rfLink.txGainDbi)},
             {"ue-rx-gain-dbi", std::to_string(v.rfLink.ueRxGainDbi)},
         })},
+        {"neighbors", std::move(neighborEntries)},
         {"handover", Json::Obj({
             {"cho-enabled", v.handover.choEnabled},
-            {"cho-active-profile-ids", [&]{ auto a = Json::Arr({}); for (int id : v.handover.choActiveProfileIds) a.push(id); return a; }()},
-            {"basic-handover-meas-identities", [&]{ auto a = Json::Arr({}); for (int id : v.handover.basicHandoverMeasIdentities) a.push(id); return a; }()},
+            {"cho-active-profile-ids", [&] {
+                auto a = Json::Arr({});
+                for (int id : v.handover.choActiveProfileIds)
+                    a.push(id);
+                return a;
+            }()},
+            {"basic-handover-meas-identities", [&] {
+                auto a = Json::Arr({});
+                for (int id : v.handover.basicHandoverMeasIdentities)
+                    a.push(id);
+                return a;
+            }()},
             {"events", std::move(handoverEvents)},
             {"cho-candidate-profiles", std::move(handoverCandidateProfiles)},
-            {"xn", Json::Obj({
-                {"enabled", v.handover.xn.enabled},
-                {"bind-address", v.handover.xn.bindAddress},
-                {"bind-port", static_cast<int>(v.handover.xn.bindPort)},
-                {"request-timeout-ms", v.handover.xn.requestTimeoutMs},
-                {"context-ttl-ms", v.handover.xn.contextTtlMs},
-                {"fallback-to-n2", v.handover.xn.fallbackToN2},
-            })},
         })},
         {"ntn", Json::Obj({
             {"ntn-enabled", v.ntn.ntnEnabled},
             {"own-tle-set", v.ntn.ownTle.has_value()},
             {"time-warp", std::move(timeWarpJson)},
             {"sib19", std::move(sib19Json)},
+            {"elevation-min-deg", v.ntn.elevationMinDeg},
         })},
-        {"neighbor-list", std::move(neighborEntries)},
     });
 
     if (v.nodeNameTemplate.has_value())

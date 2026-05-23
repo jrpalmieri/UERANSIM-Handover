@@ -56,7 +56,7 @@ class SctpTask : public NtsTask
   private:
     void receiveSctpConnectionSetupRequest(int clientId, const std::string &localAddress, uint16_t localPort,
                                            const std::string &remoteAddress, uint16_t remotePort,
-                                           sctp::PayloadProtocolId ppid, NtsTask *associatedTask);
+                                           sctp::PayloadProtocolId ppid, NtsTask *associatedTask, uint16_t maxTxStreams, uint16_t maxRxStreams);
     void receiveAssociationSetup(int clientId, int associationId, int inStreams, int outStreams);
     void receiveAssociationShutdown(int clientId);
     void receiveClientReceive(int clientId, uint16_t stream, UniqueBuffer &&buffer);

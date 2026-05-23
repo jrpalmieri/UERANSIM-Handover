@@ -40,6 +40,9 @@ enum class EPduType : uint8_t
     DATA
 };
 
+
+
+
 struct RlsMessage
 {
     const EMessageType msgType;
@@ -74,8 +77,11 @@ struct RlsHeartBeatAck : RlsMessage
 struct RlsPduTransmission : RlsMessage
 {
     EPduType pduType{};
+    uint8_t radioBearer{};  // lower 7 bits: bearer ID; high bit: ackPdu flag (wire encoding)
+    bool ackPdu{};          // true if the receiver should send a PDU_TRANSMISSION_ACK
     uint32_t pduId{};
-    uint32_t payload{};
+    uint8_t sdapByte{};     // SDAP header byte: 0 for RRC, QFI for DATA (receiver ignores)
+    uint32_t payloadType{};
     OctetString pdu{};
 
     explicit RlsPduTransmission(uint64_t sti)
@@ -87,6 +93,7 @@ struct RlsPduTransmission : RlsMessage
 struct RlsPduTransmissionAck : RlsMessage
 {
     std::vector<uint32_t> pduIds;
+    std::vector<uint8_t> radioBearers;
 
     explicit RlsPduTransmissionAck(uint64_t sti)
         : RlsMessage(EMessageType::PDU_TRANSMISSION_ACK, sti)

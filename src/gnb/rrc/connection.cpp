@@ -23,6 +23,8 @@
 #include <asn/rrc/ASN_RRC_Paging.h>
 #include <asn/rrc/ASN_RRC_PagingRecord.h>
 #include <asn/rrc/ASN_RRC_PagingRecordList.h>
+#include <asn/rrc/ASN_RRC_RegisteredAMF.h>
+#include <lib/asn/rrc.hpp>
 #include <asn/rrc/ASN_RRC_RRCRelease-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCRelease.h>
 #include <asn/rrc/ASN_RRC_RRCSetup-IEs.h>
@@ -90,7 +92,7 @@ void GnbRrcTask::receiveRrcSetupRequest(int64_t ueId, const ASN_RRC_RRCSetupRequ
     pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
     pdu->message.choice.c1->present = ASN_RRC_DL_CCCH_MessageType__c1_PR_rrcSetup;
     auto &rrcSetup = pdu->message.choice.c1->choice.rrcSetup = asn::New<ASN_RRC_RRCSetup>();
-    rrcSetup->rrc_TransactionIdentifier = getNextTid(ueId);
+    rrcSetup->rrc_TransactionIdentifier = ue->getNextTid();
     rrcSetup->criticalExtensions.present = ASN_RRC_RRCSetup__criticalExtensions_PR_rrcSetup;
     auto &rrcSetupIEs = rrcSetup->criticalExtensions.choice.rrcSetup = asn::New<ASN_RRC_RRCSetup_IEs>();
 
@@ -128,6 +130,19 @@ void GnbRrcTask::receiveRrcSetupComplete(int64_t ueId, const ASN_RRC_RRCSetupCom
 
     if (msg.criticalExtensions.choice.rrcSetupComplete)
     {
+        // Handle GUAMI (registeredAMF) if present
+        if (msg.criticalExtensions.choice.rrcSetupComplete->registeredAMF)
+        {
+            auto *amf = msg.criticalExtensions.choice.rrcSetupComplete->registeredAMF;
+            int64_t amfId = asn::GetBitStringLong<24>(amf->amf_Identifier);
+            ue->guami = Guami{
+                amf->plmn_Identity ? asn::rrc::GetPlmnId(*amf->plmn_Identity) : Plmn{},
+                static_cast<int>((amfId >> 16) & 0xFF),
+                static_cast<int>((amfId >> 6) & 0x3FF),
+                static_cast<int>(amfId & 0x3F)
+            };
+        }
+
         // Handle received 5G S-TMSI if any
         if (msg.criticalExtensions.choice.rrcSetupComplete->ng_5G_S_TMSI_Value)
         {
@@ -162,6 +177,52 @@ void GnbRrcTask::receiveRrcSetupComplete(int64_t ueId, const ASN_RRC_RRCSetupCom
 
     // Send measurement configuration to UE for handover support
     sendMeasConfig(ue->ueId);
+}
+
+
+// Handles the reception of RRC Security Mode Complete from the UE
+//  Sent by the UE is response to a Security Mode Command from the gNB
+void GnbRrcTask::receiveSecurityModeComplete(int64_t ueId, int cRnti, const ASN_RRC_SecurityModeComplete &msg)
+{
+    auto *ue = tryFindUeByUeId(ueId);
+    if (!ue)
+    {
+        m_logger->err("UE[%ld] Security Mode Complete received. UE context not found.", ueId);
+        return;
+    }
+
+    // In the simulation we don't use encryption, so we just log that this message was received.
+
+    m_logger->debug("UE[%ld] Security Mode Complete received, cRNTI=%d", ue->ueId, cRnti);
+
+}
+
+// creates an RRCReconfiguration that tells UE how to set up SDAP and radio bearers.
+// Notifies the RLS of the mappings between QoS flows and bearers
+void GnbRrcTask::handleNgapPduSessionUpdate(int64_t ueId, std::unique_ptr<PduSessionSdapUpdate> sdapUpdate)
+{
+
+    // get Ue Context
+    auto *ue = tryFindUeByUeId(ueId);
+    if (!ue)
+    {
+        m_logger->err("UE[%ld] PDU Session Update received from NGAP. UE context not found.", ueId);
+        return;
+    }
+
+    // TODO: Implement PDU session update handling
+
+    // Process the SDAP update in the RRC context
+    if (sdapUpdate->isDelete)
+    {
+        m_logger->debug("UE[%ld] PDU Session Update: Releasing PDU session with PSI=%d", ue->ueId, sdapUpdate->psi);
+        // Handle PDU session release
+    }
+    else
+    {
+        m_logger->debug("UE[%ld] PDU Session Update: Setting up PDU session with PSI=%d", ue->ueId, sdapUpdate->psi);
+        // Handle PDU session setup
+    }
 }
 
 } // namespace nr::gnb

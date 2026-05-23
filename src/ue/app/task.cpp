@@ -196,6 +196,7 @@ void UeAppTask::setupTunInterface(const PduSession *pduSession)
         return;
     }
 
+    // set the TUN ip address to the PDU address assigned by the network
     std::string ipAddress = utils::OctetStringToIp(pduSession->pduAddress->pduAddressInformation);
 
     bool r = tun::TunConfigure(allocatedName, ipAddress, requestedNetmask, cons::TunMtu, m_base->config->configureRouting, error);

@@ -201,17 +201,17 @@ void GnbRrcTask::triggerSib19Broadcast()
     const int64_t nowMs = utils::CurrentTimeMillis();
     const int64_t satNowMs = m_base->satTime->CurrentSatTimeMillis();
 
-    static constexpr double TWO_PI = 2.0 * M_PI;
-    static constexpr double GM     = 3.986004418e14;  // m³/s²
+    //static constexpr double TWO_PI = 2.0 * M_PI;
+    //static constexpr double GM     = 3.986004418e14;  // m³/s²
 
     // Encode a physical angle (radians) to the fixed-point SIB19 format.
     // Scale: 1 LSB = 2π / 2^28 rad.
-    auto encAngle = [](double rad) -> int32_t {
-        constexpr double TWO_PI = 2.0 * M_PI;
-        double norm = std::fmod(rad, TWO_PI);
-        if (norm < 0.0) norm += TWO_PI;
-        return static_cast<int32_t>(std::round(norm / TWO_PI * static_cast<double>(1 << 28)));
-    };
+    // auto encAngle = [](double rad) -> int32_t {
+    //     constexpr double TWO_PI = 2.0 * M_PI;
+    //     double norm = std::fmod(rad, TWO_PI);
+    //     if (norm < 0.0) norm += TWO_PI;
+    //     return static_cast<int32_t>(std::round(norm / TWO_PI * static_cast<double>(1 << 28)));
+    // };
 
     std::vector<nr::sat::EphEntry> entries;
     entries.reserve(ncis.size());

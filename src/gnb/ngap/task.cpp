@@ -98,8 +98,15 @@ void NgapTask::onLoop()
             sendHandoverRequired(w.ueId, w.hoTargetNci, w.hoCause, w.hoForChoPreparation);
             break;
         }
+        case NmGnbRrcToNgap::PATH_SWITCH_REQUEST: {
+            m_logger->info("RRC requested PathSwitchRequest UE[%ld] ", w.ueId);
+            sendPathSwitchRequest(w.ueId);
+            break;
+        }
+        
         }
         break;
+
     }
     case NtsMessageType::GNB_SCTP: {
         auto &w = dynamic_cast<NmGnbSctp &>(*msg);
@@ -117,18 +124,6 @@ void NgapTask::onLoop()
         default:
             m_logger->unhandledNts(*msg);
             break;
-        }
-        break;
-    }
-    case NtsMessageType::GNB_XN_TO_NGAP: {
-        auto &w = dynamic_cast<NmGnbXnToNgap &>(*msg);
-        switch (w.present)
-        {
-        case NmGnbXnToNgap::PATH_SWITCH_REQUEST_REQUIRED: {
-            m_logger->info("Xn requested PathSwitchRequest UE[%ld] ", w.ueId);
-            sendPathSwitchRequest(w.ueId);
-            break;
-        }
         }
         break;
     }

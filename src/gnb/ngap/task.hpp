@@ -89,6 +89,9 @@ class NgapTask : public NtsTask
     explicit NgapTask(TaskBase *base);
     ~NgapTask() override = default;
 
+    bool getUeContext(int64_t ueId, std::optional<NgapUeContext> &out);
+    NgapAmfContext *getAmfContextForXn(int amfId);
+
   protected:
     void onStart() override;
     void onLoop() override;
@@ -134,6 +137,7 @@ class NgapTask : public NtsTask
     void handleUplinkNasTransport(int64_t ueId, const OctetString &nasPdu);
     void receiveDownlinkNasTransport(int amfId, ASN_NGAP_DownlinkNASTransport *msg);
     void deliverDownlinkNas(int64_t ueId, OctetString &&nasPdu);
+    void deliverDownlinkNasAccept(int64_t ueId, OctetString &&nasPdu, std::unique_ptr<std::vector<PduSessionResource>> sessionList);
     void sendNasNonDeliveryIndication(int64_t ueId, const OctetString &nasPdu, NgapCause cause);
     void receiveRerouteNasRequest(int amfId, ASN_NGAP_RerouteNASRequest *msg);
 

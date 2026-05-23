@@ -8,6 +8,7 @@
 #include <lib/rrc/encode.hpp>
 #include <lib/rrc/common/asn_converters.hpp>
 #include <ue/nas/task.hpp>
+#include <ue/rls/task.hpp>
 
 #include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-IEs.h>
@@ -39,6 +40,16 @@
 #include <asn/rrc/ASN_RRC_UL-DCCH-Message.h>
 #include <asn/rrc/ASN_RRC_UL-DCCH-MessageType.h>
 #include <asn/rrc/ASN_RRC_DedicatedNAS-Message.h>
+#include <asn/rrc/ASN_RRC_RadioBearerConfig.h>
+#include <asn/rrc/ASN_RRC_SRB-ToAddModList.h>
+#include <asn/rrc/ASN_RRC_DRB-ToAddModList.h>
+#include <asn/rrc/ASN_RRC_DRB-ToReleaseList.h>
+#include <asn/rrc/ASN_RRC_SRB-ToAddMod.h>
+#include <asn/rrc/ASN_RRC_DRB-ToAddMod.h>
+#include <asn/rrc/ASN_RRC_DRB-Identity.h>
+#include <asn/rrc/ASN_RRC_SRB-Identity.h>
+#include <asn/rrc/ASN_RRC_SDAP-Config.h>
+
 
 namespace nr::ue
 {
@@ -347,13 +358,20 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
 
     // RRCReconfiguration takes the format:
     // RRCReconfiguration-IEs ::= SEQUENCE {
-    //   radioBearerConfig                   RadioBearerConfig    (Not used by simulation)
-    //   secondaryCellGroup                  OCTET STRING (CONTAINING CellGroupConfig) (Not used by simulation)
-    //   measConfig                          MeasConfig                     (array of measConfigs)
+    //   radioBearerConfig                   RadioBearerConfig
+    //   secondaryCellGroup                  OCTET STRING (CONTAINING CellGroupConfig) (Not used by simulation, only use MasterCellGroup
+    //   measConfig                          MeasConfig
     //   lateNonCriticalExtension            OCTET STRING                   (not used by simulation)
     //   nonCriticalExtension                RRCReconfiguration-v1530-IEs     (list of version-specific added IEs, including CHO)
     // }
 
+    // RadioBearerConfig present, set up the radio bearers (RLS)
+    if (ies->radioBearerConfig)
+    {
+        m_logger->info("RRCReconfiguration contains RadioBearerConfig");
+        setupRadioBearers(*ies->radioBearerConfig);
+    }
+ 
     // check for a fullConfig indicator in the nonCriticalExtention->[v1530] IEs. 
     //  If fullConfig is true, then the MeasConfig is a full replacement of the existing config
     bool fullConfig = false;
@@ -396,21 +414,21 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
         auto *v1530 = ies->nonCriticalExtension;
 
         // Deliver any dedicated NAS messages to the NAS layer
-        //  (None of these are used by the simulator)
-        // if (v1530->dedicatedNAS_MessageList)
-        // {
-        //     auto &nasList = v1530->dedicatedNAS_MessageList->list;
-        //     for (int i = 0; i < nasList.count; i++)
-        //     {
-        //         auto *nasPdu = nasList.array[i];
-        //         if (nasPdu && nasPdu->buf && nasPdu->size > 0)
-        //         {
-        //             auto w = std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::NAS_DELIVERY);
-        //             w->nasPdu = OctetString::FromArray(nasPdu->buf, static_cast<size_t>(nasPdu->size));
-        //             m_base->nasTask->push(std::move(w));
-        //         }
-        //     }
-        // }
+        //  for example, RRCReconfiguration messages after PDU setup may contain the NAS Accept message
+        if (v1530->dedicatedNAS_MessageList)
+        {
+            auto &nasList = v1530->dedicatedNAS_MessageList->list;
+            for (int i = 0; i < nasList.count; i++)
+            {
+                auto *nasPdu = nasList.array[i];
+                if (nasPdu && nasPdu->buf && nasPdu->size > 0)
+                {
+                    auto w = std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::NAS_DELIVERY);
+                    w->nasPdu = OctetString::FromArray(nasPdu->buf, static_cast<size_t>(nasPdu->size));
+                    m_base->nasTask->push(std::move(w));
+                }
+            }
+        }
 
         // masterCellGroup -> check for ReconfigurationWithSync to detect handover scenarios and extract relevant parameters 
         if (v1530->masterCellGroup)
@@ -521,6 +539,116 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
 
         m_logger->info("RRCReconfigurationComplete sent (non-handover reconfiguration)");
     }
+}
+
+
+void UeRrcTask::setupRadioBearers(const ASN_RRC_RadioBearerConfig &config)
+{
+    // Set up the radio bearers based on the provided configuration
+    std::vector<RadioBearer> upsertBearers;
+    std::vector<uint8_t> deleteBearers;
+
+    std::vector<SdapMapping> upsertSdapMappings;
+    std::vector<SdapMapping> deleteSdapMappings;
+
+
+    if (config.srb_ToAddModList)
+    {
+        auto &list = config.srb_ToAddModList->list;
+        for (int i = 0; i < list.count; i++)
+        {
+            auto *item = list.array[i];
+            if (item)
+            {
+                RadioBearer srb;
+                if (item->srb_Identity)
+                {   
+                    srb.bearerId = item->srb_Identity;
+                }
+
+                // we don't use the other SRB fields in the RLS layer
+                upsertBearers.emplace_back(srb);
+            }
+        }
+    }
+
+    if (config.drb_ToAddModList)
+    {
+        auto &list = config.drb_ToAddModList->list;
+        for (int i = 0; i < list.count; i++)
+        {
+            auto *item = list.array[i];
+            if (item)
+            {
+                RadioBearer drb;
+                drb.bearerId = item->drb_Identity;
+
+                // SDAP Mapping Info
+                
+                if (item->cnAssociation)
+                {
+                    if (item->cnAssociation->choice.sdap_Config)
+                    {
+                        // Delete existing SDAP QoS Flow associations for this DRB
+                        for (int i = 0; i < item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToRelease->list.count; i++)
+                        {
+                            auto qos = item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToRelease->list.array[i];
+                            SdapMapping mapping{};
+                            auto *sdap = item->cnAssociation->choice.sdap_Config;
+                            mapping.psi = sdap->pdu_Session;
+                            mapping.qfi = static_cast<int>(*qos);
+                            mapping.radioBearer = item->drb_Identity;
+                            deleteSdapMappings.emplace_back(mapping);
+                        }
+
+                        // Add SDAP associations for each QOS flow
+                        for (int i = 0; i < item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToAdd->list.count; i++)
+                        {
+                            auto qos = item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToAdd->list.array[i];
+                            SdapMapping mapping{};
+                            auto *sdap = item->cnAssociation->choice.sdap_Config;
+                            mapping.psi = sdap->pdu_Session;
+                            mapping.radioBearer = item->drb_Identity;
+                            mapping.qfi = static_cast<int>(*qos);
+                            upsertSdapMappings.emplace_back(mapping);
+                        }
+                    }
+                }
+                upsertBearers.emplace_back(drb);
+            }
+        }
+    }
+
+    if (config.drb_ToReleaseList)
+    {
+        auto &list = config.drb_ToReleaseList->list;
+        for (int i = 0; i < list.count; i++)
+        {
+            if (list.array[i])
+            {
+                deleteBearers.push_back(static_cast<uint8_t>(*list.array[i]));
+            }
+        }
+    }
+
+    // send the updates to the RLS layer to apply the new radio bearer configuration
+    auto rbUpdates = std::make_unique<RadioBearerUpdate>();
+    rbUpdates->upsertBearers = std::move(upsertBearers);
+    rbUpdates->deleteBearers = std::move(deleteBearers);
+    auto sdapUpdates = std::make_unique<SdapUpdate>();
+    sdapUpdates->upsertSdapMappings = std::move(upsertSdapMappings);
+    sdapUpdates->deleteSdapMappings = std::move(deleteSdapMappings);
+
+    auto rlsUpdate = std::make_unique<NmUeRrcToRls>(NmUeRrcToRls::RADIO_BEARER_UPDATE);
+    rlsUpdate->rbUpdate = std::move(rbUpdates);
+    rlsUpdate->sdapUpdate = std::move(sdapUpdates);
+    m_base->rlsTask->push(std::move(rlsUpdate));
+
+    m_logger->info("Radio bearer configuration updated: %d SRBs/DRBs to add/modify, %d DRBs to release, %d SDAP mappings to add, %d SDAP mappings to delete",
+                   upsertBearers.size(), deleteBearers.size(), upsertSdapMappings.size(), deleteSdapMappings.size());
+
+
+
 }
 
 } // namespace nr::ue

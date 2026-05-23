@@ -24,6 +24,7 @@ class SctpClient
 
   public:
     explicit SctpClient(PayloadProtocolId ppid, const std::string &address);
+    explicit SctpClient(PayloadProtocolId ppid, const std::string &address, int maxTxStreams, int maxRxStreams);
     ~SctpClient();
 
     void bind(const std::string &address, uint16_t port);

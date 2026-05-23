@@ -121,6 +121,7 @@ struct NmUeRrcToRls : NtsMessage
         ASSIGN_CURRENT_CELL,
         RRC_PDU_DELIVERY,
         RESET_STI,
+        RADIO_BEARER_UPDATE,
     } present;
 
     // ASSIGN_CURRENT_CELL
@@ -130,6 +131,10 @@ struct NmUeRrcToRls : NtsMessage
     rrc::RrcChannel channel{};
     uint32_t pduId{};
     OctetString pdu{};
+
+    // RADIO_BEARER_UPDATE
+    std::unique_ptr<RadioBearerUpdate> rbUpdate{};
+    std::unique_ptr<SdapUpdate> sdapUpdate{};
 
     explicit NmUeRrcToRls(PR present) : NtsMessage(NtsMessageType::UE_RRC_TO_RLS), present(present)
     {
@@ -270,6 +275,7 @@ struct NmUeRlsToRls : NtsMessage
         RADIO_LINK_FAILURE,
         TRANSMISSION_FAILURE,
         ASSIGN_CURRENT_CELL,
+        RADIO_BEARER_UPDATE
     } present;
 
     // RECEIVE_RLS_MESSAGE
@@ -307,6 +313,10 @@ struct NmUeRlsToRls : NtsMessage
 
     // TRANSMISSION_FAILURE
     std::vector<rls::PduInfo> pduList;
+
+    // RADIO_BEARER_UPDATE
+    std::unique_ptr<RadioBearerUpdate> rbUpdate;
+    std::unique_ptr<SdapUpdate> sdapUpate;
 
     explicit NmUeRlsToRls(PR present) : NtsMessage(NtsMessageType::UE_RLS_TO_RLS), present(present)
     {

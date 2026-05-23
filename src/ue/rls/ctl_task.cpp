@@ -11,13 +11,40 @@
 #include <utils/common.hpp>
 
 static constexpr const size_t MAX_PDU_COUNT = 128;
+
+static inline uint64_t pduKey(uint32_t pduId, uint8_t radioBearer)
+{
+    return (static_cast<uint64_t>(radioBearer) << 32) | pduId;
+}
 static constexpr const int MAX_PDU_TTL = 3000;
 
 static constexpr const int TIMER_ID_ACK_CONTROL = 1;
 static constexpr const int TIMER_ID_ACK_SEND = 2;
 
+// determines whether to require an ACK on an RRC packet
+static bool requireRrcAck(rrc::RrcChannel /*channel*/)
+{
+    return false;
+}
+
+// determines whether to require an ACK on a data packet, based on the PDU session type
+static bool requireDataAck(int /*psi*/)
+{
+    return false;
+}
+
 namespace nr::ue
 {
+
+void RlsControlTask::createRadioBearer(uint8_t bearerId)
+{
+    auto it = std::find_if(radioBearers.begin(), radioBearers.end(),
+        [&](const RadioBearer &b) { return b.bearerId == bearerId; });
+    if (it == radioBearers.end())
+        radioBearers.push_back(RadioBearer{bearerId, 0, 0});
+}
+
+
 
 RlsControlTask::RlsControlTask(TaskBase *base, RlsSharedContext *shCtx)
     : m_shCtx{shCtx}, m_servingCell{}, m_mainTask{}, m_udpTask{}, m_pduMap{}, m_pendingAck{},
@@ -61,10 +88,13 @@ void RlsControlTask::onLoop()
             handleUplinkDataDelivery(w.psi, std::move(w.data));
             break;
         case NmUeRlsToRls::UPLINK_RRC:
-            handleUplinkRrcDelivery(w.cellId, w.pduId, w.rrcChannel, std::move(w.data));
+            handleUplinkRrcDelivery(w.cellId, w.rrcChannel, std::move(w.data));
             break;
         case NmUeRlsToRls::ASSIGN_CURRENT_CELL:
             m_servingCell = w.cellId;
+            break;
+        case NmUeRlsToRls::RADIO_BEARER_UPDATE:
+            handleRadioBearerUpdate(std::move(w.rbUpdate), std::move(w.sdapUpate));
             break;
         default:
             m_logger->unhandledNts(*msg);
@@ -110,18 +140,18 @@ void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
     if (msg.msgType == rls::EMessageType::PDU_TRANSMISSION_ACK)
     {
         auto &m = (rls::RlsPduTransmissionAck &)msg;
-        for (auto pduId : m.pduIds)
-            m_pduMap.erase(pduId);
+        for (size_t i = 0; i < m.pduIds.size(); i++)
+            m_pduMap.erase(pduKey(m.pduIds[i], m.radioBearers[i]));
     }
     // PDU msg
     else if (msg.msgType == rls::EMessageType::PDU_TRANSMISSION)
     {
         auto &m = (rls::RlsPduTransmission &)msg;
 
-        // store a pending ACK for this PDU, indexed by cellId, 
+        // store a pending ACK for this PDU, indexed by cellId,
         //  to be sent back to the gnb in the next ACK_SEND timer cycle.
-        if (m.pduId != 0)
-            m_pendingAck[cellId].push_back(m.pduId);
+        if (m.ackPdu)
+            m_pendingAck.push_back(pduKey(m.pduId, m.radioBearer));
 
         // for data packets, forward to main task as a DOWNLINK_DATA message
         if (m.pduType == rls::EPduType::DATA)
@@ -134,7 +164,7 @@ void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
             }
 
             auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::DOWNLINK_DATA);
-            w->psi = static_cast<int>(m.payload);
+            w->psi = static_cast<int>(m.payloadType);
             w->data = std::move(m.pdu);
             m_mainTask->push(std::move(w));
         }
@@ -143,7 +173,7 @@ void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
         {
             auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::DOWNLINK_RRC);
             w->cellId = cellId;
-            w->rrcChannel = static_cast<rrc::RrcChannel>(m.payload);
+            w->rrcChannel = static_cast<rrc::RrcChannel>(m.payloadType);
             w->data = std::move(m.pdu);
             m_mainTask->push(std::move(w));
         }
@@ -176,15 +206,26 @@ void RlsControlTask::handleSignalChange(int64_t cellId, int dbm)
  * @param channel 
  * @param data 
  */
-void RlsControlTask::handleUplinkRrcDelivery(int64_t nci, uint32_t pduId, rrc::RrcChannel channel, OctetString &&data)
+void RlsControlTask::handleUplinkRrcDelivery(int64_t nci, rrc::RrcChannel channel, OctetString &&data)
 {
+    // check if this RRC message requires an acknowledgment
+    bool ackPdu = requireRrcAck(channel);
+
+    uint32_t pduId = 0;
+    uint8_t radioBearer = 0; // SRB0
+
+    // get the appropriate radio bearer and PDU ID for this RRC message
+    selectSignalingRadioBearer(channel, radioBearer, pduId);
+
     // PDU send tracking: if the message has a non-zero pduId, 
     //  then it is tracked in m_pduMap until acknowledged by the gnb.
-    if (pduId != 0)
+    if (ackPdu)
     {
-        // check if a PDU with this pduId is already being tracked, 
+        const uint64_t key = pduKey(pduId, radioBearer);
+
+        // check if a PDU with this key is already being tracked,
         //  which would indicate a bug in the RRC task where it is reusing pduIds.
-        if (m_pduMap.count(pduId))
+        if (m_pduMap.count(key))
         {
             m_pduMap.clear();
 
@@ -208,19 +249,23 @@ void RlsControlTask::handleUplinkRrcDelivery(int64_t nci, uint32_t pduId, rrc::R
         }
 
         // add PDU to the map for tracking until acknowledgment, with the current time as sentTime
-        m_pduMap[pduId].endPointId = nci;
-        m_pduMap[pduId].id = pduId;
-        m_pduMap[pduId].pdu = data.copy();
-        m_pduMap[pduId].rrcChannel = channel;
-        m_pduMap[pduId].sentTime = utils::CurrentTimeMillis();
+        auto &info = m_pduMap[key];
+        info.endPointId = nci;
+        info.id = pduId;
+        info.radioBearer = radioBearer;
+        info.pdu = data.copy();
+        info.rrcChannel = channel;
+        info.sentTime = utils::CurrentTimeMillis();
     }
 
     // create a new RlsPduTransmission message with the provided RRC payload and 
     //  send it to the UDP task to be forwarded to the gnb
     rls::RlsPduTransmission msg{m_shCtx->sti};
     msg.pduType = rls::EPduType::RRC;
+    msg.ackPdu = ackPdu;
+    msg.radioBearer = radioBearer;
     msg.pdu = std::move(data);
-    msg.payload = static_cast<uint32_t>(channel);
+    msg.payloadType = static_cast<uint32_t>(channel);
     msg.pduId = pduId;
 
     m_udpTask->send(nci, msg);
@@ -235,14 +280,24 @@ void RlsControlTask::handleUplinkRrcDelivery(int64_t nci, uint32_t pduId, rrc::R
  */
 void RlsControlTask::handleUplinkDataDelivery(int pduSessionId, OctetString &&data)
 {
-    
+    uint8_t radioBearer = 0X41; // DRB1
+    uint32_t pduId = 0;
+    int qfi = 0;
+
+    // get the appropriate radio bearer and PDU ID for this data packet
+    sdapMapping(pduSessionId, data, &radioBearer, &pduId, &qfi);
+    bool ackPdu = requireDataAck(pduSessionId);
+
     // create a new RlsPduTransmission message with the provided data payload and
     //  send it to the UDP task to be forwarded to the gnb
     rls::RlsPduTransmission msg{m_shCtx->sti};
     msg.pduType = rls::EPduType::DATA;
+    msg.ackPdu = ackPdu;
+    msg.radioBearer = radioBearer;
     msg.pdu = std::move(data);
-    msg.payload = static_cast<uint32_t>(pduSessionId);
-    msg.pduId = 0;
+    msg.payloadType = static_cast<uint32_t>(pduSessionId);
+    msg.pduId = pduId;
+    msg.sdapByte = static_cast<uint8_t>(qfi);
 
     m_udpTask->send(m_servingCell, msg);
 }
@@ -259,7 +314,7 @@ void RlsControlTask::onAckControlTimerExpired()
 {
     int64_t current = utils::CurrentTimeMillis();
 
-    std::vector<uint32_t> transmissionFailureIds;
+    std::vector<uint64_t> transmissionFailureIds;
     std::vector<rls::PduInfo> transmissionFailures;
 
     // loop through each tracked PDU in m_pduMap, and if any of them have been 
@@ -290,25 +345,148 @@ void RlsControlTask::onAckControlTimerExpired()
 /**
  * @brief used to send PDU_TRANSMISSION_ACK messages to the gnb for all 
  * received PDUs that are pending acknowledgment.  PDUs pending acknowledgment are 
- * tracked in m_pendingAck, which is a map of a vector of pduIds indexed by cellId.
- * 
+ * tracked in m_pendingAck.
  */
 void RlsControlTask::onAckSendTimerExpired()
 {
     auto copy = m_pendingAck;
     m_pendingAck.clear();
 
-    // for all received PDUs that are pending acknowledgment, 
-    //  send a PDU_TRANSMISSION_ACK message to the gnb via the UDP task,
-    for (auto &item : copy)
+    rls::RlsPduTransmissionAck msg{m_shCtx->sti};
+    msg.pduIds.reserve(copy.size());
+    msg.radioBearers.reserve(copy.size());
+
+    for (auto &entry : copy)
     {
-        if (!item.second.empty())
-            continue;
+        msg.pduIds.push_back(static_cast<uint32_t>(entry & 0xFFFFFFFF));
+        msg.radioBearers.push_back(static_cast<uint32_t>(entry >> 32));
+    }
 
-        rls::RlsPduTransmissionAck msg{m_shCtx->sti};
-        msg.pduIds = std::move(item.second);
+    m_udpTask->send(m_servingCell, msg);
+}
 
-        m_udpTask->send(item.first, msg);
+// Maps a PDU onto a radio data bearer and returns the next PDU ID to use. Uses the sdapMapping vector to do the mapping.
+//
+//  Currently just maps based on PDU Session Id.  But actual data is passed in so in future can support more complex mapping based on QoS flow, etc.
+void RlsControlTask::sdapMapping(int pduSessionId, OctetString &data, uint8_t *radioBearer, uint32_t *pduId, int *qfi)
+{
+
+    // if want to map based on QoS flow, would need to insert some logic here
+    //  to parse the QoS flow ID from the data, and then find the corresponding SDAP mapping based on both PDU session ID and QoS flow ID.
+
+    // find existing mapping for this PDU session ID
+    auto it = std::find_if(m_sdapMappings.begin(), m_sdapMappings.end(),
+        [&](const SdapMapping &m) { return m.psi == pduSessionId; });
+
+    if (it != m_sdapMappings.end())
+    {
+        *radioBearer = it->radioBearer;
+        *qfi = it->qfi;
+    }
+
+    // use radioBearer to determine the next PDU ID to use for this session, and increment the sequence number for the radio bearer
+    auto rbIt = std::find_if(radioBearers.begin(), radioBearers.end(),
+        [&](const RadioBearer &b) { return b.bearerId == *radioBearer; });
+    if (rbIt == radioBearers.end())
+    {
+        m_logger->err("No radio bearer found for SDAP mapping");
+        return;
+    }
+
+    *pduId = rbIt->ulSn++;
+
+    return;
+}
+
+void RlsControlTask::selectSignalingRadioBearer(rrc::RrcChannel channel, uint8_t &radioBearer, uint32_t &pduId)
+{
+    // For now, just find SRB0 and use it for signaling
+    auto srb0It = std::find_if(radioBearers.begin(), radioBearers.end(),
+        [](const RadioBearer &b) { return b.bearerId == 0; });
+
+    if (srb0It != radioBearers.end())
+    {
+        radioBearer = srb0It->bearerId;
+        pduId = srb0It->ulSn++;
+    }
+    else
+    {
+        m_logger->err("SRB0 not found for signaling");
+    }
+    return;
+}
+
+// Handle the radio bearer and SDAP updates from RRC
+void RlsControlTask::handleRadioBearerUpdate(std::unique_ptr<RadioBearerUpdate> rbUpdate, std::unique_ptr<SdapUpdate> sdapUpdate)
+{
+    // Handle the radio bearer update
+    if (rbUpdate)
+    {
+        // Delete any radio bearers that are no longer needed
+        for (const auto &bearer : rbUpdate->deleteBearers)
+        {
+            // Remove the radio bearer from the list
+            radioBearers.erase(std::remove_if(radioBearers.begin(), radioBearers.end(),
+                [&bearer](const RadioBearer &b) { return b.bearerId == bearer; }), radioBearers.end());
+            m_logger->info("Deleting radio bearer with ID %d", bearer);
+        }
+
+        // Process the radio bearer updates
+        for (const auto &bearer : rbUpdate->upsertBearers)
+        {
+            // Check if the radio bearer already exists
+            auto it = std::find_if(radioBearers.begin(), radioBearers.end(),
+                [&bearer](const RadioBearer &b) { return b.bearerId == bearer.bearerId; });
+            if (it != radioBearers.end())
+            {
+                // Update the existing radio bearer
+                *it = bearer;
+            }
+            else
+            {
+                // Add the new radio bearer
+                radioBearers.push_back(bearer);
+            }
+
+            // Add or modify the radio bearer
+            m_logger->info("Adding/modifying radio bearer with ID %d", bearer.bearerId);
+        }
+
+    }
+
+    // Update the SDAP mappings
+    if (sdapUpdate)
+    {
+        for (const auto &mapping : sdapUpdate->deleteSdapMappings)
+        {
+            // Remove the SDAP mapping from the list
+            m_sdapMappings.erase(std::remove_if(m_sdapMappings.begin(), m_sdapMappings.end(),
+                [&mapping](const SdapMapping &m) { return m.psi == mapping.psi && m.qfi == mapping.qfi && m.radioBearer == mapping.radioBearer; }), m_sdapMappings.end());
+
+            m_logger->info("Deleting SDAP mapping for PDU session %d, QFI %d, radio bearer %d", mapping.psi, mapping.qfi, mapping.radioBearer);
+        }
+
+        // Process the SDAP updates
+        for (const auto &mapping : sdapUpdate->upsertSdapMappings)
+        {
+            // Check if the SDAP mapping already exists
+            auto it = std::find_if(m_sdapMappings.begin(), m_sdapMappings.end(),
+                [&mapping](const SdapMapping &m) { return m.psi == mapping.psi && m.qfi == mapping.qfi && m.radioBearer == mapping.radioBearer; });
+            if (it != m_sdapMappings.end())
+            {
+                // Update the existing SDAP mapping
+                *it = mapping;
+            }
+            else
+            {
+                // Add the new SDAP mapping
+                m_sdapMappings.push_back(mapping);
+            }
+
+            // Add or modify the SDAP mapping
+            m_logger->info("Adding/modifying SDAP mapping for PDU session %d, QFI %d, radio bearer %d", mapping.psi, mapping.qfi, mapping.radioBearer);
+        }
+
     }
 }
 

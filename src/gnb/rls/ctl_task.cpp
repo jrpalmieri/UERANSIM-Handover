@@ -8,23 +8,82 @@
 
 #include "ctl_task.hpp"
 
+#include <algorithm>
+#include <shared_mutex>
 #include <stdexcept>
 #include <utils/common.hpp>
 
 static constexpr const size_t MAX_PDU_COUNT = 4096;
 static constexpr const int MAX_PDU_TTL = 3000;
 
+// Packs (radioBearer, pduId) into a single uint64 key for the per-UE PDU map.
+static inline uint64_t pduKey(uint32_t pduId, uint8_t radioBearer)
+{
+    return static_cast<uint64_t>(radioBearer) << 32 | pduId;
+}
+
 static constexpr const int TIMER_ID_ACK_CONTROL = 1;
 static constexpr const int TIMER_ID_ACK_SEND = 2;
 
+// determines whether to require an ACK on an RRC packet
+static bool requireRrcAck(rrc::RrcChannel /*channel*/)
+{
+    return false;
+}
+
+static bool requireDataAck(int /*psi*/)
+{
+    return false;
+}
 
 namespace nr::gnb
 {
 
+// ── UE context helpers ──
+
+void RlsControlTask::createRlsUeContext(int64_t ueId)
+{
+    // emplace avoids operator[] which requires a default constructor
+    auto [it, inserted] = m_ueCtx.emplace(ueId, RlsUeContext(ueId));
+    if (inserted)
+    {
+        it->second.radioBearers.push_back(RadioBearer{0,    0, 0}); // SRB0
+        it->second.radioBearers.push_back(RadioBearer{0x41, 0, 0}); // DRB1
+    }
+}
+
+void RlsControlTask::deleteRlsUeContext(int64_t ueId)
+{
+    m_ueCtx.erase(ueId);
+}
+
+RlsUeContext *RlsControlTask::getRlsUeContext(int64_t ueId)
+{
+    // use find to avoid operator[] which requires a default constructor
+    auto it = m_ueCtx.find(ueId);
+    if (it == m_ueCtx.end())
+        return nullptr;
+    return &it->second;
+}
+
+// void RlsControlTask::updateUeBearer(int64_t ueId, uint8_t radioBearer, uint32_t pduId)
+// {
+//     auto ctx = getRlsUeContext(ueId);
+//     auto &bearers = ctx->radioBearers;
+//     auto it = std::find_if(bearers.begin(), bearers.end(),
+//         [&](const RadioBearer &b) { return b.bearerId == (radioBearer & 0x7f); });
+//     if (it != bearers.end())
+//         it->ulSn = pduId;
+//     else
+//         m_logger->warn("UE[%ld]: Received PDU for unknown radio bearer %d", ueId, radioBearer & 0x7f);
+// }
+
+// ── Constructor / lifecycle ───────────────────────────────────────────────────
+
 RlsControlTask::RlsControlTask(TaskBase *base, uint64_t sti)
-    : m_sti{sti}, m_cellId{base->config->nci}, m_mainTask{}, m_udpTask{}, m_pduMap{},
-      m_pendingAck{}, m_timerPeriodAckControl{base->config->rls.timerPeriodAckControl},
-      m_timerPeriodAckSend{base->config->rls.timerPeriodAckSend}
+    : m_sti{sti}, m_cellId{base->config->nci}, m_mainTask{}, m_udpTask{},
+        m_timerPeriodAckControl{base->config->rls.timerPeriodAckControl},
+        m_timerPeriodAckSend{base->config->rls.timerPeriodAckSend}
 {
     m_logger = base->logBase->makeUniqueLogger("rls-ctl");
 }
@@ -63,10 +122,13 @@ void RlsControlTask::onLoop()
             handleRlsMessage(w);
             break;
         case NmGnbRlsToRls::DOWNLINK_DATA:
-            handleDownlinkDataDelivery(w.ueId, w.psi, std::move(w.data));
+            handleDownlinkDataDelivery(w.ueId, w.psi, w.qfi, std::move(w.data));
             break;
         case NmGnbRlsToRls::DOWNLINK_RRC:
-            handleDownlinkRrcDelivery(w.ueId, w.pduId, w.rrcChannel, std::move(w.data));
+            handleDownlinkRrcDelivery(w.ueId, w.rrcChannel, std::move(w.data));
+            break;
+        case NmGnbRlsToRls::RADIO_BEARER_UPDATE:
+            handleRadioBearerUpdate(w.ueId, std::move(w.rbUpdate), std::move(w.sdapUpdate));
             break;
         default:
             m_logger->unhandledNts(*msg);
@@ -86,7 +148,6 @@ void RlsControlTask::onLoop()
             setTimer(TIMER_ID_ACK_SEND, m_timerPeriodAckSend);
             onAckSendTimerExpired();
         }
-
         break;
     }
     default:
@@ -99,8 +160,14 @@ void RlsControlTask::onQuit()
 {
 }
 
+// ── Signal handlers ───────────────────────────────────────────────────────────
+
 void RlsControlTask::handleSignalDetected(int64_t ueId)
 {
+    std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
+    if (!m_ueCtx.count(ueId))
+        createRlsUeContext(ueId);
+
     auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::SIGNAL_DETECTED);
     w->ueId = ueId;
     m_mainTask->push(std::move(w));
@@ -108,158 +175,382 @@ void RlsControlTask::handleSignalDetected(int64_t ueId)
 
 void RlsControlTask::handleSignalLost(int64_t ueId)
 {
+    // Note: do not delete RLS context until UE Context Release is provided from RRC
+    //  as this may be used in reconnect or handover scenarios.
     auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::SIGNAL_LOST);
     w->ueId = ueId;
     m_mainTask->push(std::move(w));
 }
 
+// ── RLS message handler ───────────────────────────────────────────────────────
+
 void RlsControlTask::handleRlsMessage(NmGnbRlsToRls &w)
 {
-    int64_t ueId       = w.ueId;
-    auto &msg      = *w.msg;
+    std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
+    int64_t ueId = w.ueId;
+    auto &msg    = *w.msg;
 
     if (msg.msgType == rls::EMessageType::PDU_TRANSMISSION_ACK)
     {
         auto &m = (rls::RlsPduTransmissionAck &)msg;
-        for (auto pduId : m.pduIds)
-            m_pduMap.erase(pduId);
+        auto ctx = getRlsUeContext(ueId);
+        for (size_t i = 0; i < m.pduIds.size(); i++)
+            ctx->m_pduMap.erase(pduKey(m.pduIds[i], m.radioBearers[i] & 0x7f));
     }
     else if (msg.msgType == rls::EMessageType::PDU_TRANSMISSION)
     {
         auto &m = (rls::RlsPduTransmission &)msg;
-        if (m.pduId != 0)
-            m_pendingAck[ueId].push_back(m.pduId);
+        auto ctx = getRlsUeContext(ueId);
+
+        if (m.ackPdu)
+            ctx->m_pendingAck.push_back(pduKey(m.pduId, m.radioBearer));
 
         if (m.pduType == rls::EPduType::DATA)
         {
+            //updateUeBearer(ueId, m.radioBearer, m.pduId);
             auto out = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_DATA);
-            out->ueId  = ueId;
-            out->psi   = static_cast<int>(m.payload);
-            out->data  = std::move(m.pdu);
-            // Position not needed for data path
+            out->ueId = ueId;
+            out->psi  = static_cast<int>(m.payloadType);
+            out->data = std::move(m.pdu);
             m_mainTask->push(std::move(out));
         }
         else if (m.pduType == rls::EPduType::RRC)
         {
+            //updateUeBearer(ueId, m.radioBearer, m.pduId);
             auto out = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_RRC);
-            out->ueId        = ueId;
-            out->rrcChannel  = static_cast<rrc::RrcChannel>(m.payload);
-            out->data        = std::move(m.pdu);
+            out->ueId       = ueId;
+            out->rrcChannel = static_cast<rrc::RrcChannel>(m.payloadType);
+            out->data       = std::move(m.pdu);
             m_mainTask->push(std::move(out));
         }
         else
         {
-            m_logger->err("Unhandled RLS PDU type");
+            m_logger->err("Unhandled RLS PDU type. Packet dropped.");
         }
     }
     else
     {
-        m_logger->err("Unhandled RLS message type");
+        m_logger->err("Unhandled RLS message type. Packet dropped.");
     }
 }
 
-void RlsControlTask::handleDownlinkRrcDelivery(int64_t ueId, uint32_t pduId, rrc::RrcChannel channel, OctetString &&data)
+// ── Downlink delivery ─────────────────────────────────────────────────────────
+
+void RlsControlTask::handleDownlinkRrcDelivery(int64_t ueId, rrc::RrcChannel channel, OctetString &&data)
 {
-    if (ueId == 0 && pduId != 0)
-    {
-        // PDU ID must be not set in case of broadcast
-        throw std::runtime_error("");
-    }
+    uint32_t pduId      = 0;
+    bool     ackPdu     = requireRrcAck(channel);
+    uint8_t  radioBearer = 0; // SRB0
 
-    if (pduId != 0)
+    if (ueId != 0)
+    // critical section
     {
-        if (m_pduMap.count(pduId))
+        std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
+        auto ctx = getRlsUeContext(ueId);
+        if (!ctx)
         {
-            m_pduMap.clear();
-
-            auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RADIO_LINK_FAILURE);
-            w->rlfCause = rls::ERlfCause::PDU_ID_EXISTS;
-            m_mainTask->push(std::move(w));
+            m_logger->warn("Received RRC for unknown UE ID %ld. Message dropped.", ueId);
             return;
         }
 
-        if (m_pduMap.size() > MAX_PDU_COUNT)
+        // this does nothing right now.  Would need to add a mapping of RRC channels to radio bearers to support more than just SRB0.
+        auto it = std::find_if(ctx->radioBearers.begin(), ctx->radioBearers.end(),
+            [radioBearer](const RadioBearer &b) { return b.bearerId == radioBearer; });
+        if (it == ctx->radioBearers.end())
         {
-            m_pduMap.clear();
-
-            auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RADIO_LINK_FAILURE);
-            w->rlfCause = rls::ERlfCause::PDU_ID_FULL;
-            m_mainTask->push(std::move(w));
+            m_logger->warn("UE[%ld]: No bearer %d for downlink RRC. Message dropped.", ueId, radioBearer);
             return;
         }
+        pduId = it->dlSn++;
 
-        m_pduMap[pduId].endPointId = ueId;
-        m_pduMap[pduId].id = pduId;
-        m_pduMap[pduId].pdu = data.copy();
-        m_pduMap[pduId].rrcChannel = channel;
-        m_pduMap[pduId].sentTime = utils::CurrentTimeMillis();
+        if (ackPdu)
+        {
+            const uint64_t key = pduKey(pduId, radioBearer);
+
+            if (ctx->m_pduMap.count(key))
+            {
+                auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RADIO_LINK_FAILURE);
+                w->rlfCause = rls::ERlfCause::PDU_ID_EXISTS;
+                m_mainTask->push(std::move(w));
+                return;
+            }
+
+            if (ctx->m_pduMap.size() > MAX_PDU_COUNT)
+            {
+                auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RADIO_LINK_FAILURE);
+                w->rlfCause = rls::ERlfCause::PDU_ID_FULL;
+                m_mainTask->push(std::move(w));
+                return;
+            }
+
+            auto &info = ctx->m_pduMap[key];
+            info.id          = pduId;
+            info.radioBearer = radioBearer;
+            info.pdu         = data.copy();
+            info.rrcChannel  = channel;
+            info.sentTime    = utils::CurrentTimeMillis();
+        }
     }
 
     rls::RlsPduTransmission msg{m_sti};
-    msg.pduType = rls::EPduType::RRC;
-    msg.pdu = std::move(data);
-    msg.payload = static_cast<uint32_t>(channel);
-    msg.pduId = pduId;
-
+    msg.pduType     = rls::EPduType::RRC;
+    msg.radioBearer = radioBearer;
+    msg.ackPdu      = ackPdu;
+    msg.pdu         = std::move(data);
+    msg.payloadType = static_cast<uint32_t>(channel);
+    msg.pduId       = pduId;
     m_udpTask->send(ueId, msg);
 }
 
-void RlsControlTask::handleDownlinkDataDelivery(int64_t ueId, int psi, OctetString &&data)
+
+void RlsControlTask::getBearerFromSdap(RlsUeContext &ctx, int psi, int qfi, uint8_t *radioBearer, uint32_t *pduId)
 {
-    rls::RlsPduTransmission msg{m_sti};
-    msg.pduType = rls::EPduType::DATA;
-    msg.pdu = std::move(data);
-    msg.payload = static_cast<uint32_t>(psi);
-    msg.pduId = 0;
 
+    *radioBearer = 0x41; // default to DRB1 if no SDAP mapping found
+
+    // match PSI and QFI to find the corresponding bearer ID and DL SN
+    auto it = std::find_if(ctx.sdapMappings.begin(), ctx.sdapMappings.end(),
+            [psi, qfi](const SdapMapping &m) { return m.qfi == qfi && m.psi == psi; });
+
+    if (it != ctx.sdapMappings.end())
+    {
+        *radioBearer = it->radioBearer;
+    }
+    
+    // find bearer for the given radioBearer ID to get the current DL SN for PDU ID assignment
+    auto bearerIt = std::find_if(ctx.radioBearers.begin(), ctx.radioBearers.end(),
+            [radioBearer](const RadioBearer &b) { return b.bearerId == (*radioBearer & 0x7f); });
+
+    if (bearerIt != ctx.radioBearers.end())
+    {
+        *pduId = bearerIt->dlSn++;
+    }
+    else
+    {
+        m_logger->warn("UE[%ld]: No bearer %d for SDAP mapping. Defaulting to DRB1.", ctx.ueId, *radioBearer & 0x7f);
+        *radioBearer = 0x41; // default to DRB1
+        auto defaultBearerIt = std::find_if(ctx.radioBearers.begin(), ctx.radioBearers.end(),
+            [](const RadioBearer &b) { return b.bearerId == 0x41; });
+        if (defaultBearerIt != ctx.radioBearers.end())
+        {
+            *pduId = defaultBearerIt->dlSn++;
+        }
+        else
+        {
+            m_logger->warn("UE[%ld]: No default bearer DRB1 found. PDU ID assignment failed.", ctx.ueId);
+            *pduId = 0; // fallback to 0, but this is a logic error - there should always be a default data bearer.
+        }
+    }
+
+}
+    
+
+void RlsControlTask::handleDownlinkDataDelivery(int64_t ueId, int psi, int qfi, OctetString &&data)
+{
+    uint32_t pduId      = 0;
+    bool     ackPdu     = requireDataAck(psi);
+    uint8_t radioBearer = 0x41; // DRB1
+
+    // critical section
+    {
+        std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
+
+        auto ctx = getRlsUeContext(ueId);
+        if (!ctx)
+        {
+            m_logger->warn("Received data for unknown UE ID %ld. Message dropped.", ueId);
+            return;
+        }
+
+        getBearerFromSdap(*ctx, psi, qfi, &radioBearer, &pduId);
+
+        if (ackPdu)
+        {
+            const uint64_t key = pduKey(pduId, radioBearer);
+
+            if (ctx->m_pduMap.count(key))
+            {
+                auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RADIO_LINK_FAILURE);
+                w->rlfCause = rls::ERlfCause::PDU_ID_EXISTS;
+                m_mainTask->push(std::move(w));
+                return;
+            }
+
+            if (ctx->m_pduMap.size() > MAX_PDU_COUNT)
+            {
+                auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RADIO_LINK_FAILURE);
+                w->rlfCause = rls::ERlfCause::PDU_ID_FULL;
+                m_mainTask->push(std::move(w));
+                return;
+            }
+
+            auto &info = ctx->m_pduMap[key];
+            info.id          = pduId;
+            info.radioBearer = radioBearer;
+            info.pdu         = data.copy();
+            info.sentTime    = utils::CurrentTimeMillis();
+        }
+    }
+
+    rls::RlsPduTransmission msg{m_sti};
+    msg.pduType     = rls::EPduType::DATA;
+    msg.radioBearer = radioBearer;
+    msg.ackPdu      = ackPdu;
+    msg.pdu         = std::move(data);
+    msg.payloadType = static_cast<uint32_t>(psi);
+    msg.pduId       = pduId;
+    msg.sdapByte    = static_cast<uint8_t>(qfi);
     m_udpTask->send(ueId, msg);
 }
+
+
+// Handles a message from RRC to update the Radio Bearer and SDAP mappings for a UE.
+void RlsControlTask::handleRadioBearerUpdate(int64_t ueId, std::unique_ptr<RadioBearerUpdate> rbUpdate, std::unique_ptr<SdapUpdate> sdapUpdate)
+{
+    std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
+    auto ctx = getRlsUeContext(ueId);
+    if (!ctx)
+        return;
+
+    if (rbUpdate)
+    {
+        // Delete old radio bearers
+        for (const auto &bearerId : rbUpdate->deleteBearers)
+        {
+            ctx->radioBearers.erase(std::remove_if(ctx->radioBearers.begin(), ctx->radioBearers.end(),
+                                                    [bearerId](const RadioBearer &b) { return b.bearerId == bearerId; }),
+                                     ctx->radioBearers.end());
+        }
+
+        // Add/update new bearers
+        for (const auto &bearer : rbUpdate->upsertBearers)
+        {
+            // Update the radio bearer in the context
+            auto it = std::find_if(ctx->radioBearers.begin(), ctx->radioBearers.end(),
+                                    [bearer](const RadioBearer &b) { return b.bearerId == bearer.bearerId; });
+            if (it != ctx->radioBearers.end())
+            {
+                *it = bearer;
+            }
+            else
+            {
+                ctx->radioBearers.push_back(bearer);
+            }
+        }
+    }
+
+    if (sdapUpdate)
+    {
+        // Delete old SDAP mappings
+        for (const auto &mapping : sdapUpdate->deleteSdapMappings)
+        {
+            ctx->sdapMappings.erase(std::remove_if(ctx->sdapMappings.begin(), ctx->sdapMappings.end(),
+                                                    [mapping](const SdapMapping &m) { return m.qfi == mapping.qfi && m.psi == mapping.psi; }),
+                                     ctx->sdapMappings.end());
+        }
+
+        // Process SDAP update
+        for (const auto &mapping : sdapUpdate->upsertSdapMappings)
+        {
+            // Update the SDAP mapping in the context
+            auto it = std::find_if(ctx->sdapMappings.begin(), ctx->sdapMappings.end(),
+                                    [mapping](const SdapMapping &m) { return m.qfi == mapping.qfi && m.psi == mapping.psi; });
+            if (it != ctx->sdapMappings.end())
+            {
+                *it = mapping;
+            }
+            else
+            {
+                ctx->sdapMappings.push_back(mapping);
+            }
+        }
+    }
+}
+
+
+// ── Timer handlers ────────────────────────────────────────────────────────────
 
 void RlsControlTask::onAckControlTimerExpired()
 {
+    std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
     int64_t current = utils::CurrentTimeMillis();
 
-    std::vector<uint32_t> transmissionFailureIds;
-    std::vector<rls::PduInfo> transmissionFailures;
-
-    for (auto &pdu : m_pduMap)
+    // Iterate through each UE context
+    for (auto &entry : m_ueCtx)
     {
-        auto delta = current - pdu.second.sentTime;
-        if (delta > MAX_PDU_TTL)
+        int64_t ueId  = entry.first;
+        auto   &ctx   = entry.second;
+
+        std::vector<uint64_t> expiredKeys;
+        std::vector<rls::PduInfo> failures;
+
+        for (auto &kv : ctx.m_pduMap)
         {
-            transmissionFailureIds.push_back(pdu.first);
-            transmissionFailures.push_back(std::move(pdu.second));
+            if (current - kv.second.sentTime > MAX_PDU_TTL)
+            {
+                expiredKeys.push_back(kv.first);
+                failures.push_back(std::move(kv.second));
+            }
         }
-    }
 
-    for (auto id : transmissionFailureIds)
-        m_pduMap.erase(id);
+        for (auto key : expiredKeys)
+            ctx.m_pduMap.erase(key);
 
-    if (!transmissionFailures.empty())
-    {
-        auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::TRANSMISSION_FAILURE);
-        w->pduList = std::move(transmissionFailures);
-        m_mainTask->push(std::move(w));
+        if (!failures.empty())
+        {
+            auto w = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::TRANSMISSION_FAILURE);
+            w->ueId    = ueId;
+            w->pduList = std::move(failures);
+            m_mainTask->push(std::move(w));
+        }
     }
 }
 
 void RlsControlTask::onAckSendTimerExpired()
 {
-    auto copy = m_pendingAck;
-    m_pendingAck.clear();
-
-    for (auto &item : copy)
+    std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
+    for (auto &entry : m_ueCtx)
     {
-        if (!item.second.empty())
+        int64_t ueId = entry.first;
+        auto   &ctx  = entry.second;
+
+        if (ctx.m_pendingAck.empty())
             continue;
 
         rls::RlsPduTransmissionAck msg{m_sti};
-        msg.pduIds = std::move(item.second);
+        msg.pduIds.reserve(ctx.m_pendingAck.size());
+        msg.radioBearers.reserve(ctx.m_pendingAck.size());
 
-        m_udpTask->send(item.first, msg);
+        for (uint64_t packed : ctx.m_pendingAck)
+        {
+            msg.pduIds.push_back(static_cast<uint32_t>(packed & 0xFFFFFFFF));
+            msg.radioBearers.push_back(static_cast<uint8_t>((packed >> 32) & 0xFF));
+        }
+        ctx.m_pendingAck.clear();
+
+        m_udpTask->send(ueId, msg);
     }
 }
 
+// ── Cross-task context access ─────────────────────────────────────────────────
 
+std::optional<RlsUeContext> RlsControlTask::copyUeContext(int64_t ueId) const
+{
+    std::shared_lock<std::shared_mutex> lock(m_ueCtxMutex);
+    auto it = m_ueCtx.find(ueId);
+    if (it == m_ueCtx.end())
+        return std::nullopt;
+
+    // PduInfo contains a non-copyable OctetString, so we manually copy only the
+    // fields that callers (RRC, Xn SN Status Transfer) actually need.
+    const auto &src = it->second;
+    RlsUeContext snap(src.ueId);
+    snap.sti          = src.sti;
+    snap.cRnti        = src.cRnti;
+    snap.radioBearers = src.radioBearers;   // RadioBearer is trivially copyable
+    snap.m_pendingAck = src.m_pendingAck;   // vector<uint64_t> is copyable
+    // m_pduMap omitted: rebuilding it would require OctetString::copy() per entry
+    return snap;
+}
 
 } // namespace nr::gnb

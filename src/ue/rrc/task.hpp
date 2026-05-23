@@ -20,6 +20,8 @@
 #include <utils/nts.hpp>
 
 #include <asn/rrc/ASN_RRC_InitialUE-Identity.h>
+#include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
+#include <asn/rrc/ASN_RRC_RadioBearerConfig.h>
 
 namespace nr::ue
 {
@@ -134,6 +136,8 @@ class UeRrcTask : public NtsTask
     void receiveRrcSetup(int64_t cellId, const ASN_RRC_RRCSetup &msg);
     void receiveRrcReject(int64_t cellId, const ASN_RRC_RRCReject &msg);
     void receiveRrcRelease(const ASN_RRC_RRCRelease &msg);
+    void setupRadioBearers(const ASN_RRC_RadioBearerConfig &config);
+    void receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg);
 
     /* Failures */
     // void declareRadioLinkFailure(rls::ERlfCause cause);
@@ -150,7 +154,6 @@ class UeRrcTask : public NtsTask
     void sendMeasurementReport(int measId, int64_t servingCellId, int servingCellRsrp,
                                const std::vector<struct TriggeredNeighbor> &neighbors);
     //int getServingCellRsrp(int servingCellId, const std::map<int, int> &allMeas) const;
-    void receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg);
 
     /* Handover execution */
     void performHandover(long txId, int64_t targetCellId, int newCRNTI,

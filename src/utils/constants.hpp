@@ -14,7 +14,7 @@ struct cons
 {
     // Version information
     static constexpr const uint8_t Major = 3;
-    static constexpr const uint8_t Minor = 3;
+    static constexpr const uint8_t Minor = 4;
     static constexpr const uint8_t Patch = 7;
     static constexpr const char *Project = "UERANSIM";
     static constexpr const char *Tag = "v3.3.7";

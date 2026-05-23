@@ -171,6 +171,15 @@ void NgapTask::deliverDownlinkNas(int64_t ueId, OctetString &&nasPdu)
     m_base->rrcTask->push(std::move(w));
 }
 
+void NgapTask::deliverDownlinkNasAccept(int64_t ueId, OctetString &&nasPdu, std::unique_ptr<std::vector<PduSessionResource>> sessionList)
+{
+    auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::NAS_ACCEPT);
+    w->ueId = ueId;
+    w->sessionList = std::move(sessionList);
+    w->pdu = std::move(nasPdu);
+    m_base->rrcTask->push(std::move(w));
+}
+
 void NgapTask::handleUplinkNasTransport(int64_t ueId, const OctetString &nasPdu)
 {
     auto *ue = findUeContext(ueId);

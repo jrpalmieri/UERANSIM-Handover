@@ -7,9 +7,7 @@ build: FORCE
 	mkdir -p build
 	rm -fr build/*
 	
-	# cmake -DCMAKE_BUILD_TYPE=Debug -G "Unix Makefiles" . -B build
-	cmake -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" . -B build
-	# cmake --build build --target all -j4
+	cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -G "Unix Makefiles" . -B build
 	cmake --build build --target all -j4
 	
 	cp tools/nr-binder build/

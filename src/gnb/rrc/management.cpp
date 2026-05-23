@@ -13,15 +13,6 @@
 namespace nr::gnb
 {
 
-int GnbRrcTask::getNextTid(int64_t ueId)
-{
-    if (ueId <= 0)
-        return 0;
-
-    int &counter = m_tidCountersByUe[ueId];
-    counter = (counter + 1) % 4;
-    return counter;
-}
 
 /**
  * @brief Used to allocate a unique Cell Radio Network Temporary Identifier (C-RNTI) 

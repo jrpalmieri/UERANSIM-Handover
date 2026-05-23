@@ -65,6 +65,21 @@ NgapUeContext *NgapTask::findUeContext(int64_t ctxId)
     return ctx;
 }
 
+// Copy UE Context to output parameter. Returns true if found, false if not found.
+bool NgapTask::getUeContext(int64_t ueId, std::optional<NgapUeContext> &out)
+{
+    auto *ctx = findUeContext(ueId);
+    if (ctx == nullptr)
+        return false;
+    out.emplace(*ctx);
+    return true;
+}
+
+NgapAmfContext *NgapTask::getAmfContextForXn(int amfId)
+{
+    return findAmfContext(amfId);
+}
+
 NgapUeContext *NgapTask::findUeByRanId(int64_t ranUeNgapId)
 {
     if (ranUeNgapId <= 0)

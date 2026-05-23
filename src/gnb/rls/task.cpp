@@ -61,7 +61,6 @@ void GnbRlsTask::onLoop()
         case NmGnbRlsToRls::SIGNAL_DETECTED: {
             auto m = std::make_unique<NmGnbRlsToRrc>(NmGnbRlsToRrc::SIGNAL_DETECTED);
             m->ueId = w.ueId;
-            m->cRnti = w.cRnti;
             m_base->rrcTask->push(std::move(m));
             break;
         }
@@ -72,7 +71,6 @@ void GnbRlsTask::onLoop()
         case NmGnbRlsToRls::UPLINK_DATA: {
             auto m = std::make_unique<NmGnbRlsToGtp>(NmGnbRlsToGtp::DATA_PDU_DELIVERY);
             m->ueId = w.ueId;
-            m->cRnti = w.cRnti;
             m->psi = w.psi;
             m->pdu = std::move(w.data);
             m_base->gtpTask->push(std::move(m));
@@ -81,7 +79,6 @@ void GnbRlsTask::onLoop()
         case NmGnbRlsToRls::UPLINK_RRC: {
             auto m = std::make_unique<NmGnbRlsToRrc>(NmGnbRlsToRrc::UPLINK_RRC);
             m->ueId       = w.ueId;
-            m->cRnti      = w.cRnti;
             m->rrcChannel = w.rrcChannel;
             m->data       = std::move(w.data);
             m_base->rrcTask->push(std::move(m));
@@ -109,10 +106,16 @@ void GnbRlsTask::onLoop()
         case NmGnbRrcToRls::RRC_PDU_DELIVERY: {
             auto m = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::DOWNLINK_RRC);
             m->ueId = w.ueId;
-            m->cRnti = w.cRnti;
             m->rrcChannel = w.channel;
-            m->pduId = 0;
             m->data = std::move(w.pdu);
+            m_ctlTask->push(std::move(m));
+            break;
+        }
+        case NmGnbRrcToRls::RADIO_BEARER_UPDATE: {
+            auto m = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::RADIO_BEARER_UPDATE);
+            m->ueId = w.ueId;
+            m->rbUpdate = std::move(w.rbUpdate);
+            m->sdapUpdate = std::move(w.sdapUpdate);
             m_ctlTask->push(std::move(m));
             break;
         }
@@ -126,8 +129,8 @@ void GnbRlsTask::onLoop()
         case NmGnbGtpToRls::DATA_PDU_DELIVERY: {
             auto m = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::DOWNLINK_DATA);
             m->ueId = w.ueId;
-            m->cRnti = w.cRnti;
             m->psi = w.psi;
+            m->qfi = w.qfi;
             m->data = std::move(w.pdu);
             m_ctlTask->push(std::move(m));
             break;

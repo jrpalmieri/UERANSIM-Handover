@@ -475,20 +475,12 @@ static void ReadXnConfig(const YAML::Node &xn, nr::gnb::GnbXnConfig &out)
     if (yaml::HasField(xn, "enabled"))
         out.enabled = yaml::GetBool(xn, "enabled");
 
-    if (yaml::HasField(xn, "bindAddress"))
-        out.bindAddress = yaml::GetIpAddress(xn, "bindAddress");
+    if (yaml::HasField(xn, "xnIp"))
+        out.xnIp = yaml::GetIpAddress(xn, "xnIp");
 
-    if (yaml::HasField(xn, "bindPort"))
-        out.bindPort = static_cast<uint16_t>(yaml::GetInt32(xn, "bindPort", 1, 65535));
+    if (yaml::HasField(xn, "xnPort"))
+        out.xnPort = static_cast<uint16_t>(yaml::GetInt32(xn, "xnPort", 1, 65535));
 
-    if (yaml::HasField(xn, "requestTimeoutMs"))
-        out.requestTimeoutMs = yaml::GetInt32(xn, "requestTimeoutMs", 100, 60 * 1000);
-
-    if (yaml::HasField(xn, "contextTtlMs"))
-        out.contextTtlMs = yaml::GetInt32(xn, "contextTtlMs", 500, 5 * 60 * 1000);
-
-    if (yaml::HasField(xn, "fallbackToN2"))
-        out.fallbackToN2 = yaml::GetBool(xn, "fallbackToN2");
 }
 
 static void ReadHandoverConfigSection(
@@ -617,7 +609,7 @@ static nr::gnb::GnbConfig *ReadConfigYaml()
     }
 
     if (yaml::HasField(config, "xn"))
-        ReadXnConfig(config["xn"], result->handover.xn);
+        ReadXnConfig(config["xn"], result->xn);
 
     if (yaml::HasField(config, "ntn"))
     {

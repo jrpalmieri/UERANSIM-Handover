@@ -85,12 +85,19 @@ struct NmGnbGtpToRls : NtsMessage
     enum PR
     {
         DATA_PDU_DELIVERY,
+        SESSION_UPDATE,
     } present;
 
     // DATA_PDU_DELIVERY
+    // SESSION_UPDATE
     int64_t ueId{};
-    int cRnti{};
     int psi{};
+    int qfi{};
+
+    // SESSION_UPDATE
+    std::unique_ptr<PduSessionSdapUpdate> sdap{};
+
+    // DATA_PDU_DELIVERY
     OctetString pdu{};
 
     explicit NmGnbGtpToRls(PR present) : NtsMessage(NtsMessageType::GNB_GTP_TO_RLS), present(present)
@@ -111,6 +118,7 @@ struct NmGnbRlsToRls : NtsMessage
         UPLINK_DATA,
         RADIO_LINK_FAILURE,
         TRANSMISSION_FAILURE,
+        RADIO_BEARER_UPDATE,
     } present;
 
     // SIGNAL_DETECTED
@@ -121,23 +129,20 @@ struct NmGnbRlsToRls : NtsMessage
     // UPLINK_RRC
     int64_t ueId{};
 
-    // SIGNAL_DETECTED
-    // UPLINK_DATA
-    // UPLINK_RRC
-    int cRnti{};
-
     // RECEIVE_RLS_MESSAGE
     std::unique_ptr<rls::RlsMessage> msg{};
 
     // DOWNLINK_DATA
     // UPLINK_DATA
     int psi{};
+    int qfi{};
 
     // DOWNLINK_DATA
     // DOWNLINK_RRC
     // UPLINK_DATA
     // UPLINK_RRC
     OctetString data;
+    uint8_t radioBearer{};
 
     // DOWNLINK_RRC
     uint32_t pduId{};
@@ -152,6 +157,11 @@ struct NmGnbRlsToRls : NtsMessage
     // TRANSMISSION_FAILURE
     std::vector<rls::PduInfo> pduList;
 
+    // RADIO_BEARER_UPDATE
+    std::unique_ptr<RadioBearerUpdate> rbUpdate{};
+    std::unique_ptr<SdapUpdate> sdapUpdate{};
+
+
     explicit NmGnbRlsToRls(PR present) : NtsMessage(NtsMessageType::GNB_RLS_TO_RLS), present(present)
     {
     }
@@ -162,6 +172,7 @@ struct NmGnbRrcToRls : NtsMessage
     enum PR
     {
         RRC_PDU_DELIVERY,
+        RADIO_BEARER_UPDATE,
     } present;
 
     // RRC_PDU_DELIVERY
@@ -170,6 +181,10 @@ struct NmGnbRrcToRls : NtsMessage
     rrc::RrcChannel channel{};
     OctetString pdu{};
 
+    // RADIO_BEARER_UPDATE
+    std::unique_ptr<RadioBearerUpdate> rbUpdate{};
+    std::unique_ptr<SdapUpdate> sdapUpdate{};
+    
     explicit NmGnbRrcToRls(PR present) : NtsMessage(NtsMessageType::GNB_RRC_TO_RLS), present(present)
     {
     }
@@ -181,12 +196,16 @@ struct NmGnbNgapToRrc : NtsMessage
     {
         RADIO_POWER_ON,
         NAS_DELIVERY,
+        NAS_ACCEPT,
         AN_RELEASE,
         PAGING,
         UE_CONTEXT_RELEASE,
         HANDOVER_COMMAND_DELIVERY,
         HANDOVER_FAILURE,
         PATH_SWITCH_REQUEST_ACK,
+        PATH_SWITCH_REQUEST_FAILURE,
+        SECURITY_INFO,
+        PDU_SESSION_UPDATE,
     } present;
 
     // HANDOVER_COMMAND_DELIVERY
@@ -200,12 +219,22 @@ struct NmGnbNgapToRrc : NtsMessage
     int64_t ueId{};
     int cRnti{};
 
+    // NAS_ACCEPT
+    std::unique_ptr<std::vector<PduSessionResource>> sessionList{};
+
     // NAS_DELIVERY
+    // NAS_ACCEPT
     OctetString pdu{};
 
     // PAGING
     asn::Unique<ASN_NGAP_FiveG_S_TMSI> uePagingTmsi{};
     asn::Unique<ASN_NGAP_TAIListForPaging> taiListForPaging{};
+
+    // Security Info
+    std::unique_ptr<UeSecurityInfo> ueSecInfo{};
+
+    // PDU_SESSION_UPDATE
+    std::unique_ptr<PduSessionSdapUpdate> sdapUpdate{};
 
     explicit NmGnbNgapToRrc(PR present) : NtsMessage(NtsMessageType::GNB_NGAP_TO_RRC), present(present)
     {
@@ -221,6 +250,7 @@ struct NmGnbRrcToNgap : NtsMessage
         RADIO_LINK_FAILURE,
         HANDOVER_NOTIFY,
         HANDOVER_REQUIRED,
+        PATH_SWITCH_REQUEST,
     } present;
 
     // HANDOVER_REQUIRED
@@ -282,17 +312,22 @@ struct NmGnbRrcToXn : NtsMessage
 {
     enum PR
     {
-        HANDOVER_REQUIRED_XN,
-        HANDOVER_COMPLETE_XN,
+        HANDOVER_REQUEST_SEND,            // ueId, targetNci, isCho
+        HANDOVER_REQUEST_ACK_SEND,        // ueId, targetNci, isCho, rrcReconfigIe
+        HANDOVER_CANCEL_SEND,             // ueId, targetNci, isCho
+        HANDOVER_PREPARATION_FAILURE_SEND,// ueId, targetNci, isCho, reason
+        UE_CONTEXT_RELEASE_SEND,          // ueId, targetNci
+        SN_STATUS_TRANSFER_SEND,          // ueId, targetNci, isCho
+        HANDOVER_SUCCESS_SEND,            // ueId, targetNci
+        CONDITION_HANDOVER_CANCEL_SEND,   // ueId, targetNci
     } present;
 
-    // HANDOVER_REQUIRED_XN
-    // HANDOVER_COMPLETE_XN
     int64_t ueId{};
-
-    // HANDOVER_REQUIRED_XN
-    int64_t hoTargetNci{};
-    NgapCause hoCause{};
+    int64_t targetNci{};
+    bool isCho{};
+    OctetString rrcReconfigIe;
+    int reason{};
+    int retries=0;
 
     explicit NmGnbRrcToXn(PR present) : NtsMessage(NtsMessageType::GNB_RRC_TO_XN), present(present)
     {
@@ -303,59 +338,27 @@ struct NmGnbXnToRrc : NtsMessage
 {
     enum PR
     {
-        HANDOVER_COMMAND_READY,
-        HANDOVER_PREP_FAILURE,
-        SOURCE_CONTEXT_RELEASE,
+        HANDOVER_FAILED,                      // ueId, targetNci, isCho, reason
+        HANDOVER_PREPARATION_FAILURE_RECEIVE, // ueId, targetNci, isCho, reason
+        HANDOVER_REQUEST_ACK_RECEIVE,         // ueId, targetNci, isCho, rrcReconfigIe
+        HANDOVER_CANCEL_RECEIVE,              // ueId, targetNci, isCho
+        UE_CONTEXT_RELEASE_RECEIVE,           // ueId, targetNci
+        SN_STATUS_TRANSFER_RECEIVE,           // ueId, targetNci, isCho
+        HANDOVER_SUCCESS_RECEIVE,             // ueId, targetNci
+        CONDITIONAL_HANDOVER_CANCEL_RECEIVE,  // ueId, targetNci
     } present;
 
-    // HANDOVER_COMMAND_READY
-    // HANDOVER_PREP_FAILURE
-    // SOURCE_CONTEXT_RELEASE
     int64_t ueId{};
-
-    // HANDOVER_COMMAND_READY
     int64_t targetNci{};
-    int newCrnti{};
-    int t304Ms{};
-
-    // HANDOVER_PREP_FAILURE
-    int causeCode{};
+    bool isCho{};
+    OctetString rrcReconfigIe;
+    int reason{};
 
     explicit NmGnbXnToRrc(PR present) : NtsMessage(NtsMessageType::GNB_XN_TO_RRC), present(present)
     {
     }
 };
 
-struct NmGnbXnToNgap : NtsMessage
-{
-    enum PR
-    {
-        PATH_SWITCH_REQUEST_REQUIRED,
-    } present;
-
-    // PATH_SWITCH_REQUEST_REQUIRED
-    int64_t ueId{};
-
-    explicit NmGnbXnToNgap(PR present) : NtsMessage(NtsMessageType::GNB_XN_TO_NGAP), present(present)
-    {
-    }
-};
-
-struct NmGnbNgapToXn : NtsMessage
-{
-    enum PR
-    {
-        PATH_SWITCH_ACK,
-    } present;
-
-    // PATH_SWITCH_ACK
-    int64_t ueId{};
-    bool success{};
-
-    explicit NmGnbNgapToXn(PR present) : NtsMessage(NtsMessageType::GNB_NGAP_TO_XN), present(present)
-    {
-    }
-};
 
 struct NmGnbSctp : NtsMessage
 {
@@ -386,6 +389,8 @@ struct NmGnbSctp : NtsMessage
     uint16_t remotePort{};
     sctp::PayloadProtocolId ppid{};
     NtsTask *associatedTask{};
+    uint16_t maxTxStreams{10};
+    uint16_t maxRxStreams{10};
 
     // ASSOCIATION_SETUP
     int associationId{};

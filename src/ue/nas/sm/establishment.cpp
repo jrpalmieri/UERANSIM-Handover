@@ -36,6 +36,7 @@ static nas::IEIntegrityProtectionMaximumDataRate MakeIntegrityMaxRate(const Inte
     return res;
 }
 
+// sends NAS message to request session establishment
 void NasSm::sendEstablishmentRequest(const SessionConfig &config)
 {
     m_logger->debug("Sending PDU Session Establishment Request");
@@ -172,6 +173,8 @@ void NasSm::receiveEstablishmentAccept(const nas::PduSessionEstablishmentAccept 
 
     auto statusUpdate = std::make_unique<NmUeStatusUpdate>(NmUeStatusUpdate::SESSION_ESTABLISHMENT);
     statusUpdate->pduSession = pduSession;
+
+    // Send msg to AppTask to set up TUN interface for this session
     m_base->appTask->push(std::move(statusUpdate));
 
     m_logger->info("PDU Session establishment is successful PSI[%d]", pduSession->psi);

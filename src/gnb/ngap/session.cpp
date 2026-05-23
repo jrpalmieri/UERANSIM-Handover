@@ -14,6 +14,7 @@
 #include <stdexcept>
 
 #include <gnb/gtp/task.hpp>
+#include <gnb/rrc/task.hpp>
 
 #include <asn/ngap/ASN_NGAP_AssociatedQosFlowItem.h>
 #include <asn/ngap/ASN_NGAP_AssociatedQosFlowList.h>
@@ -40,17 +41,27 @@
 namespace nr::gnb
 {
 
+// Sets up PDU session resources for a UE based on the received setup request.
+//  Note: used after UE Context setup to add sessions to the UE's context.  The intial context setup may have
+//  already created PDU sessions, which case this message may not be received by the gNB.
 void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSessionResourceSetupRequest *msg)
 {
+    // find the UE Context based on the AMF UE NGAP ID and RAN UE NGAP ID in the message
+    auto *ue = findUeByNgapIdPair(amfId, ngap_utils::FindNgapIdPair(msg));
+    if (ue == nullptr) {
+        m_logger->err("Received PDU session resource setup request, but UE not found for AMF ID %d and RAN ID %d.  Aborting PDU session resource setup request processing.", amfId, ngap_utils::FindNgapIdPair(msg).ranUeNgapId);
+        return;
+    }
+
     std::vector<ASN_NGAP_PDUSessionResourceSetupItemSURes *> successList;
     std::vector<ASN_NGAP_PDUSessionResourceFailedToSetupItemSURes *> failedList;
 
-    auto *ue = findUeByNgapIdPair(amfId, ngap_utils::FindNgapIdPair(msg));
-    if (ue == nullptr)
-        return;
 
     m_logger->info("UE[%ld]: Received PDU session resource setup request with %d items", ue->ctxId, 
         msg->protocolIEs.list.count);
+
+    // Create a list to store the PDU session resources for RRC message
+    auto sessionList = std::make_unique<std::vector<PduSessionResource>>();
 
     auto *ieList = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceSetupListSUReq);
     if (ieList)
@@ -59,6 +70,7 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
             ieList->PDUSessionResourceSetupListSUReq.list.count);
 
         auto &list = ieList->PDUSessionResourceSetupListSUReq.list;
+
         for (int i = 0; i < list.count; i++)
         {
             auto &item = list.array[i];
@@ -112,8 +124,11 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
                 resource->qosFlows = asn::WrapUnique(ptr, asn_DEF_ASN_NGAP_QosFlowSetupRequestList);
             }
 
+            // Instruct GTP to setup the UP tunnel
             m_logger->debug("UE[%ld]: Processing PDU session resource setup request item with PSI=%d", ue->ctxId, resource->psi);
             auto error = setupPduSessionResource(ue, resource);
+            
+            // GTP failure
             if (error.has_value())
             {
                 auto *tr = asn::New<ASN_NGAP_PDUSessionResourceSetupUnsuccessfulTransfer>();
@@ -133,8 +148,13 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
 
                 failedList.push_back(res);
             }
+            // GTP success
             else
             {
+
+                // add to the session list to be sent to RRC
+                sessionList->emplace_back(*resource);
+
                 m_logger->debug("UE[%ld]: PDU session resource setup successful with PSI=%d", ue->ctxId, resource->psi);
                 if (item->pDUSessionNAS_PDU)
                     deliverDownlinkNas(ue->ctxId, asn::GetOctetString(*item->pDUSessionNAS_PDU));
@@ -174,12 +194,19 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
         }
     }
 
+    // Send to RRC the NAS Accept Message that is included in the PDU session resource setup request, 
+    //   and the list of PDU sessions that are being set up
     auto *ieNasPdu = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_NAS_PDU);
     if (ieNasPdu)
     {
+
         m_logger->debug("UE[%ld]: Processing IE NAS PDU", ue->ctxId);
-        deliverDownlinkNas(ue->ctxId, asn::GetOctetString(ieNasPdu->NAS_PDU));
+        deliverDownlinkNasAccept(ue->ctxId, asn::GetOctetString(ieNasPdu->NAS_PDU), std::move(sessionList));
+
+        m_logger->debug("UE[%ld]: PDU Session Setup Request - NAS Accept and PDU Session List [count=%d] sent to RRC", ue->ctxId, sessionList ? sessionList->size() : 0);
     }
+
+    // Send response to AMF
 
     std::vector<ASN_NGAP_PDUSessionResourceSetupResponseIEs *> responseIes;
 
@@ -310,6 +337,7 @@ void NgapTask::receiveSessionResourceReleaseCommand(int amfId, ASN_NGAP_PDUSessi
         m_base->gtpTask->push(std::move(w));
 
         ue->pduSessions.erase(psi);
+
     }
 
     for (auto &psi : psIds)

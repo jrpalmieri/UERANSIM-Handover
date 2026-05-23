@@ -15,8 +15,10 @@
 
 #include <asn/rrc/ASN_RRC_RRCSetup-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCSetup.h>
+#include <asn/rrc/ASN_RRC_RegisteredAMF.h>
 #include <asn/rrc/ASN_RRC_RRCSetupComplete-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCSetupComplete.h>
+#include <lib/asn/rrc.hpp>
 #include <asn/rrc/ASN_RRC_RRCSetupRequest-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCSetupRequest.h>
 
@@ -112,7 +114,7 @@ void UeRrcTask::receiveRrcSetup(int64_t cellId, const ASN_RRC_RRCSetup &msg)
     ies->selectedPLMN_Identity = 1;
     asn::SetOctetString(ies->dedicatedNAS_Message, m_initialNasPdu);
 
-    /* Send S-TMSI if available */
+    /* Send S-TMSI and GUAMI if available */
     std::optional<GutiMobileIdentity> gutiOrTmsi = m_base->shCtx.providedGuti.get();
     if (!gutiOrTmsi)
         gutiOrTmsi = m_base->shCtx.providedTmsi.get();
@@ -122,8 +124,18 @@ void UeRrcTask::receiveRrcSetup(int64_t cellId, const ASN_RRC_RRCSetup &msg)
             asn::New<ASN_RRC_RRCSetupComplete_IEs::ASN_RRC_RRCSetupComplete_IEs__ng_5G_S_TMSI_Value>();
         sTmsi->present = ASN_RRC_RRCSetupComplete_IEs__ng_5G_S_TMSI_Value_PR_ng_5G_S_TMSI;
         asn::SetBitStringLong<48>(gutiOrTmsi->toTmsiValue(), sTmsi->choice.ng_5G_S_TMSI);
+    
+        auto &guami = setupComplete->criticalExtensions.choice.rrcSetupComplete->registeredAMF =
+            asn::New<ASN_RRC_RegisteredAMF>();
+        guami->plmn_Identity = asn::rrc::NewPlmnId(gutiOrTmsi->plmn);
+        int64_t amfId = ((int64_t)(uint8_t)gutiOrTmsi->amfRegionId << 16) |
+                        ((int64_t)gutiOrTmsi->amfSetId << 6) |
+                        (int64_t)gutiOrTmsi->amfPointer;
+        asn::SetBitStringLong<24>(amfId, guami->amf_Identifier);
+    
     }
 
+    
     m_initialNasPdu = {};
     sendRrcMessage(pdu);
     asn::Free(asn_DEF_ASN_RRC_UL_DCCH_Message, pdu);

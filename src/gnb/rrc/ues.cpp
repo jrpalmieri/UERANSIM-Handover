@@ -56,4 +56,13 @@ RrcUeContext *GnbRrcTask::tryFindUeByUeId(int64_t ueId)
     return nullptr;
 }
 
+bool GnbRrcTask::getUeContext(int64_t ueId, std::optional<RrcUeContext> &out)
+{
+    auto *ctx = tryFindUeByUeId(ueId);
+    if (ctx == nullptr)
+        return false;
+    out.emplace(*ctx);
+    return true;
+}
+
 } // namespace nr::gnb

@@ -13,6 +13,7 @@
 #include <gnb/gtp/task.hpp>
 #include <gnb/rrc/task.hpp>
 
+#include <asn/ngap/ASN_NGAP_AllowedNSSAI-Item.h>
 #include <asn/ngap/ASN_NGAP_AMF-UE-NGAP-ID.h>
 #include <asn/ngap/ASN_NGAP_AssociatedQosFlowItem.h>
 #include <asn/ngap/ASN_NGAP_AssociatedQosFlowList.h>
@@ -78,12 +79,67 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
     m_logger->debug("UE[%ld] Initial Context Setup Request mapped to UE", ue->ctxId);
 
     // User plane - Initial context setup
-    auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_UPDATE);
-    w->update = std::make_unique<GtpUeContextUpdate>(true, ue->ctxId, ue->ueAmbr);
-    w->ueId = ue->ctxId;
-    m_logger->debug("UE[%ld] Initial Context Setup: sending UE_CONTEXT_UPDATE to GTP with AMBR UL=%lu bps, DL=%lu bps", 
-        w->update->ueId, w->update->ueAmbr.ulAmbr, w->update->ueAmbr.dlAmbr);
-    m_base->gtpTask->push(std::move(w));
+    {
+        auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_UPDATE);
+        w->update = std::make_unique<GtpUeContextUpdate>(true, ue->ctxId, ue->ueAmbr);
+        w->ueId = ue->ctxId;
+        m_logger->debug("UE[%ld] Initial Context Setup: sending UE_CONTEXT_UPDATE to GTP with AMBR UL=%lu bps, DL=%lu bps", 
+            w->update->ueId, w->update->ueAmbr.ulAmbr, w->update->ueAmbr.dlAmbr);
+        m_base->gtpTask->push(std::move(w));
+    }
+
+    // Extract Security Information (Capabilities, Key)
+    {
+        auto *secIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UESecurityCapabilities);
+        if (secIe)
+        {
+            // These are al 16-bit bit strings, convert them to uint16_t
+            ue->ueSecInfo.nRencryptionAlgorithmsBitmap = asn::GetOctetString(secIe->UESecurityCapabilities.nRencryptionAlgorithms).get4UI(0);
+            ue->ueSecInfo.eUTRAencryptionAlgorithmsBitmap = asn::GetOctetString(secIe->UESecurityCapabilities.eUTRAencryptionAlgorithms).get4UI(0);
+            ue->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap = asn::GetOctetString(secIe->UESecurityCapabilities.nRintegrityProtectionAlgorithms).get4UI(0);
+            ue->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap = asn::GetOctetString(secIe->UESecurityCapabilities.eUTRAintegrityProtectionAlgorithms).get4UI(0);
+
+            m_logger->debug("UE[%ld] Initial Context Setup: sending SECURITY_INFO to RRC - nRencryptionAlgorithms=0x%02x, eUTRAencryptionAlgorithms=0x%02x, nRintegrityProtectionAlgorithms=0x%02x, eUTRAintegrityProtectionAlgorithms=0x%02x",
+                ue->ctxId, ue->ueSecInfo.nRencryptionAlgorithmsBitmap, ue->ueSecInfo.eUTRAencryptionAlgorithmsBitmap,
+                ue->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap, ue->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap);
+        }
+    }
+
+    {
+        auto *secIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_SecurityKey);
+        if (secIe)
+        {
+            auto sk = asn::GetOctetString(secIe->SecurityKey);
+            std::copy(sk.data(), sk.data() + sk.length(), ue->ueSecInfo.k_gnb.begin());
+            m_logger->debug("UE[%ld] Initial Context Setup: Security Key received, length=%d bytes",
+                ue->ctxId, ue->ueSecInfo.k_gnb.size());
+        }
+    }
+
+    // Send to RRC now (so it can send Security Mode Command to UE)
+    {
+        auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::SECURITY_INFO);
+        w->ueId = ue->ctxId;
+        w->ueSecInfo = std::make_unique<UeSecurityInfo>(ue->ueSecInfo);
+        m_base->rrcTask->push(std::move(w));
+    }
+
+    // Extract Allowed NSSAIs
+    auto *nssaiIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_AllowedNSSAI);
+    if (nssaiIe)    {
+        auto &list = nssaiIe->AllowedNSSAI.list;
+        for (int i = 0; i < list.count; i++)
+        {            auto &item = list.array[i];
+            
+            SingleSlice slice{};
+            slice.sst = item->s_NSSAI.sST.buf[0];
+            slice.sd = (item->s_NSSAI.sD && item->s_NSSAI.sD->size > 0) ? std::optional<octet3>{asn::GetOctet3(*item->s_NSSAI.sD)} : std::nullopt;
+            ue->allowedNssais.emplace_back(slice);
+
+            m_logger->debug("UE[%ld] Initial Context Setup: Allowed NSSAI received - SST=%d, SD=%s",
+                ue->ctxId, slice.sst, slice.sd ? std::to_string(static_cast<uint32_t>(*slice.sd)).c_str() : "None");
+        }
+    }
 
     // Extract User Plane information.
     auto *reqIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UEAggregateMaximumBitRate);
@@ -93,8 +149,15 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
         ue->ueAmbr.ulAmbr = asn::GetUnsigned64(reqIe->UEAggregateMaximumBitRate.uEAggregateMaximumBitRateUL) / 8ull;
     }
 
+
+    // Extract PDU Session Resource Setup List
+    //  and send to GTP and RRC to setup the PDU sessions and tunnels
+
     std::vector<ASN_NGAP_PDUSessionResourceSetupItemCxtRes *> successList;
     std::vector<ASN_NGAP_PDUSessionResourceFailedToSetupItemCxtRes *> failedList;
+
+    // Create a list to store the PDU session resources for RRC message
+    auto sessionList = std::make_unique<std::vector<PduSessionResource>>();
 
     reqIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceSetupListCxtReq);
     if (reqIe)
@@ -159,6 +222,7 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
 
             if (error.has_value())
             {
+                // Create the unsuccessful response transfer
                 auto *tr = asn::New<ASN_NGAP_PDUSessionResourceSetupUnsuccessfulTransfer>();
                 ngap_utils::ToCauseAsn_Ref(error.value(), tr->cause);
 
@@ -178,6 +242,11 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
             }
             else
             {
+
+                // add to the session list to be sent to RRC
+                sessionList->emplace_back(*resource);
+
+                // Create the response transfer for the successful PDU session setup
                 auto *tr = asn::New<ASN_NGAP_PDUSessionResourceSetupResponseTransfer>();
 
                 auto &qosList = resource->qosFlows->list;
@@ -213,14 +282,18 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
         }
     }
 
-    // Send UE NAS container to UE - Registration Accept
+    // Send to RRC - NAS Registration Accept to UE, Security Context, and the list of allowed PDU sessions (PSIs)
     reqIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_NAS_PDU);
     if (reqIe)
     {
-        deliverDownlinkNas(ue->ctxId, asn::GetOctetString(reqIe->NAS_PDU));
-        m_logger->debug("UE[%ld] Initial Context Setup Request NAS PDU sent to RRC", ue->ctxId);
+       
+        deliverDownlinkNasAccept(ue->ctxId, asn::GetOctetString(reqIe->NAS_PDU), std::move(sessionList));
+
+        m_logger->debug("UE[%ld]: Initial Context Setup Request - NAS Accept and PDU Session List [count=%d] sent to RRC", ue->ctxId, sessionList ? sessionList->size() : 0);
     }
 
+    // Send Response to AMF
+    
     std::vector<ASN_NGAP_InitialContextSetupResponseIEs *> responseIes;
 
     if (!successList.empty())

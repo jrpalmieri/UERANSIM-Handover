@@ -75,8 +75,10 @@ void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream)
     {
         auto &m = (const RlsPduTransmission &)msg;
         stream.appendOctet(static_cast<uint8_t>(m.pduType));
+        stream.appendOctet(static_cast<uint8_t>((m.radioBearer & 0x7Fu) | (m.ackPdu ? 0x80u : 0x00u)));
         stream.appendOctet4(m.pduId);
-        stream.appendOctet4(m.payload);
+        stream.appendOctet(m.sdapByte);
+        stream.appendOctet4(m.payloadType);
         stream.appendOctet4(m.pdu.length());
         stream.append(m.pdu);
     }
@@ -84,8 +86,11 @@ void EncodeRlsMessage(const RlsMessage &msg, OctetString &stream)
     {
         auto &m = (const RlsPduTransmissionAck &)msg;
         stream.appendOctet4(static_cast<uint32_t>(m.pduIds.size()));
-        for (auto pduId : m.pduIds)
-            stream.appendOctet4(pduId);
+        for (size_t i = 0; i < m.pduIds.size(); i++)
+        {
+            stream.appendOctet(static_cast<uint8_t>(m.radioBearers[i] & 0x7Fu));
+            stream.appendOctet4(m.pduIds[i]);
+        }
     }
 }
 
@@ -124,17 +129,24 @@ std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream)
         res->dbm = stream.read4I();
         return res;
     }
-    // pdu transmission messages contain the type, id, payload type, payload length and payload data
-    //  type = 0: reserved, 1: RRC, 2: DATA
-    //  payload code = 0: reserved, 1: RRC Reconfiguration, 2: RRC Reconfiguration Complete, 
-    //  3: RRC Setup, 4: RRC Setup Complete, 5: RRC Reject, 6: RRC Resume, 7: RRC Resume Complete, 
-    //  8: RRC Release, 9: RRC Release Complete
+    // pdu transmission messages contain the PDU type, radio bearer ID and ACK mode, payloadType, payload length and payload data
+    //  pduType = 0: reserved, 1: RRC, 2: DATA
+    //  radioBearer: a 7-bit value indicating the radio bearer ID.  Bit 6 indicates whether it is a
+    //    signaling bearer SRB (0) or data bearer DRB (1) 
+    //  ackPdu: true if packet should be ACKed by receiver (simulates RLC AM/UM)
+    //  payloadType = for RRC, this is the RRC channel.  For Data, this is the PDU session ID
     else if (msgType == EMessageType::PDU_TRANSMISSION)
     {
         auto res = std::make_unique<RlsPduTransmission>(sti);
         res->pduType = static_cast<EPduType>((uint8_t)stream.read());
+        {
+            uint8_t rb = stream.read();
+            res->ackPdu      = (rb & 0x80u) != 0;
+            res->radioBearer = rb & 0x7Fu;
+        }
         res->pduId = stream.read4UI();
-        res->payload = stream.read4UI();
+        res->sdapByte = stream.read();
+        res->payloadType = stream.read4UI();
 
         int pduLength = stream.read4I();
         if (pduLength > 16384)
@@ -143,14 +155,18 @@ std::unique_ptr<RlsMessage> DecodeRlsMessage(const OctetView &stream)
         res->pdu = stream.readOctetString(pduLength);
         return res;
     }
-    // pdu transmission ack messages contain a vector of acknowledged pdu ids
+    // pdu transmission ack messages contain a vector of (radioBearer, pduId) pairs (5 bytes each)
     else if (msgType == EMessageType::PDU_TRANSMISSION_ACK)
     {
         auto res = std::make_unique<RlsPduTransmissionAck>(sti);
         auto count = stream.read4UI();
         res->pduIds.reserve(count);
+        res->radioBearers.reserve(count);
         for (uint32_t i = 0; i < count; i++)
+        {
+            res->radioBearers.push_back(stream.read() & 0x7Fu);
             res->pduIds.push_back(stream.read4UI());
+        }
         return res;
     }
 

@@ -37,7 +37,7 @@ static constexpr const int TIMER_PERIOD_UPDATE_STATUS = 500;  //ms
 namespace nr::gnb
 {
 
-GnbRrcTask::GnbRrcTask(TaskBase *base) : m_base{base}, m_ueCtx{}, m_tidCountersByUe{}
+GnbRrcTask::GnbRrcTask(TaskBase *base) : m_base{base}, m_ueCtx{}
 {
     m_logger = base->logBase->makeUniqueLogger("rrc");
     m_config = m_base->config;
@@ -105,6 +105,10 @@ void GnbRrcTask::onLoop()
             handleDownlinkNasDelivery(w.ueId, w.pdu);
             break;
         }
+        case NmGnbNgapToRrc::NAS_ACCEPT: {
+            handleDownlinkNasAccept(w.ueId, w.pdu, std::move(w.sessionList));
+            break;
+        }
         case NmGnbNgapToRrc::AN_RELEASE: {
             releaseConnection(w.ueId);
             break;
@@ -131,6 +135,17 @@ void GnbRrcTask::onLoop()
             m_logger->info("UE[%ld] PathSwitchRequestAck received, handover fully complete", w.ueId);
             break;
         }
+        case NmGnbNgapToRrc::SECURITY_INFO: {
+            handleNgapSecurityInfo(w.ueId, std::move(w.ueSecInfo));
+            break;
+        }
+        case NmGnbNgapToRrc::PDU_SESSION_UPDATE: {
+            handleNgapPduSessionUpdate(w.ueId, std::move(w.sdapUpdate));
+            break;
+        }
+        default:
+            m_logger->unhandledNts(*msg);
+            break;
         }
         break;
     }
@@ -138,14 +153,29 @@ void GnbRrcTask::onLoop()
         auto &w = dynamic_cast<NmGnbXnToRrc &>(*msg);
         switch (w.present)
         {
-        case NmGnbXnToRrc::HANDOVER_COMMAND_READY:
+        case NmGnbXnToRrc::HANDOVER_REQUEST_ACK_RECEIVE:
             m_logger->debug("UE[%ld] Xn handover command ready", w.ueId);
             break;
-        case NmGnbXnToRrc::HANDOVER_PREP_FAILURE:
-            m_logger->warn("UE[%ld] Xn handover preparation failed cause=%d", w.ueId, w.causeCode);
+        case NmGnbXnToRrc::HANDOVER_PREPARATION_FAILURE_RECEIVE:
+            m_logger->warn("UE[%ld] Xn handover preparation failed reason=%d", w.ueId, w.reason);
             break;
-        case NmGnbXnToRrc::SOURCE_CONTEXT_RELEASE:
+        case NmGnbXnToRrc::UE_CONTEXT_RELEASE_RECEIVE:
             m_logger->debug("UE[%ld] Xn source context release requested", w.ueId);
+            break;
+        case NmGnbXnToRrc::HANDOVER_FAILED:
+            m_logger->warn("UE[%ld] Xn handover failed reason=%d", w.ueId, w.reason);
+            break;
+        case NmGnbXnToRrc::HANDOVER_CANCEL_RECEIVE:
+            m_logger->debug("UE[%ld] Xn handover cancel received", w.ueId);
+            break;
+        case NmGnbXnToRrc::SN_STATUS_TRANSFER_RECEIVE:
+            m_logger->debug("UE[%ld] Xn SN status transfer received", w.ueId);
+            break;
+        case NmGnbXnToRrc::HANDOVER_SUCCESS_RECEIVE:
+            m_logger->debug("UE[%ld] Xn handover success received", w.ueId);
+            break;
+        case NmGnbXnToRrc::CONDITIONAL_HANDOVER_CANCEL_RECEIVE:
+            m_logger->debug("UE[%ld] Xn conditional handover cancel received", w.ueId);
             break;
         }
         break;
@@ -180,9 +210,13 @@ void GnbRrcTask::onLoop()
         break;
     }
     default:
+    {
         m_logger->unhandledNts(*msg);
         break;
     }
+    
+    }
+
 }
 
 
@@ -218,15 +252,8 @@ void GnbRrcTask::onUpdateLocationTimerExpired()
 
     GeoPosition gnbGeo;
     auto satNow = m_base->satTime->CurrentSatTimeMillis();
-    libsgp4::DateTime now = nr::sat::UnixMillisToDateTime(satNow);
 
     gnbGeo = EcefToGeo(m_base->satStates->getSgp4(ownNci)->FindPositionEcef(satNow));
-    // get the current geodetic coordinates of the gNB by propagating its TLE to the current time
-    // if (!nr::sat::PropagateTleToGeo(ownTle->line1, ownTle->line2, now, gnbGeo))
-    // {
-    //     m_logger->warn("Failed to propagate own TLE to geodetic coordinates; cannot update location");
-    //     return;
-    // }
 
     // write location update to global state
     m_base->setGnbPosition(gnbGeo, satNow);

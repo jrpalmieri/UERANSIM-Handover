@@ -11,10 +11,25 @@
 
 sctp::SctpClient::SctpClient(PayloadProtocolId ppid, const std::string &address) : sd(0), ppid(ppid)
 {
+    SctpClient(ppid, address, 10, 10);
+}
+
+sctp::SctpClient::SctpClient(PayloadProtocolId ppid, const std::string &address, int maxTxStreams, int maxRxStreams) : sd(0), ppid(ppid)
+{
+    if (maxRxStreams <= 0)
+        throw SctpError("maxRxStreams must be greater than 0");
+    if (maxRxStreams > 65535)
+        throw SctpError("maxRxStreams must be less than or equal to 65535");
+
+    if (maxTxStreams <= 0)
+        throw SctpError("maxTxStreams must be greater than 0");
+    if (maxTxStreams > 65535)
+        throw SctpError("maxTxStreams must be less than or equal to 65535");
+
     try
     {
         sd = CreateSocket(address);
-        SetInitOptions(sd, 10, 10, 10, 10 * 1000);
+        SetInitOptions(sd, maxRxStreams, maxTxStreams, 10, 10 * 1000);
         SetEventOptions(sd);
     }
     catch (const std::exception &e)
