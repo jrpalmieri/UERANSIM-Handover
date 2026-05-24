@@ -71,6 +71,8 @@
 #include <asn/rrc/ASN_RRC_SSB-MTC.h>
 #include <asn/rrc/ASN_RRC_SubcarrierSpacing.h>
 #include <asn/rrc/ASN_RRC_MeasTriggerQuantityOffset.h>
+#include <asn/rrc/ASN_RRC_HandoverPreparationInformation.h>
+#include <asn/rrc/ASN_RRC_HandoverPreparationInformation-IEs.h>
 #include <cmath>
 #include <utility>
 
@@ -1153,9 +1155,57 @@ bool GnbRrcTask::addPendingHandover(int64_t ueId, const HandoverPreparationInfo 
 }
 
 /**
+ * @brief Builds an APER-encoded HandoverPreparationInformation message for the specified UE,
+ * per TS 38.331 §11.2.2.  The encoded OctetString is suitable for placement in the XnAP
+ * rrc-Context field or the NGAP source-to-target transparent container.
+ *
+ * Only the mandatory ue_CapabilityRAT_List IE is included (as an empty list, because UE
+ * capability containers are not stored in the current RRC context).  The optional sourceConfig,
+ * rrm_Config, and as_Context IEs are absent — their ASN.1 types are not generated in this build.
+ *
+ * @param ueId  The UE identifier
+ * @return APER-encoded OctetString, or empty on error
+ */
+OctetString GnbRrcTask::createHandoverPreparationInformation(int64_t ueId)
+{
+    auto it = m_ueCtx.find(ueId);
+    if (it == m_ueCtx.end() || !it->second)
+    {
+        m_logger->err("UE[%ld] createHandoverPreparationInformation: UE context not found", ueId);
+        return OctetString{};
+    }
+
+    auto *pdu = asn::New<ASN_RRC_HandoverPreparationInformation>();
+    pdu->criticalExtensions.present =
+        ASN_RRC_HandoverPreparationInformation__criticalExtensions_PR_c1;
+    pdu->criticalExtensions.choice.c1 = asn::NewFor(pdu->criticalExtensions.choice.c1);
+    pdu->criticalExtensions.choice.c1->present =
+        ASN_RRC_HandoverPreparationInformation__criticalExtensions__c1_PR_handoverPreparationInformation;
+
+    auto *ies = asn::New<ASN_RRC_HandoverPreparationInformation_IEs>();
+    // ue_CapabilityRAT_List is mandatory per spec; left empty because UE capability
+    // containers are not stored in the RRC context in this implementation.
+    // sourceConfig, rrm_Config, as_Context: optional; left absent (ASN.1 types not generated).
+    pdu->criticalExtensions.choice.c1->choice.handoverPreparationInformation = ies;
+
+    m_logger->warn("UE[%ld] createHandoverPreparationInformation: ue_CapabilityRAT_List is empty "
+                   "(UE capabilities not stored in RRC context)", ueId);
+
+    OctetString encoded = rrc::encode::EncodeS(asn_DEF_ASN_RRC_HandoverPreparationInformation, pdu);
+    asn::Free(asn_DEF_ASN_RRC_HandoverPreparationInformation, pdu);
+
+    if (encoded.length() == 0)
+        m_logger->err("UE[%ld] createHandoverPreparationInformation: APER encoding failed", ueId);
+    else
+        m_logger->debug("UE[%ld] createHandoverPreparationInformation: encoded %zu bytes", ueId, encoded.length());
+
+    return encoded;
+}
+
+/**
  * @brief Deletes the UE's context due to a successful handover to the target gNB.
- * 
- * @param ueId 
+ *
+ * @param ueId
  */
 void GnbRrcTask::handoverContextRelease(int64_t ueId)
 {

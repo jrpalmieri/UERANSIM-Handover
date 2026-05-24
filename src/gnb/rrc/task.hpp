@@ -78,6 +78,7 @@ class GnbRrcTask : public NtsTask
 
     std::vector<HandoverMeasurementIdentity> getHandoverMeasurementIdentities(int64_t ueId) const;
     OctetString getHandoverMeasConfigRrcReconfiguration(int64_t ueId) const;
+    OctetString createHandoverPreparationInformation(int64_t ueId);
     int64_t buildHandoverCommandForTransfer(int64_t ueId, int64_t targetNci, int newCrnti, int t304Ms,
                         OctetString &rrcContainer);
     bool addPendingHandover(int64_t ueId, const HandoverPreparationInfo &handoverPrep,

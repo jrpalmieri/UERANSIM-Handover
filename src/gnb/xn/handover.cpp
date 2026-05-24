@@ -194,9 +194,15 @@ void XnTask::xnHandoverRequestSource(int64_t ueId, int64_t targetNci, bool isCho
 
     const GnbConfig *cfg = m_base->config;
 
-    // -----------------------------------------------------------------------
-    // 3. Build the RRC container (HandoverPreparationInformation / RRCReconfiguration).
-    // -----------------------------------------------------------------------
+    /* -----------------------------------------------------------------------
+     3. Build the RRC container (HandoverPreparationInformation / RRCReconfiguration).
+        Either includes the HandoverPreparationInformation message as defined in 
+        subclause 10.2.2. of TS 36.331 [14], or the HandoverPreparationInformation-NB message 
+        as defined in subclause 10.6.2 of TS 36.331 [14], if the target NG-RAN node is an ng-eNB,
+        or the HandoverPreparationInformation message as defined in subclause 11.2.2 
+        of TS 38.331 [10], if the target NG-RAN node is a gNB.
+       -----------------------------------------------------------------------
+     */
     OctetString rrcContainer;
 
     // -----------------------------------------------------------------------
