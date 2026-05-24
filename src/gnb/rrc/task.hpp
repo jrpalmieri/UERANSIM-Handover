@@ -15,6 +15,7 @@
 
 #include <gnb/types.hpp>
 #include <gnb/nts.hpp>
+#include "crnti_manager.hpp"
 #include <lib/sat/sat_calc.hpp>
 #include <lib/rrc/common/asn_fwd.hpp>
 #include <utils/logger.hpp>
@@ -34,6 +35,9 @@ class GnbRrcTask : public NtsTask
     TaskBase *m_base;
     GnbConfig *m_config;
     std::unique_ptr<Logger> m_logger;
+
+    // C-RNTI allocator
+    CrntiManager m_crntiMgr;
 
     // UE RRC Contexts, indexed by UE ID
     std::unordered_map<int64_t, RrcUeContext *> m_ueCtx;
@@ -97,13 +101,13 @@ class GnbRrcTask : public NtsTask
 
   /* Management - management.cpp */
 
-    int allocateCrnti() const;
+    int allocateCrnti();
+    void releaseCrnti(int crnti);
     RrcUeContext* findCtxByCrnti(int cRnti);
     RrcUeContext* findCtxByUeId(int64_t ueId);
 
     /* Handlers for RRC-NAS - handlers.cpp */
 
-    void handleUplinkRrc(int64_t ueId, int cRnti, rrc::RrcChannel channel, const OctetString &rrcPdu);
     void handleDownlinkNasDelivery(int64_t ueId, const OctetString &nasPdu);
     void handleDownlinkNasAccept(int64_t ueId, const OctetString &nasPdu, std::unique_ptr<std::vector<PduSessionResource>> sessionList);
     void deliverUplinkNas(int64_t ueId, OctetString &&nasPdu);
@@ -119,6 +123,7 @@ class GnbRrcTask : public NtsTask
 
     /* RRC channel send message to UE - channel.cpp */
 
+    void handleUplinkRrc(int64_t ueId, int cRnti, rrc::RrcChannel channel, const OctetString &rrcPdu);
     void sendRrcMessage(ASN_RRC_BCCH_BCH_Message *msg);
     void sendRrcMessage(ASN_RRC_BCCH_DL_SCH_Message *msg);
     void sendRrcMessage(rrc::RrcChannel channel, OctetString &&pdu);

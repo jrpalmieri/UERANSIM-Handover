@@ -83,7 +83,7 @@ void GtpTask::onLoop()
         switch (w.present)
         {
         case NmGnbRlsToGtp::DATA_PDU_DELIVERY: {
-            handleUplinkData(w.ueId, w.psi, std::move(w.pdu));
+            handleUplinkData(w.ueId, w.psi, w.qfi, std::move(w.pdu));
             break;
         }
         }
@@ -201,7 +201,7 @@ void GtpTask::handleUeContextDelete(int64_t ueId)
     m_logger->debug("UE[%ld] Context(s) deleted [count=%d]", ueId, count);
 }
 
-void GtpTask::handleUplinkData(int64_t ueId, int psi, OctetString &&pdu)
+void GtpTask::handleUplinkData(int64_t ueId, int psi, int qfi, OctetString &&pdu)
 {
     const uint8_t *data = pdu.data();
 

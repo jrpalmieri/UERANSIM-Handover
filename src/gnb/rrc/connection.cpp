@@ -61,10 +61,17 @@ void GnbRrcTask::receiveRrcSetupRequest(int64_t ueId, const ASN_RRC_RRCSetupRequ
 
     // Create UE RRC context keyed by UE ID while keeping C-RNTI in context payload.
     int newCrnti = allocateCrnti();
+    if (newCrnti == 0)
+    {
+        m_logger->err("UE[%ld] RRC SetupRequest received. Failed to allocate C-RNTI. Discarding.", ueId);
+        return;
+    }
+
     ue = createUe(ueId, newCrnti);
     if (!ue)
     {
         m_logger->err("UE[%ld] RRC SetupRequest received. Failed to create UE RRC context. Discarding.", ueId);
+        releaseCrnti(newCrnti);
         return;
     }
 
@@ -72,7 +79,7 @@ void GnbRrcTask::receiveRrcSetupRequest(int64_t ueId, const ASN_RRC_RRCSetupRequ
     ue->rrcState = UE_RRC_CONNECTION_STATE::RRC_CONNECTION_PENDING;
     m_logger->info("UE[%ld] RRC SetupRequest received. UE context created, cRNTI=%d", ueId, newCrnti);
 
-
+    // Get UE provided Identity
     if (msg.rrcSetupRequest.ue_Identity.present == ASN_RRC_InitialUE_Identity_PR_ng_5G_S_TMSI_Part1)
     {
         ue->initialId = asn::GetBitStringLong<39>(msg.rrcSetupRequest.ue_Identity.choice.ng_5G_S_TMSI_Part1);
@@ -118,11 +125,11 @@ void GnbRrcTask::receiveRrcSetupComplete(int64_t ueId, const ASN_RRC_RRCSetupCom
 
     if (!ue)
     {
-        m_logger->err("UE[%ld] RRC Setup Complete received. UE context not found.", ueId);
+        m_logger->err("UE[%ld] RRC Setup Complete received, but UE context not found. Aborting.", ueId);
         return;
     }
 
-    m_logger->debug("UE[%ld] RRC Setup Complete received, cRnti=%d", ue->ueId, ue->cRnti);
+    m_logger->debug("UE[%ld] RRC Setup Complete received.", ue->ueId);
 
     ue->rrcState = UE_RRC_CONNECTION_STATE::RRC_CONNECTED;
     

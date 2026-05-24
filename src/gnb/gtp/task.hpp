@@ -56,7 +56,7 @@ class GtpTask : public NtsTask
     void handleSessionCreate(PduSessionResource *session);
     void handleSessionRelease(int64_t ueId, int psi);
     void handleUeContextDelete(int64_t ueId);
-    void handleUplinkData(int64_t ueId, int psi, OctetString &&data);
+    void handleUplinkData(int64_t ueId, int psi, int qfi, OctetString &&data);
 
     void updateAmbrForUe(int64_t ueId);
     void updateAmbrForSession(uint64_t pduSession);

@@ -357,10 +357,10 @@ void GnbRrcTask::receiveRrcReconfigurationComplete(int64_t ueId, int cRnti,
         }
     }
 
-    m_logger->debug("UE[%ld] RRCReconfigurationComplete received with txId=%ld cRnti=%d matchedPendingHandover=%s",
+    m_logger->debug("UE[%ld]: RRCReconfigurationComplete received with txId=%ld cRnti=%d matchedPendingHandover=%s",
                     ueId, txId, cRnti, matchedPending ? "true" : "false");
 
-                    // matchedPending is True if there is pending handover, so complete it by moving the pending
+    // matchedPending is True if there is pending handover, so complete it by moving the pending
     // context to the main UE context map.
     if (matchedPending)
     {
@@ -375,6 +375,7 @@ void GnbRrcTask::receiveRrcReconfigurationComplete(int64_t ueId, int cRnti,
         auto *ue = findCtxByUeId(resolvedUeId);
         if (ue)
         {
+            releaseCrnti(ue->cRnti);
             delete ue;
             m_ueCtx.erase(resolvedUeId);
         }
@@ -764,7 +765,10 @@ void GnbRrcTask::handleNgapHandoverFailure(int64_t ueId, int64_t targetNci, bool
     if (itPending != m_handoversPending.end() && itPending->second != nullptr)
     {
         if (itPending->second->ctx != nullptr)
+        {
+            releaseCrnti(itPending->second->ctx->cRnti);
             delete itPending->second->ctx;
+        }
 
         delete itPending->second;
         m_handoversPending.erase(itPending);
@@ -1121,6 +1125,8 @@ bool GnbRrcTask::addPendingHandover(int64_t ueId, const HandoverPreparationInfo 
     auto it = m_handoversPending.find(ueId);
     if (it != m_handoversPending.end() && it->second)
     {
+        if (it->second->ctx)
+            releaseCrnti(it->second->ctx->cRnti);
         delete it->second->ctx;
         delete it->second;
     }
@@ -1128,6 +1134,7 @@ bool GnbRrcTask::addPendingHandover(int64_t ueId, const HandoverPreparationInfo 
     int64_t txId = buildHandoverCommandForTransfer(ueId, ctx->handoverTargetNci, ctx->cRnti, 1000, rrcContainer);
     // the command build fails, no handover context should be added
     if (txId < 0) {
+        releaseCrnti(ctx->cRnti);
         delete ctx;
         return false;
     }
@@ -1155,6 +1162,7 @@ void GnbRrcTask::handoverContextRelease(int64_t ueId)
     auto *ctx = findCtxByUeId(ueId);
     if (ctx)
     {
+        releaseCrnti(ctx->cRnti);
         delete ctx;
         m_ueCtx.erase(ueId);
         m_logger->info("UE[%ld] RRC context released", ueId);

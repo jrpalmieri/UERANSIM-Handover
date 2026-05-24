@@ -73,6 +73,7 @@ struct NmGnbRlsToGtp : NtsMessage
     int64_t ueId{};
     int cRnti{};
     int psi{};
+    int qfi;
     OctetString pdu;
 
     explicit NmGnbRlsToGtp(PR present) : NtsMessage(NtsMessageType::GNB_RLS_TO_GTP), present(present)
