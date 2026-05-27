@@ -115,6 +115,7 @@ SctpTask::SctpTask(TaskBase *base) : m_base{base}, m_clients{}
 
 void SctpTask::onStart()
 {
+    m_logger->debug("Starting SCTP task.");
 }
 
 void SctpTask::onLoop()
@@ -203,7 +204,7 @@ void SctpTask::receiveSctpConnectionSetupRequest(int clientId, const std::string
     }
     catch (const sctp::SctpError &exc)
     {
-        m_logger->err("Binding to %s:%d failed. %s", localAddress.c_str(), localPort, exc.what());
+        m_logger->err("Binding to local address %s:%d failed. %s", localAddress.c_str(), localPort, exc.what());
         delete client;
         return;
     }
@@ -214,7 +215,7 @@ void SctpTask::receiveSctpConnectionSetupRequest(int clientId, const std::string
     }
     catch (const sctp::SctpError &exc)
     {
-        m_logger->err("Connecting to %s:%d failed. %s", remoteAddress.c_str(), remotePort, exc.what());
+        m_logger->err("Connecting to remote address %s:%d failed. %s", remoteAddress.c_str(), remotePort, exc.what());
         delete client;
         return;
     }

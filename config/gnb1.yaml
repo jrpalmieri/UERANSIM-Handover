@@ -10,7 +10,7 @@ ngapIp: 172.22.0.202   # gNB's IP address for its N2 interface (gNB-AMF)
 gtpIp: 172.22.0.202    # gNB's IP address for N3 interface (gNB-UPF)
 
 xn:
-  enabled: true       # whether or not to enable the Xn interface (gNB-gNB)
+  enabled: false       # whether or not to enable the Xn interface (gNB-gNB)
   xnIp: 127.0.0.2        # gNB's IP address for Xn interface (gNB-gNB)
   #xnPort: 38422          # gNB's SCTP port for Xn interface (gNB-gNB) - default is 38422 (IANA-assigned for XnAP)
 
@@ -32,19 +32,19 @@ ignoreStreamIds: true
 #     Note: this value can be manually changed during operation through the command interface to simulate changes in RF conditions.
 #   if updateMode is "Calculated", the RSRP is calculated  using the carrier frequency, tx power, and antenna gains.
 rfLink:
-  #updateMode: Fixed
+  updateMode: Fixed
   rsrpDbValue: -60
-  updateMode: Calculated
+  #updateMode: Calculated
   # typical values for a LEO satellite gNB
   # carrFrequencyHz: 10.7e9   # carrier frequency (Hz)
   # txPowerDbm: 43.0          # Radiated (transmit) power (dBm)
   # txGainDbi: 35.0           # gNB Transmit antenna gain (dBi)
   # ueRxGainDbi: 25.0         # UE Receive antenna gain (dBi)
   # typical values for a terrestrial gNB (macro), which can be adjusted as needed for different scenarios
-  carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
-  txPowerDbm: 15.0          # Radiated (transmit) power (dBm)
-  txGainDbi: 15.0           # gNB Transmit antenna gain (dBi)
-  ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi) - 0.0 is omnidirectional
+  #carrFrequencyHz: 3.5e9   # carrier frequency (Hz)
+  #txPowerDbm: 15.0          # Radiated (transmit) power (dBm)
+  #txGainDbi: 15.0           # gNB Transmit antenna gain (dBi)
+  #ueRxGainDbi: 0.0         # UE Receive antenna gain (dBi) - 0.0 is omnidirectional
 
 # RLS loop/timer settings (ms).
 #   TIMER_PERIOD_ACK_SEND: - period for timer that triggers sending ACKs to PDUs from UE
@@ -64,6 +64,7 @@ rls:
 # Neighbor cells for handover
 neighborList:
   - nci: '0x000000022'  # NR Cell Identity (36-bit)
+    idLength: 32
     mcc: '001'          # Mobile Country Code value
     mnc: '01'           # Mobile Network Code value (2 or 3 digits)
     tac: 1            # Tracking Area Code
@@ -71,13 +72,14 @@ neighborList:
     xnPort: 38422     # SCTP port for Xn interface
     handoverInterface: N2  # Interface to use for handover signaling with this neighbor (N2 or XN)
 
-  - nci: '0x000000033'
-    mcc: '001'          # Mobile Country Code value
-    mnc: '01'           # Mobile Network Code value (2 or 3 digits)
-    tac: 1            # Tracking Area Code
-    xnAddress: 127.0.0.4  # IP address for Xn interface
-    xnPort: 38422     # SCTP port for Xn interface
-    handoverInterface: XN  # Interface to use for handover signaling with this neighbor (N2 or XN)
+  # - nci: '0x000000033'
+  #   idLength: 32
+  #   mcc: '001'          # Mobile Country Code value
+  #   mnc: '01'           # Mobile Network Code value (2 or 3 digits)
+  #   tac: 1            # Tracking Area Code
+  #   xnAddress: 127.0.0.4  # IP address for Xn interface
+  #   xnPort: 38422     # SCTP port for Xn interface
+  #   handoverInterface: XN  # Interface to use for handover signaling with this neighbor (N2 or XN)
 
 # gNB geographic position (lat/lon/alt, WGS-84)
 # Used as the static terrestrial position or as fallback

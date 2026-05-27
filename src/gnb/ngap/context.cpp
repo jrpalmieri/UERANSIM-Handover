@@ -78,7 +78,20 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
 
     m_logger->debug("UE[%ld] Initial Context Setup Request mapped to UE", ue->ctxId);
 
-    // User plane - Initial context setup
+    // create the NGAP context items from the message
+    makeNgapContextItems(ue, msg);
+
+    //User plane - Initial context setup
+
+    // auto *reqIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UEAggregateMaximumBitRate);
+    // if (reqIe)
+    // {
+    //     ue->ueAmbr.dlAmbr = asn::GetUnsigned64(reqIe->UEAggregateMaximumBitRate.uEAggregateMaximumBitRateDL) / 8ull;
+    //     ue->ueAmbr.ulAmbr = asn::GetUnsigned64(reqIe->UEAggregateMaximumBitRate.uEAggregateMaximumBitRateUL) / 8ull;
+    // }
+
+    // Instruct GTP to create its UE Context
+
     {
         auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_UPDATE);
         w->update = std::make_unique<GtpUeContextUpdate>(true, ue->ctxId, ue->ueAmbr);
@@ -89,34 +102,35 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
     }
 
     // Extract Security Information (Capabilities, Key)
-    {
-        auto *secIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UESecurityCapabilities);
-        if (secIe)
-        {
-            // These are al 16-bit bit strings, convert them to uint16_t
-            ue->ueSecInfo.nRencryptionAlgorithmsBitmap = asn::GetOctetString(secIe->UESecurityCapabilities.nRencryptionAlgorithms).get4UI(0);
-            ue->ueSecInfo.eUTRAencryptionAlgorithmsBitmap = asn::GetOctetString(secIe->UESecurityCapabilities.eUTRAencryptionAlgorithms).get4UI(0);
-            ue->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap = asn::GetOctetString(secIe->UESecurityCapabilities.nRintegrityProtectionAlgorithms).get4UI(0);
-            ue->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap = asn::GetOctetString(secIe->UESecurityCapabilities.eUTRAintegrityProtectionAlgorithms).get4UI(0);
+    // {
+    //     auto *secIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UESecurityCapabilities);
+    //     if (secIe)
+    //     {
+    //         // These are all 16-bit bit strings, convert them to uint16_t
+    //         ue->ueSecInfo.nRencryptionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.nRencryptionAlgorithms).get4UI(0));
+    //         ue->ueSecInfo.eUTRAencryptionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.eUTRAencryptionAlgorithms).get4UI(0));
+    //         ue->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.nRintegrityProtectionAlgorithms).get4UI(0));
+    //         ue->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.eUTRAintegrityProtectionAlgorithms).get4UI(0));
 
-            m_logger->debug("UE[%ld] Initial Context Setup: sending SECURITY_INFO to RRC - nRencryptionAlgorithms=0x%02x, eUTRAencryptionAlgorithms=0x%02x, nRintegrityProtectionAlgorithms=0x%02x, eUTRAintegrityProtectionAlgorithms=0x%02x",
-                ue->ctxId, ue->ueSecInfo.nRencryptionAlgorithmsBitmap, ue->ueSecInfo.eUTRAencryptionAlgorithmsBitmap,
-                ue->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap, ue->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap);
-        }
-    }
+    //         m_logger->debug("UE[%ld] Initial Context Setup: sending SECURITY_INFO to RRC - nRencryptionAlgorithms=0x%04x, eUTRAencryptionAlgorithms=0x%04x, nRintegrityProtectionAlgorithms=0x%04x, eUTRAintegrityProtectionAlgorithms=0x%04x",
+    //             ue->ctxId, ue->ueSecInfo.nRencryptionAlgorithmsBitmap, ue->ueSecInfo.eUTRAencryptionAlgorithmsBitmap,
+    //             ue->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap, ue->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap);
+    //     }
+    // }
 
-    {
-        auto *secIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_SecurityKey);
-        if (secIe)
-        {
-            auto sk = asn::GetOctetString(secIe->SecurityKey);
-            std::copy(sk.data(), sk.data() + sk.length(), ue->ueSecInfo.k_gnb.begin());
-            m_logger->debug("UE[%ld] Initial Context Setup: Security Key received, length=%d bytes",
-                ue->ctxId, ue->ueSecInfo.k_gnb.size());
-        }
-    }
+    // {
+    //     auto *secIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_SecurityKey);
+    //     if (secIe)
+    //     {
+    //         auto sk = asn::GetOctetString(secIe->SecurityKey);
+    //         std::copy(sk.data(), sk.data() + sk.length(), ue->ueSecInfo.k_gnb.begin());
+    //         m_logger->debug("UE[%ld] Initial Context Setup: Security Key received, length=%d bytes",
+    //             ue->ctxId, ue->ueSecInfo.k_gnb.size());
+    //     }
+    // }
 
-    // Send to RRC now (so it can send Security Mode Command to UE)
+    // Send security info to RRC now (so it can send Security Mode Command to UE)
+
     {
         auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::SECURITY_INFO);
         w->ueId = ue->ctxId;
@@ -125,29 +139,22 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
     }
 
     // Extract Allowed NSSAIs
-    auto *nssaiIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_AllowedNSSAI);
-    if (nssaiIe)    {
-        auto &list = nssaiIe->AllowedNSSAI.list;
-        for (int i = 0; i < list.count; i++)
-        {            auto &item = list.array[i];
+    // auto *nssaiIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_AllowedNSSAI);
+    // if (nssaiIe)    {
+    //     auto &list = nssaiIe->AllowedNSSAI.list;
+    //     for (int i = 0; i < list.count; i++)
+    //     {            auto &item = list.array[i];
             
-            SingleSlice slice{};
-            slice.sst = item->s_NSSAI.sST.buf[0];
-            slice.sd = (item->s_NSSAI.sD && item->s_NSSAI.sD->size > 0) ? std::optional<octet3>{asn::GetOctet3(*item->s_NSSAI.sD)} : std::nullopt;
-            ue->allowedNssais.emplace_back(slice);
+    //         SingleSlice slice{};
+    //         slice.sst = item->s_NSSAI.sST.buf[0];
+    //         slice.sd = (item->s_NSSAI.sD && item->s_NSSAI.sD->size > 0) ? std::optional<octet3>{asn::GetOctet3(*item->s_NSSAI.sD)} : std::nullopt;
+    //         ue->allowedNssais.emplace_back(slice);
 
-            m_logger->debug("UE[%ld] Initial Context Setup: Allowed NSSAI received - SST=%d, SD=%s",
-                ue->ctxId, slice.sst, slice.sd ? std::to_string(static_cast<uint32_t>(*slice.sd)).c_str() : "None");
-        }
-    }
+    //         m_logger->debug("UE[%ld] Initial Context Setup: Allowed NSSAI received - SST=%d, SD=%s",
+    //             ue->ctxId, slice.sst, slice.sd ? std::to_string(static_cast<uint32_t>(*slice.sd)).c_str() : "None");
+    //     }
+    // }
 
-    // Extract User Plane information.
-    auto *reqIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UEAggregateMaximumBitRate);
-    if (reqIe)
-    {
-        ue->ueAmbr.dlAmbr = asn::GetUnsigned64(reqIe->UEAggregateMaximumBitRate.uEAggregateMaximumBitRateDL) / 8ull;
-        ue->ueAmbr.ulAmbr = asn::GetUnsigned64(reqIe->UEAggregateMaximumBitRate.uEAggregateMaximumBitRateUL) / 8ull;
-    }
 
 
     // Extract PDU Session Resource Setup List
@@ -159,7 +166,7 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
     // Create a list to store the PDU session resources for RRC message
     auto sessionList = std::make_unique<std::vector<PduSessionResource>>();
 
-    reqIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceSetupListCxtReq);
+    auto *reqIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceSetupListCxtReq);
     if (reqIe)
     {
         auto &list = reqIe->PDUSessionResourceSetupListCxtReq.list;
@@ -177,44 +184,7 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
             }
 
             auto *resource = new PduSessionResource(ue->ctxId, static_cast<int>(item->pDUSessionID));
-
-            auto *ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_PDUSessionAggregateMaximumBitRate);
-            if (ie)
-            {
-                resource->sessionAmbr.dlAmbr =
-                    asn::GetUnsigned64(ie->PDUSessionAggregateMaximumBitRate.pDUSessionAggregateMaximumBitRateDL) /
-                    8ull;
-                resource->sessionAmbr.ulAmbr =
-                    asn::GetUnsigned64(ie->PDUSessionAggregateMaximumBitRate.pDUSessionAggregateMaximumBitRateUL) /
-                    8ull;
-            }
-
-            ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_DataForwardingNotPossible);
-            if (ie)
-                resource->dataForwardingNotPossible = true;
-
-            ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_PDUSessionType);
-            if (ie)
-                resource->sessionType = ngap_utils::PduSessionTypeFromAsn(ie->PDUSessionType);
-
-            ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_UL_NGU_UP_TNLInformation);
-            if (ie)
-            {
-                resource->upTunnel.teid =
-                    (uint32_t)asn::GetOctet4(ie->UPTransportLayerInformation.choice.gTPTunnel->gTP_TEID);
-
-                resource->upTunnel.address =
-                    asn::GetOctetString(ie->UPTransportLayerInformation.choice.gTPTunnel->transportLayerAddress);
-            }
-
-            ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_QosFlowSetupRequestList);
-            if (ie)
-            {
-                auto *ptr = asn::New<ASN_NGAP_QosFlowSetupRequestList>();
-                asn::DeepCopy(asn_DEF_ASN_NGAP_QosFlowSetupRequestList, ie->QosFlowSetupRequestList, ptr);
-
-                resource->qosFlows = asn::WrapUnique(ptr, asn_DEF_ASN_NGAP_QosFlowSetupRequestList);
-            }
+            makeNgapPduSessionItems(resource, transfer);
 
             // Instructs GTP to setup the UP Tunnel
             m_logger->debug("UE[%ld] PDU Session Resource Setup sent to GTP psi=%d", ue->ctxId, resource->psi);
@@ -280,6 +250,10 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
 
             asn::Free(asn_DEF_ASN_NGAP_PDUSessionResourceSetupRequestTransfer, transfer);
         }
+    }
+    else
+    {
+        m_logger->debug("UE[%ld] Initial Context Setup Request does not contain any PDU Session Resource Setup items", ue->ctxId);
     }
 
     // Send to RRC - NAS Registration Accept to UE, Security Context, and the list of allowed PDU sessions (PSIs)
@@ -431,5 +405,105 @@ void NgapTask::sendContextRelease(int64_t ueId, NgapCause cause)
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_UEContextReleaseRequest>(ies);
     sendNgapUeAssociated(ueId, pdu);
 }
+
+
+// populates the provied Ngap UE context with the information from the given IE
+// IE is specified as VOID* because it can come from different types of NGAP messages
+//  The GetProtocolIE function handles the IE based on its type and extracts the relevant information
+void NgapTask::makeNgapContextItems(NgapUeContext *ue, void *ie)
+{
+
+    // Extract Aggregate Maximum Bit Rate
+
+    auto *reqIe = asn::ngap::GetProtocolIe(ie, ASN_NGAP_ProtocolIE_ID_id_UEAggregateMaximumBitRate);
+    if (reqIe)
+    {
+        ue->ueAmbr.dlAmbr = asn::GetUnsigned64(reqIe->UEAggregateMaximumBitRate.uEAggregateMaximumBitRateDL) / 8ull;
+        ue->ueAmbr.ulAmbr = asn::GetUnsigned64(reqIe->UEAggregateMaximumBitRate.uEAggregateMaximumBitRateUL) / 8ull;
+    }
+
+
+    // Extract Security Capabilities
+    {
+        auto *secIe = asn::ngap::GetProtocolIe(ie, ASN_NGAP_ProtocolIE_ID_id_UESecurityCapabilities);
+        if (secIe)
+        {
+            // These are all 16-bit bit strings, convert them to uint16_t
+            ue->ueSecInfo.nRencryptionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.nRencryptionAlgorithms).get4UI(0));
+            ue->ueSecInfo.eUTRAencryptionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.eUTRAencryptionAlgorithms).get4UI(0));
+            ue->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.nRintegrityProtectionAlgorithms).get4UI(0));
+            ue->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.eUTRAintegrityProtectionAlgorithms).get4UI(0));
+
+        }
+    }
+
+    // Extract Security Key
+
+    {
+        auto *secIe = asn::ngap::GetProtocolIe(ie, ASN_NGAP_ProtocolIE_ID_id_SecurityKey);
+        if (secIe)
+        {
+            auto sk = asn::GetOctetString(secIe->SecurityKey);
+            std::copy(sk.data(), sk.data() + sk.length(), ue->ueSecInfo.k_gnb.begin());
+        }
+    }
+
+    // Extract Allowed NSSAIs
+    
+    auto *nssaiIe = asn::ngap::GetProtocolIe(ie, ASN_NGAP_ProtocolIE_ID_id_AllowedNSSAI);
+    if (nssaiIe)    {
+        auto &list = nssaiIe->AllowedNSSAI.list;
+        for (int i = 0; i < list.count; i++)
+        {
+            auto &item = list.array[i];
+            
+            SingleSlice slice{};
+            slice.sst = item->s_NSSAI.sST.buf[0];
+            slice.sd = (item->s_NSSAI.sD && item->s_NSSAI.sD->size > 0) ? std::optional<octet3>{asn::GetOctet3(*item->s_NSSAI.sD)} : std::nullopt;
+            ue->allowedNssais.emplace_back(slice);
+
+        }
+    }
+
+}
+
+void NgapTask::makeNgapPduSessionItems(PduSessionResource *resource,
+                                        ASN_NGAP_PDUSessionResourceSetupRequestTransfer *transfer)
+{
+    auto *ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_PDUSessionAggregateMaximumBitRate);
+    if (ie)
+    {
+        resource->sessionAmbr.dlAmbr =
+            asn::GetUnsigned64(ie->PDUSessionAggregateMaximumBitRate.pDUSessionAggregateMaximumBitRateDL) / 8ull;
+        resource->sessionAmbr.ulAmbr =
+            asn::GetUnsigned64(ie->PDUSessionAggregateMaximumBitRate.pDUSessionAggregateMaximumBitRateUL) / 8ull;
+    }
+
+    ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_DataForwardingNotPossible);
+    if (ie)
+        resource->dataForwardingNotPossible = true;
+
+    ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_PDUSessionType);
+    if (ie)
+        resource->sessionType = ngap_utils::PduSessionTypeFromAsn(ie->PDUSessionType);
+
+    ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_UL_NGU_UP_TNLInformation);
+    if (ie)
+    {
+        resource->upTunnel.teid =
+            (uint32_t)asn::GetOctet4(ie->UPTransportLayerInformation.choice.gTPTunnel->gTP_TEID);
+        resource->upTunnel.address =
+            asn::GetOctetString(ie->UPTransportLayerInformation.choice.gTPTunnel->transportLayerAddress);
+    }
+
+    ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_QosFlowSetupRequestList);
+    if (ie)
+    {
+        auto *ptr = asn::New<ASN_NGAP_QosFlowSetupRequestList>();
+        asn::DeepCopy(asn_DEF_ASN_NGAP_QosFlowSetupRequestList, ie->QosFlowSetupRequestList, ptr);
+        resource->qosFlows = asn::WrapUnique(ptr, asn_DEF_ASN_NGAP_QosFlowSetupRequestList);
+    }
+}
+
 
 } // namespace nr::gnb

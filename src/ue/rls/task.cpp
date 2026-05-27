@@ -90,6 +90,7 @@ void UeRlsTask::onLoop()
             break;
         }
         case NmUeRlsToRls::DOWNLINK_DATA: {
+            m_logger->debug("Downlink data received.  PSI=%d", w.psi);
             auto m = std::make_unique<NmUeRlsToNas>(NmUeRlsToNas::DATA_PDU_DELIVERY);
             m->psi = w.psi;
             m->pdu = std::move(w.data);
@@ -145,6 +146,17 @@ void UeRlsTask::onLoop()
             m_shCtx->sti = Random::Mixed(m_base->config->getNodeName()).nextL();
             break;
         }
+        case NmUeRrcToRls::RADIO_BEARER_UPDATE: {
+            auto m = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::RADIO_BEARER_UPDATE);
+            m->rbUpdate = std::move(w.rbUpdate);
+            m->sdapUpate = std::move(w.sdapUpdate);
+            m_ctlTask->push(std::move(m));
+            break;
+        }
+        default: {
+            m_logger->unhandledNts(*msg);
+            break;
+        }   
         }
         break;
     }

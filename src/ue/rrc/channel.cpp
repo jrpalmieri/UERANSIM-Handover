@@ -14,6 +14,7 @@
 #include <asn/rrc/ASN_RRC_RRCReject.h>
 #include <asn/rrc/ASN_RRC_RRCSetup.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
+#include <asn/rrc/ASN_RRC_SecurityModeCommand.h>
 #include <asn/rrc/ASN_RRC_UL-CCCH-Message.h>
 #include <asn/rrc/ASN_RRC_UL-DCCH-Message.h>
 #include <sstream>
@@ -212,6 +213,7 @@ void UeRrcTask::receiveRrcMessage(int cellId, ASN_RRC_BCCH_DL_SCH_Message *msg)
         receiveSib1(cellId, *c1->choice.systemInformationBlockType1);
         break;
     default:
+        m_logger->warn("Unhandled BCCH DL-SCH message type received from cell %d", cellId);
         break;
     }
 }
@@ -231,6 +233,7 @@ void UeRrcTask::receiveRrcMessage(int cellId, ASN_RRC_DL_CCCH_Message *msg)
         receiveRrcSetup(cellId, *c1->choice.rrcSetup);
         break;
     default:
+        m_logger->warn("Unhandled DL-CCCH message type received from cell %d", cellId);
         break;
     }
 }
@@ -252,7 +255,11 @@ void UeRrcTask::receiveRrcMessage(ASN_RRC_DL_DCCH_Message *msg)
     case ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcReconfiguration:
         receiveRrcReconfiguration(*c1->choice.rrcReconfiguration);
         break;
+    case ASN_RRC_DL_DCCH_MessageType__c1_PR_securityModeCommand:
+        receiveSecurityModeCommand(*c1->choice.securityModeCommand);
+         break;
     default:
+        m_logger->warn("Unhandled DL-DCCH message type received");
         break;
     }
 }
@@ -269,6 +276,7 @@ void UeRrcTask::receiveRrcMessage(ASN_RRC_PCCH_Message *msg)
         receivePaging(*c1->choice.paging);
         break;
     default:
+        m_logger->warn("Unhandled PCCH message type received");
         break;
     }
 }

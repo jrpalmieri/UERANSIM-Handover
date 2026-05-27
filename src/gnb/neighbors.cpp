@@ -48,7 +48,8 @@ GnbNeighborState ReadNeighborConfig(const YAML::Node &neighborNode,
 
     GnbNeighborState neighbor{};
     neighbor.nci = yaml::GetInt64(neighborNode, "nci", 0, 0xFFFFFFFFFll);
-    neighbor.idLength = yaml::GetInt32(neighborNode, "idLength", 22, 32);
+    if (yaml::HasField(neighborNode, "idLength"))
+        neighbor.idLength = yaml::GetInt32(neighborNode, "idLength", 22, 32);
 
     if (yaml::HasField(neighborNode, "mcc"))
     {

@@ -85,44 +85,7 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
             }
 
             auto *resource = new PduSessionResource(ue->ctxId, static_cast<int>(item->pDUSessionID));
-
-            auto *ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_PDUSessionAggregateMaximumBitRate);
-            if (ie)
-            {
-                resource->sessionAmbr.dlAmbr =
-                    asn::GetUnsigned64(ie->PDUSessionAggregateMaximumBitRate.pDUSessionAggregateMaximumBitRateDL) /
-                    8ull;
-                resource->sessionAmbr.ulAmbr =
-                    asn::GetUnsigned64(ie->PDUSessionAggregateMaximumBitRate.pDUSessionAggregateMaximumBitRateUL) /
-                    8ull;
-            }
-
-            ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_DataForwardingNotPossible);
-            if (ie)
-                resource->dataForwardingNotPossible = true;
-
-            ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_PDUSessionType);
-            if (ie)
-                resource->sessionType = ngap_utils::PduSessionTypeFromAsn(ie->PDUSessionType);
-
-            ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_UL_NGU_UP_TNLInformation);
-            if (ie)
-            {
-                resource->upTunnel.teid =
-                    (uint32_t)asn::GetOctet4(ie->UPTransportLayerInformation.choice.gTPTunnel->gTP_TEID);
-
-                resource->upTunnel.address =
-                    asn::GetOctetString(ie->UPTransportLayerInformation.choice.gTPTunnel->transportLayerAddress);
-            }
-
-            ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_QosFlowSetupRequestList);
-            if (ie)
-            {
-                auto *ptr = asn::New<ASN_NGAP_QosFlowSetupRequestList>();
-                asn::DeepCopy(asn_DEF_ASN_NGAP_QosFlowSetupRequestList, ie->QosFlowSetupRequestList, ptr);
-
-                resource->qosFlows = asn::WrapUnique(ptr, asn_DEF_ASN_NGAP_QosFlowSetupRequestList);
-            }
+            makeNgapPduSessionItems(resource, transfer);
 
             // Instruct GTP to setup the UP tunnel
             m_logger->debug("UE[%ld]: Processing PDU session resource setup request item with PSI=%d", ue->ctxId, resource->psi);
@@ -194,16 +157,27 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
         }
     }
 
-    // Send to RRC the NAS Accept Message that is included in the PDU session resource setup request, 
-    //   and the list of PDU sessions that are being set up
+    // Get the NAS msg if included
     auto *ieNasPdu = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_NAS_PDU);
     if (ieNasPdu)
     {
-
         m_logger->debug("UE[%ld]: Processing IE NAS PDU", ue->ctxId);
-        deliverDownlinkNasAccept(ue->ctxId, asn::GetOctetString(ieNasPdu->NAS_PDU), std::move(sessionList));
 
-        m_logger->debug("UE[%ld]: PDU Session Setup Request - NAS Accept and PDU Session List [count=%d] sent to RRC", ue->ctxId, sessionList ? sessionList->size() : 0);
+        if (sessionList->empty())
+        {
+            deliverDownlinkNas(ue->ctxId, asn::GetOctetString(ieNasPdu->NAS_PDU));
+            m_logger->debug("UE[%ld]: PDU Session Setup Request - NAS msg only sent to RRC (no PDU sessions to establish)", ue->ctxId);
+        }
+        else
+        {
+            deliverDownlinkNasAccept(ue->ctxId, asn::GetOctetString(ieNasPdu->NAS_PDU), std::move(sessionList));
+            m_logger->debug("UE[%ld]: PDU Session Setup Request - NAS msg and PDU Session List [count=%d] sent to RRC", ue->ctxId, sessionList ? sessionList->size() : 0);
+        }
+    }
+    else
+    {
+        m_logger->debug("UE[%ld]: PDU Session Setup Request - No NAS PDU included in the request", ue->ctxId);
+        deliverPDUSessionSetupRequest(ue->ctxId, std::move(sessionList));
     }
 
     // Send response to AMF

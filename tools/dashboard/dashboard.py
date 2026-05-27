@@ -216,6 +216,17 @@ class WindowedDashboard:
         self.sat_epoch_base_resolved: str = ""  # resolved YYDDD epoch string
         self.sat_tick_scaling: Optional[float] = None
 
+        # ── Config-derived: core network ─────────────────────────────────────
+        self.core_dir: str = ""
+        self.core_name: str = ""
+        self.core_status_command: str = ""
+        self.core_status_command_args: List[str] = []
+        self.core_start_command: str = ""
+        self.core_start_command_args: List[str] = []
+        self.core_address_check_command: str = ""
+        self.core_address_check_command_args: List[str] = []
+        self.copy_core_logs: bool = False
+
         # ── Config-derived: AMF ──────────────────────────────────────────────
         self.amf_log_file_template: str = ""
 
@@ -383,7 +394,17 @@ class WindowedDashboard:
     def _apply_config(self, config: Dict[str, object], workspace: Path) -> None:
         self.config = config
         self.workspace = workspace
-        self.demo_name = str(config.get("demo_name", ""))
+        self.demo_name = str(config.get("demo_name", config.get("demo-name", "")))
+
+        # ── Core network dir must be resolved first so %core expands everywhere ─
+        core_cfg = config.get("core", {}) if isinstance(config.get("core"), dict) else {}
+        raw_core_dir = str(core_cfg.get("dir", "")).strip()
+        if raw_core_dir:
+            p = Path(raw_core_dir)
+            self.core_dir = str(p) if p.is_absolute() else str((workspace / p).resolve())
+        else:
+            self.core_dir = ""
+        self.core_name = str(core_cfg.get("name", ""))
 
         ui_cfg = config.get("ui", {})
         self.poll_interval = float(ui_cfg.get("poll_interval_sec", 1.0))
@@ -417,7 +438,7 @@ class WindowedDashboard:
         self.ue_altitude = _opt_float(ue_cfg.get("altitude"))
         self.ue_start_delay = max(0.0, float(ue_cfg.get("start_delay_sec", 0.0)))
 
-        up_cfg = config.get("user_plane", {})
+        up_cfg = core_cfg.get("user_plane", {})
         self.user_plane_upf_ip = str(up_cfg.get("upf_ip", "127.0.0.1"))
         self.user_plane_upf_port = int(up_cfg.get("upf_port", 5000))
         self.user_plane_capture_enabled = bool(up_cfg.get("capture_enabled", True))
@@ -450,17 +471,28 @@ class WindowedDashboard:
         self.run_stop_after_sec = float(run_cfg.get("stop_after_sec", 0.0))
         self.run_iterations = max(1, int(run_cfg.get("iterations", 1)))
         self.reset_core = bool(run_cfg.get("reset_core", False))
-        self.reset_command = str(run_cfg.get("reset_command", ""))
-        self.reset_command_args = [str(x) for x in run_cfg.get("reset_command_args", [])]
+        raw_reset_cmd = str(core_cfg.get("reset_command", "")).strip()
+        self.reset_command = self._resolve(raw_reset_cmd) if raw_reset_cmd else ""
+        self.reset_command_args = [str(x) for x in core_cfg.get("reset_command_args", [])]
+        raw_status_cmd = str(core_cfg.get("status_command", "")).strip()
+        self.core_status_command = self._resolve(raw_status_cmd) if raw_status_cmd else ""
+        self.core_status_command_args = [str(x) for x in core_cfg.get("status_command_args", [])]
+        raw_start_cmd = str(core_cfg.get("start_command", "")).strip()
+        self.core_start_command = self._resolve(raw_start_cmd) if raw_start_cmd else ""
+        self.core_start_command_args = [str(x) for x in core_cfg.get("start_command_args", [])]
+        raw_addr_check_cmd = str(core_cfg.get("address_check_command", "")).strip()
+        self.core_address_check_command = self._resolve(raw_addr_check_cmd) if raw_addr_check_cmd else ""
+        self.core_address_check_command_args = [str(x) for x in core_cfg.get("address_check_command_args", [])]
         self.run_log_template = str(run_cfg.get("run_log", "demo_%i.log"))
         log_cfg = run_cfg.get("logging", {})
         log_dir_str = str(log_cfg.get("log_dir", "./tools/dashboard/logs"))
         self.log_dir = Path(self._resolve(log_dir_str))
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.run_log_dir_name = str(log_cfg.get("run_log_dir_name", "run-%t"))
+        self.copy_core_logs = bool(log_cfg.get("copy_core_logs", False))
 
-        amf_cfg = config.get("amf", {})
-        self.amf_log_file_template = str(amf_cfg.get("amf_log_file", ""))
+        amf_cfg = core_cfg.get("amf", {})
+        self.amf_log_file_template = str(amf_cfg.get("local_log_file", ""))
 
         pcap_cfg = config.get("pcap", {})
         pcap_core_cfg = pcap_cfg.get("core", {}) if isinstance(pcap_cfg, dict) else {}
@@ -576,7 +608,13 @@ class WindowedDashboard:
         self._update_header_config()
         self._rebuild_content_ui()
 
+    def _expand_core(self, value: str) -> str:
+        if self.core_dir and "%core" in value:
+            return value.replace("%core", self.core_dir)
+        return value
+
     def _resolve(self, value: str) -> str:
+        value = self._expand_core(value)
         p = Path(value)
         if p.is_absolute():
             return str(p)
@@ -789,7 +827,7 @@ class WindowedDashboard:
         return self._normalize_imsi_value(mapped)
 
     def _warn_open5gs_subscribers(self, ue_cfg: Dict[str, object]) -> None:
-        db_cfg = self.config.get("core_db", {})
+        db_cfg = self.config.get("core", {}).get("core_db", {})
         enabled = bool(db_cfg.get("warn_missing_subscribers", True))
         if not enabled:
             for key in self.ue_keys:
@@ -1121,8 +1159,11 @@ class WindowedDashboard:
         if self.reset_core:
             self._resetting = True
             self._update_run_header()
-            self._demo_log(f"[reset] resetting core: {self.reset_command} {' '.join(self.reset_command_args)}")
-            threading.Thread(target=self._run_core_reset, daemon=True).start()
+            if self.core_status_command:
+                threading.Thread(target=self._run_core_status_then_reset_or_start, daemon=True).start()
+            else:
+                self._demo_log(f"[reset] resetting core: {self.reset_command} {' '.join(self.reset_command_args)}")
+                threading.Thread(target=self._run_core_reset, daemon=True).start()
         elif self.ue_create_db_profiles:
             threading.Thread(target=self._create_db_profiles, daemon=True).start()
         else:
@@ -1135,15 +1176,14 @@ class WindowedDashboard:
             if not parts:
                 raise FileNotFoundError("reset_command is empty")
             args = self.reset_command_args
-            # replace %i with iteration number in args if present
-            args = [str(arg).replace("%i", str(self.run_iteration)) for arg in args]
+            args = [self._expand_core(str(arg)).replace("%i", str(self.run_iteration)) for arg in args]
             parts.extend(args)
             self._reset_proc = subprocess.Popen(
                 parts,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                cwd=str(self.workspace),
+                cwd=self.core_dir or str(self.workspace),
             )
             assert self._reset_proc.stdout is not None
             for line in self._reset_proc.stdout:
@@ -1165,17 +1205,129 @@ class WindowedDashboard:
             if not self.stop_event.is_set():
                 self.root.after(0, lambda: self._on_reset_failed(str(ex)))
 
+    def _run_core_status_then_reset_or_start(self) -> None:
+        cmd = self.core_status_command.strip()
+        args = [self._expand_core(str(a)).replace("%i", str(self.run_iteration))
+                for a in self.core_status_command_args]
+        parts = shlex.split(cmd) + args if cmd else []
+        self._demo_log("[core] checking core status: " + " ".join(parts))
+        returncode = -1
+        try:
+            proc = subprocess.Popen(
+                parts,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=self.core_dir or str(self.workspace),
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                self._demo_log("[status] " + line.rstrip())
+            returncode = proc.wait()
+        except FileNotFoundError:
+            self._demo_log(f"[core] status_command not found: {cmd!r}")
+        except Exception as ex:
+            self._demo_log(f"[core] status_command error: {ex}")
+        if self.stop_event.is_set():
+            return
+        if returncode == 0:
+            self._demo_log("[core] core is running → running reset_command")
+            self._run_core_reset()
+        else:
+            self._demo_log("[core] core is not fully running → running start_command")
+            self._run_core_start()
+
+    def _run_core_start(self) -> None:
+        cmd = self.core_start_command.strip()
+        try:
+            parts = shlex.split(cmd) if cmd else []
+            if not parts:
+                raise FileNotFoundError("core.start_command is empty")
+            args = [self._expand_core(str(a)).replace("%i", str(self.run_iteration))
+                    for a in self.core_start_command_args]
+            parts.extend(args)
+            self._demo_log("[start] starting core: " + " ".join(parts))
+            proc = subprocess.Popen(
+                parts,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=self.core_dir or str(self.workspace),
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                self._demo_log("[start] " + line.rstrip())
+            returncode = proc.wait()
+            if self.stop_event.is_set():
+                return
+            if returncode == 0:
+                self.root.after(0, self._on_reset_success)
+            else:
+                self.root.after(0, lambda: self._on_reset_failed(
+                    f"start_command exited with code {returncode}"
+                ))
+        except FileNotFoundError:
+            if not self.stop_event.is_set():
+                self.root.after(0, lambda: self._on_reset_failed(f"start_command not found: {cmd!r}"))
+        except Exception as ex:
+            if not self.stop_event.is_set():
+                self.root.after(0, lambda: self._on_reset_failed(str(ex)))
+
     def _on_reset_success(self) -> None:
         if not self.demo_running:
             return
         self._resetting = False
         self._demo_log("[reset] core reset complete")
-        if self.ue_create_db_profiles:
+        if self.core_address_check_command:
+            threading.Thread(target=self._run_address_check, daemon=True).start()
+        elif self.ue_create_db_profiles:
             threading.Thread(target=self._create_db_profiles, daemon=True).start()
         else:
             delay = 5
             self._demo_log(f"[reset] waiting {delay}s for core services to come up...")
             self.root.after(delay * 1000, self._launch_demo_processes)
+
+    def _run_address_check(self) -> None:
+        cmd = self.core_address_check_command.strip()
+        args = [self._expand_core(str(a)).replace("%i", str(self.run_iteration))
+                for a in self.core_address_check_command_args]
+        parts = shlex.split(cmd) + args if cmd else []
+        self._demo_log("[addr-check] running: " + " ".join(parts))
+        returncode = -1
+        try:
+            proc = subprocess.Popen(
+                parts,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=self.core_dir or str(self.workspace),
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                self._demo_log("[addr-check] " + line.rstrip())
+            returncode = proc.wait()
+        except FileNotFoundError:
+            self._demo_log(f"[addr-check] command not found: {cmd!r}")
+        except Exception as ex:
+            self._demo_log(f"[addr-check] error: {ex}")
+        if self.stop_event.is_set():
+            return
+        if returncode == 0:
+            self._demo_log("[addr-check] passed")
+            if self.ue_create_db_profiles:
+                self.root.after(0, lambda: threading.Thread(target=self._create_db_profiles, daemon=True).start())
+            else:
+                delay = 5
+                self._demo_log(f"[addr-check] waiting {delay}s for core services to come up...")
+                self.root.after(delay * 1000, self._launch_demo_processes)
+        else:
+            error = f"address_check_command exited with code {returncode}"
+            self._demo_log(f"[addr-check] FAILED: {error}")
+            self.root.after(0, lambda e=error: self._on_address_check_failed(e))
+
+    def _on_address_check_failed(self, error: str) -> None:
+        self._stop_demo()
+        messagebox.showerror("Address Check Failed", f"Core network address check failed:\n\n{error}")
 
     def _on_reset_failed(self, error: str) -> None:
         self._resetting = False
@@ -1185,7 +1337,7 @@ class WindowedDashboard:
 
     def _create_db_profiles(self) -> None:
         """Background thread: reset subscriber DB then add UE profiles via dbctl."""
-        db_cfg = self.config.get("core_db", {})
+        db_cfg = self.config.get("core", {}).get("core_db", {})
         script_path = Path(self._resolve(str(db_cfg.get("dbctl_script", "./tools/open5gs-dbctl.py"))))
         python_exec = str(db_cfg.get("python", "python3"))
         db_uri = str(db_cfg.get("db_uri", "mongodb://localhost/open5gs"))
@@ -1308,7 +1460,7 @@ class WindowedDashboard:
         self._stop_user_plane_repeated_message()
         self._stop_user_plane_capture()
         self._stop_pcap_capture()
-        self._copy_amf_log()
+        self._copy_core_logs()
         if self.script_timer_id is not None:
             self.root.after_cancel(self.script_timer_id)
             self.script_timer_id = None
@@ -1592,7 +1744,7 @@ class WindowedDashboard:
         ui_section = self.config.get("ui", {})
         row = 0
         row = _add_section_header(run_inner, row, "Demo", first=True)
-        row = _add_field(run_inner, row, "demo_name", "demo_name", self.config.get("demo_name", ""))
+        row = _add_field(run_inner, row, "demo_name", "demo_name", self.config.get("demo_name", self.config.get("demo-name", "")))
         ttk.Label(run_inner, text="config_file:").grid(row=row, column=0, sticky="w", padx=(4, 8), pady=3)
         ttk.Label(run_inner, text=self.config_name, foreground="gray").grid(row=row, column=1, sticky="w", pady=3)
         row += 1
@@ -1604,8 +1756,6 @@ class WindowedDashboard:
             ("stop_after_sec", 0.0),
             ("iterations", 1),
             ("reset_core", False),
-            ("reset_command", ""),
-            ("reset_command_args", []),
             ("run_log", "demo_%i.log"),
         ]:
             row = _add_field(run_inner, row, field_key, f"run.{field_key}", run_section.get(field_key, default))
@@ -1615,6 +1765,7 @@ class WindowedDashboard:
         for field_key, default in [
             ("log_dir", "./tools/dashboard/logs"),
             ("run_log_dir_name", "run-%t"),
+            ("copy_core_logs", False),
         ]:
             row = _add_field(run_inner, row, field_key, f"run.logging.{field_key}", log_section.get(field_key, default))
         row = _add_field(run_inner, row, "max_log_lines", "ui.max_log_lines", ui_section.get("max_log_lines", 400))
@@ -1685,28 +1836,45 @@ class WindowedDashboard:
         core_tab = ttk.Frame(nb)
         nb.add(core_tab, text="Core Network")
         core_inner = _make_scroll_frame(core_tab)
+        core_section = self.config.get("core", {}) if isinstance(self.config.get("core"), dict) else {}
         row = 0
-        row = _add_section_header(core_inner, row, "AMF", first=True)
-        amf_section = self.config.get("amf", {})
+        row = _add_section_header(core_inner, row, "Core Network", first=True)
+        for field_key, default, browse in [
+            ("name", "", False),
+            ("dir", "", True),
+            ("status_command", "", False),
+            ("status_command_args", [], False),
+            ("address_check_command", "", False),
+            ("address_check_command_args", [], False),
+            ("start_command", "", False),
+            ("start_command_args", [], False),
+            ("stop_command", "", False),
+            ("stop_command_args", [], False),
+            ("reset_command", "", False),
+            ("reset_command_args", [], False),
+        ]:
+            row = _add_field(core_inner, row, field_key, f"core.{field_key}", core_section.get(field_key, default), browse=browse)
+        row = _add_section_header(core_inner, row, "AMF")
+        amf_section = core_section.get("amf", {}) if isinstance(core_section, dict) else {}
         for field_key, default, browse in [
             ("host", "127.0.0.1", False), ("port", 38412, False), ("protocol", "sctp", False),
             ("active_probe", False, False), ("connect_timeout_sec", 1.0, False),
-            ("source_log_file", "", False), ("amf_log_file", "", False),
+            ("source_log_file", "", False), ("local_log_file", "", False),
         ]:
-            row = _add_field(core_inner, row, field_key, f"amf.{field_key}", amf_section.get(field_key, default), browse=browse)
+            row = _add_field(core_inner, row, field_key, f"core.amf.{field_key}", amf_section.get(field_key, default), browse=browse)
         row = _add_section_header(core_inner, row, "Core DB")
-        db_section = self.config.get("core_db", {})
+        db_section = core_section.get("core_db", {}) if isinstance(core_section, dict) else {}
         for field_key, default, browse in [
             ("warn_missing_subscribers", True, False), ("dbctl_script", "./tools/open5gs-dbctl.py", False),
             ("db_uri", "mongodb://localhost/open5gs", False), ("check_timeout_sec", 10.0, False), ("python", "python3", False),
         ]:
-            row = _add_field(core_inner, row, field_key, f"core_db.{field_key}", db_section.get(field_key, default), browse=browse)
+            row = _add_field(core_inner, row, field_key, f"core.core_db.{field_key}", db_section.get(field_key, default), browse=browse)
 
         # ── User Plane tab ────────────────────────────────────────────────────
         up_tab = ttk.Frame(nb)
         nb.add(up_tab, text="User Plane")
         up_inner = _make_scroll_frame(up_tab)
-        up_section = self.config.get("user_plane", {})
+        up_section = (self.config.get("core", {}) or {}).get("user_plane", {}) or {}
         up_row = 0
         for field_key, default, browse in [
             ("upf_ip", "127.0.0.1", False), ("upf_port", 5000, False),
@@ -1717,7 +1885,7 @@ class WindowedDashboard:
             ("host_route_subnet", "172.22.0.0/24", False),
         ]:
             val = up_section.get(field_key, default)
-            up_row = _add_field(up_inner, up_row, field_key, f"user_plane.{field_key}", val, browse=browse)
+            up_row = _add_field(up_inner, up_row, field_key, f"core.user_plane.{field_key}", val, browse=browse)
         ttk.Separator(up_inner, orient="horizontal").grid(row=up_row, column=0, columnspan=3, sticky="ew", pady=(10, 4))
         up_row += 1
         ttk.Label(up_inner, text="User Plane Test", font=("TkDefaultFont", 10, "bold")).grid(
@@ -2347,35 +2515,60 @@ class WindowedDashboard:
             "cell-measurements": out.get("cell-measurements", ""),
         }
 
-    def _discover_primary_ue_tun_info(self) -> None:
-        _, logs = self.panes[self.primary_ue_key].snapshot()
-        imsi_hint = self._resolve_primary_ue_imsi_hint()
-        scoped_pattern = re.compile(
-            r"\[(\d+)\|app\].*TUN interface\[([^,\]]+),\s*([^\]]+)\] is up"
-        )
-
-        if imsi_hint:
-            for line in reversed(logs):
-                match = scoped_pattern.search(line)
-                if not match:
-                    continue
-                if match.group(1) != imsi_hint:
-                    continue
-
-                self.primary_ue_tun_name = match.group(2).strip()
-                self.primary_ue_tun_ip = match.group(3).strip()
-                return
-
-        # Fallback for logs without per-UE prefixes.
-        pattern = re.compile(r"TUN interface\[([^,\]]+),\s*([^\]]+)\] is up")
-        for line in reversed(logs):
-            match = pattern.search(line)
-            if not match:
+    def _poll_ue_ps_list_for_active_session(self, node: str) -> Optional[tuple[str, str]]:
+        """Query ps-list CLI and return (ip, tun_name) of the first APN=internet ACTIVE PDU session."""
+        nr_cli = self._resolve(self.nr_cli)
+        cmd: List[str] = []
+        if self.ue_cli_with_sudo:
+            cmd.append("sudo")
+            if self.ue_cli_sudo_non_interactive:
+                cmd.append("-n")
+        cmd.extend([nr_cli, node, "-e", "ps-list"])
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(self.workspace),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=self.command_timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        try:
+            data = yaml.safe_load(proc.stdout)
+        except yaml.YAMLError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        for session_val in data.values():
+            if not isinstance(session_val, dict):
                 continue
+            apn = str(session_val.get("apn", "")).strip().lower()
+            state = str(session_val.get("state", "")).strip().upper()
+            address = str(session_val.get("address", "")).strip()
+            tun_name = str(session_val.get("tun-interface", "")).strip()
+            if apn == "internet" and state == "PS-ACTIVE" and address and address != "None":
+                return address, tun_name
+        return None
 
-            self.primary_ue_tun_name = match.group(1).strip()
-            self.primary_ue_tun_ip = match.group(2).strip()
+    def _discover_primary_ue_tun_info(self) -> None:
+        if self.primary_ue_tun_ip and self.primary_ue_tun_name:
             return
+
+        node = self.node_names.get(self.primary_ue_key, "")
+        if not node:
+            return
+        result = self._poll_ue_ps_list_for_active_session(node)
+        if result:
+            ip, tun_name = result
+            if not self.primary_ue_tun_ip and ip:
+                self.primary_ue_tun_ip = ip
+            if not self.primary_ue_tun_name and tun_name:
+                self.primary_ue_tun_name = tun_name
 
     @staticmethod
     def _extract_printable_ascii(data: bytes) -> str:
@@ -2613,7 +2806,7 @@ class WindowedDashboard:
 
         self.user_plane_capture_backend = "tcpdump"
         self._set_user_plane_capture_status("running (tcpdump fallback)")
-        self._append_user_plane_rx("capture switched to tcpdump fallback")
+        self._append_user_plane_rx(f"[tcpdump] cmd: {' '.join(cmd)}")
 
         def _reader() -> None:
             proc = self.user_plane_tcpdump_proc
@@ -2631,13 +2824,17 @@ class WindowedDashboard:
                 if not text:
                     continue
 
-                if text.startswith("tcpdump:"):
+                # Always show tcpdump status/error lines.
+                if text.startswith("tcpdump:") or text.startswith("sudo:"):
                     self._append_user_plane_rx(text)
                     continue
 
+                # Show IP header lines with a compact label so timing/direction is visible.
                 if header_re.match(text):
+                    self._append_user_plane_rx(f"[pkt] {text.strip()}")
                     continue
 
+                # Payload lines: extract printable ASCII and show if non-empty.
                 printable = self._extract_printable_ascii(text.encode("utf-8", errors="ignore"))
                 if printable:
                     self._append_user_plane_rx(printable)
@@ -2815,7 +3012,13 @@ class WindowedDashboard:
         return os.path.exists(f"/sys/class/net/{name}")
 
     def _user_plane_capture_loop(self) -> None:
-        use_raw_socket = True  # downgraded to False permanently on first PermissionError
+        # Pre-check AF_PACKET permission once so we go straight to tcpdump if not allowed.
+        use_raw_socket = True
+        try:
+            _test_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
+            _test_sock.close()
+        except PermissionError:
+            use_raw_socket = False
 
         while not self.user_plane_capture_stop.is_set():
             if not self.primary_ue_tun_name:
@@ -2823,17 +3026,10 @@ class WindowedDashboard:
                 self.user_plane_capture_stop.wait(0.5)
                 continue
 
-            if not self._iface_exists(self.primary_ue_tun_name):
-                self._set_user_plane_capture_status(
-                    f"waiting for {self.primary_ue_tun_name} to appear on OS"
-                )
-                self.user_plane_capture_stop.wait(0.5)
-                continue
-
+            # Netns path: TUN was moved by _ensure_user_plane_tun_namespace; use tcpdump inside it.
             if self.user_plane_tun_moved_to_netns and self.user_plane_move_tun_to_netns:
                 self._set_user_plane_capture_status("running (netns tcpdump)")
                 self._start_user_plane_tcpdump_capture()
-                # Block until tcpdump exits, then retry
                 if self.user_plane_tcpdump_thread is not None:
                     self.user_plane_tcpdump_thread.join()
                 self.user_plane_tcpdump_proc = None
@@ -2842,6 +3038,7 @@ class WindowedDashboard:
                     self.user_plane_capture_stop.wait(2.0)
                 continue
 
+            # tcpdump fallback (no AF_PACKET permission, or downgraded after first PermissionError).
             if not use_raw_socket:
                 self._start_user_plane_tcpdump_capture()
                 if self.user_plane_tcpdump_thread is not None:
@@ -2852,6 +3049,7 @@ class WindowedDashboard:
                     self.user_plane_capture_stop.wait(2.0)
                 continue
 
+            # AF_PACKET raw socket — attempt bind directly; OSError covers "no such device".
             try:
                 sock = socket.socket(
                     socket.AF_PACKET,
@@ -2866,9 +3064,10 @@ class WindowedDashboard:
                 self._append_user_plane_rx("capture error: permission denied for raw socket")
                 continue
             except OSError as ex:
-                self._set_user_plane_capture_status(f"error: {ex}")
-                self._append_user_plane_rx(f"capture error: {ex}")
-                self.user_plane_capture_stop.wait(1.0)
+                self._set_user_plane_capture_status(
+                    f"waiting for {self.primary_ue_tun_name} ({ex})"
+                )
+                self.user_plane_capture_stop.wait(0.5)
                 continue
 
             self._set_user_plane_capture_status("running")
@@ -3278,7 +3477,7 @@ class WindowedDashboard:
             self.stop_event.wait(self.poll_interval)
 
     def _amf_loop(self) -> None:
-        amf = self.config["amf"]
+        amf = self.config["core"]["amf"]
         host = str(amf["host"])
         port = int(amf["port"])
         timeout = float(amf.get("connect_timeout_sec", 1.0))
@@ -3311,7 +3510,7 @@ class WindowedDashboard:
             self.stop_event.wait(self.poll_interval)
 
     def _tail_amf_log_path(self) -> Optional[Path]:
-        amf = self.config["amf"]
+        amf = self.config["core"]["amf"]
         raw = amf.get("source_log_file") or amf.get("log_file")
         if raw is None:
             return None
@@ -3421,7 +3620,7 @@ class WindowedDashboard:
 
         # Auto-discover interface for core (AMF) capture if needed
         if capture_key == "core" and (not iface or iface.lower() == "amf"):
-            amf_ip = str(self.config.get("amf", {}).get("host", "")) if self.config else ""
+            amf_ip = str(self.config.get("core", {}).get("amf", {}).get("host", "")) if self.config else ""
             if amf_ip:
                 discovered = self._discover_iface_for_ip(amf_ip)
                 if discovered:
@@ -3494,6 +3693,32 @@ class WindowedDashboard:
                 thread = self.pcap_threads[capture_key]
                 thread.join(timeout=2.0)
                 del self.pcap_threads[capture_key]
+
+    def _copy_core_logs(self) -> None:
+        if not self.copy_core_logs or self.config is None:
+            return
+        import shutil
+        core_cfg = self.config.get("core", {})
+        if not isinstance(core_cfg, dict):
+            return
+        log_dir = self.run_log_dir if self.run_log_dir is not None else self.log_dir
+        for section_name, section in core_cfg.items():
+            if not isinstance(section, dict):
+                continue
+            src_raw = str(section.get("source_log_file", "")).strip()
+            dest_template = str(section.get("local_log_file", "")).strip()
+            if not src_raw or not dest_template:
+                continue
+            src_path = Path(self._resolve(src_raw))
+            dest_path = log_dir / self._expand_log_name(dest_template)
+            if not src_path.exists():
+                self._demo_log(f"[copy-logs:{section_name}] source not found, skipping: {src_path}")
+                continue
+            try:
+                shutil.copy2(str(src_path), str(dest_path))
+                self._demo_log(f"[copy-logs:{section_name}] {src_path} -> {dest_path}")
+            except OSError as ex:
+                self._demo_log(f"[copy-logs:{section_name}] copy failed: {ex}")
 
     def _copy_amf_log(self) -> None:
         if not self.amf_log_file_template:
@@ -5349,9 +5574,12 @@ def _load_config_file(path: Path) -> Dict[str, object]:
 
 
 def validate_config(config: Dict[str, object]) -> None:
-    for key in ["amf", "ue", "gnb"]:
+    for key in ["ue", "gnb"]:
         if key not in config:
             raise ValueError(f"Missing config section: {key}")
+    core_sec = config.get("core")
+    if not isinstance(core_sec, dict) or "amf" not in core_sec:
+        raise ValueError("Missing config section: core.amf")
 
     if "command_cli" not in config:
         raise ValueError("Missing required field: command_cli")
@@ -5385,22 +5613,22 @@ def validate_config(config: Dict[str, object]) -> None:
             if ts_f <= 0:
                 raise ValueError("satellite.tick_scaling must be greater than zero")
 
-    up_cfg = config.get("user_plane", {})
+    up_cfg = config.get("core", {}).get("user_plane", {}) if isinstance(config.get("core"), dict) else {}
     upf_port = int(up_cfg.get("upf_port", 5000))
     if upf_port < 1 or upf_port > 65535:
-        raise ValueError("user_plane.upf_port must be in range 1..65535")
+        raise ValueError("core.user_plane.upf_port must be in range 1..65535")
 
     route_gateway = str(up_cfg.get("host_route_gateway", "172.22.0.1")).strip()
     route_subnet = str(up_cfg.get("host_route_subnet", "172.22.0.0/24")).strip()
     try:
         ipaddress.ip_address(route_gateway)
     except ValueError as ex:
-        raise ValueError(f"user_plane.host_route_gateway is invalid: {ex}") from ex
+        raise ValueError(f"core.user_plane.host_route_gateway is invalid: {ex}") from ex
 
     try:
         ipaddress.ip_network(route_subnet, strict=False)
     except ValueError as ex:
-        raise ValueError(f"user_plane.host_route_subnet is invalid: {ex}") from ex
+        raise ValueError(f"core.user_plane.host_route_subnet is invalid: {ex}") from ex
 
 
 def main() -> None:

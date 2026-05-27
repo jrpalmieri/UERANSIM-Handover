@@ -207,25 +207,30 @@ void RlsControlTask::handleRlsMessage(NmGnbRlsToRls &w)
 
         if (m.pduType == rls::EPduType::DATA)
         {
-            //updateUeBearer(ueId, m.radioBearer, m.pduId);
             auto out = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_DATA);
             out->ueId = ueId;
+            out->cRnti = ctx->cRnti;
+            out->qfi  = static_cast<int>(m.sdapByte & 0x3f);
             out->psi  = static_cast<int>(m.payloadType);
             out->data = std::move(m.pdu);
             m_mainTask->push(std::move(out));
+            m_logger->debug("UE[%ld]: received uplink data. Psi=%d, PduId=%u, RB=%02x, QFI=%d, AckPdu=%s", ueId, m.payloadType, m.pduId, m.radioBearer & 0x7f, m.sdapByte & 0x3f, m.ackPdu ? "true" : "false");
         }
         else if (m.pduType == rls::EPduType::RRC)
         {
             //updateUeBearer(ueId, m.radioBearer, m.pduId);
             auto out = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_RRC);
             out->ueId       = ueId;
+            out->cRnti      = ctx->cRnti;
             out->rrcChannel = static_cast<rrc::RrcChannel>(m.payloadType);
             out->data       = std::move(m.pdu);
             m_mainTask->push(std::move(out));
+            m_logger->debug("UE[%ld]: received uplink RRC. Channel=%d, PduId=%u, RB=%02x, QFI=%d, AckPdu=%s", ueId, m.payloadType, m.pduId, m.radioBearer & 0x7f, m.sdapByte & 0x3f, m.ackPdu ? "true" : "false");
+
         }
         else
         {
-            m_logger->err("Unhandled RLS PDU type. Packet dropped.");
+            m_logger->debug("UE[%ld]: received uplink UNKNOWN PDU. PayloadType=%d, PduId=%u, RB=%02x, QFI=%d, AckPdu=%s", ueId, m.payloadType, m.pduId, m.radioBearer & 0x7f, m.sdapByte & 0x3f, m.ackPdu ? "true" : "false");
         }
     }
     else
@@ -295,6 +300,7 @@ void RlsControlTask::handleDownlinkRrcDelivery(int64_t ueId, rrc::RrcChannel cha
     rls::RlsPduTransmission msg{m_sti};
     msg.pduType     = rls::EPduType::RRC;
     msg.radioBearer = radioBearer;
+    msg.sdapByte    = 0;
     msg.ackPdu      = ackPdu;
     msg.pdu         = std::move(data);
     msg.payloadType = static_cast<uint32_t>(channel);
@@ -351,6 +357,8 @@ void RlsControlTask::handleDownlinkDataDelivery(int64_t ueId, int psi, int qfi, 
     bool     ackPdu     = requireDataAck(psi);
     uint8_t radioBearer = 0x41; // DRB1
 
+    m_logger->debug("UE[%ld]: Handling downlink data delivery for PSI=%d, QFI=%d", ueId, psi, qfi);
+
     // critical section
     {
         std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
@@ -392,6 +400,8 @@ void RlsControlTask::handleDownlinkDataDelivery(int64_t ueId, int psi, int qfi, 
         }
     }
 
+    m_logger->debug("UE[%ld]: Sending downlink data to UE. PDU ID=%u, QFI=%d, RB=%02x, AckPDU=%s", ueId, pduId, qfi, radioBearer, ackPdu ? "true" : "false");
+
     rls::RlsPduTransmission msg{m_sti};
     msg.pduType     = rls::EPduType::DATA;
     msg.radioBearer = radioBearer;
@@ -407,6 +417,8 @@ void RlsControlTask::handleDownlinkDataDelivery(int64_t ueId, int psi, int qfi, 
 // Handles a message from RRC to update the Radio Bearer and SDAP mappings for a UE.
 void RlsControlTask::handleRadioBearerUpdate(int64_t ueId, std::unique_ptr<RadioBearerUpdate> rbUpdate, std::unique_ptr<SdapUpdate> sdapUpdate)
 {
+    m_logger->info("UE[%ld]: Handling RadioBearer/SDAP update", ueId);
+
     std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
     auto ctx = getRlsUeContext(ueId);
     if (!ctx)
@@ -420,6 +432,8 @@ void RlsControlTask::handleRadioBearerUpdate(int64_t ueId, std::unique_ptr<Radio
             ctx->radioBearers.erase(std::remove_if(ctx->radioBearers.begin(), ctx->radioBearers.end(),
                                                     [bearerId](const RadioBearer &b) { return b.bearerId == bearerId; }),
                                      ctx->radioBearers.end());
+
+            m_logger->debug("UE[%ld]: Deleting radio bearer %02x", ueId, bearerId);
         }
 
         // Add/update new bearers
@@ -431,10 +445,12 @@ void RlsControlTask::handleRadioBearerUpdate(int64_t ueId, std::unique_ptr<Radio
             if (it != ctx->radioBearers.end())
             {
                 *it = bearer;
+                m_logger->debug("UE[%ld]: Updating radio bearer %02x", ueId, bearer.bearerId);
             }
             else
             {
                 ctx->radioBearers.push_back(bearer);
+                m_logger->debug("UE[%ld]: Adding radio bearer %02x", ueId, bearer.bearerId);
             }
         }
     }
@@ -447,8 +463,8 @@ void RlsControlTask::handleRadioBearerUpdate(int64_t ueId, std::unique_ptr<Radio
             ctx->sdapMappings.erase(std::remove_if(ctx->sdapMappings.begin(), ctx->sdapMappings.end(),
                                                     [mapping](const SdapMapping &m) { return m.qfi == mapping.qfi && m.psi == mapping.psi; }),
                                      ctx->sdapMappings.end());
+            m_logger->debug("UE[%ld]: Deleting SDAP mapping (qfi=%d, psi=%d)", ueId, mapping.qfi, mapping.psi);
         }
-
         // Process SDAP update
         for (const auto &mapping : sdapUpdate->upsertSdapMappings)
         {
@@ -458,10 +474,12 @@ void RlsControlTask::handleRadioBearerUpdate(int64_t ueId, std::unique_ptr<Radio
             if (it != ctx->sdapMappings.end())
             {
                 *it = mapping;
+                m_logger->debug("UE[%ld]: Updating SDAP mapping (qfi=%d, psi=%d)", ueId, mapping.qfi, mapping.psi);
             }
             else
             {
                 ctx->sdapMappings.push_back(mapping);
+                m_logger->debug("UE[%ld]: Adding SDAP mapping (qfi=%d, psi=%d)", ueId, mapping.qfi, mapping.psi);
             }
         }
     }

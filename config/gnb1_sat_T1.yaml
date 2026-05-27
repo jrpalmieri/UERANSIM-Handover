@@ -97,15 +97,6 @@ position:
   altitude: 550000.0    # meters above ellipsoid (LEO orbit)
   #altitude: 100.0      # meters above ellipsoid (typical for terrestrial gNB)
 
-# Xn interface configuration (used for handover signaling with neighbor cells that support Xn handover)
-xn:
-  enabled: false
-  bindAddress: 127.0.0.1
-  bindPort: 9487
-  requestTimeoutMs: 1000
-  contextTtlMs: 5000
-  fallbackToN2: true
-
 # Handover measurement/CHO configuration.
 # events: classic (non-CHO) events always sent to UEs.  Generate meas reports to GNB
 # if choEnbaled is true, then gnb will also send Conditional Handover (CHO) events. 

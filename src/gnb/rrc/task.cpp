@@ -122,13 +122,19 @@ void GnbRrcTask::onLoop()
             handoverContextRelease(w.ueId);
             break;
         }
-        // AMF approval of handover command (sent to source gNB). Forward to RRC to complete the handover.
-        case NmGnbNgapToRrc::HANDOVER_COMMAND_DELIVERY: {
-            handleNgapHandoverCommand(w.ueId, w.rrcContainer, w.hoForChoPreparation);
+        // Target gNB received Handover Request from AMF
+        case NmGnbNgapToRrc::HANDOVER_REQUEST_RECEIVED: {
+            handleHandoverRequest(0, w.ngapTxId, std::move(w.rrcContainer), std::move(w.sessionList), w.isCho, EReqestingTask::NGAP);
             break;
         }
-        case NmGnbNgapToRrc::HANDOVER_FAILURE: {
-            handleNgapHandoverFailure(w.ueId, w.hoTargetNci, w.hoForChoPreparation);
+        // Source gNB received Handover Command from AMF.
+        case NmGnbNgapToRrc::HANDOVER_COMMAND_RECEIVED: {
+            handleHandoverAckOrCommand(w.ueId, std::move(w.rrcContainer), w.isCho, EReqestingTask::NGAP);
+            break;
+        }
+        // Source gNB received Handover Preparation Failure from AMF.
+        case NmGnbNgapToRrc::HANDOVER_PREPARATION_FAILURE_RECEIVED: {
+            handleHandoverPreparationFailure(w.ueId, w.hoTargetNci, w.isCho, EReqestingTask::NGAP);
             break;
         }
         case NmGnbNgapToRrc::PATH_SWITCH_REQUEST_ACK: {
@@ -140,7 +146,7 @@ void GnbRrcTask::onLoop()
             break;
         }
         case NmGnbNgapToRrc::PDU_SESSION_UPDATE: {
-            handleNgapPduSessionUpdate(w.ueId, std::move(w.sdapUpdate));
+            handleNgapPduSessionUpdate(w.ueId, std::move(w.sessionList));
             break;
         }
         default:
@@ -153,29 +159,33 @@ void GnbRrcTask::onLoop()
         auto &w = dynamic_cast<NmGnbXnToRrc &>(*msg);
         switch (w.present)
         {
-        case NmGnbXnToRrc::HANDOVER_REQUEST_ACK_RECEIVE:
+        // Target gNB received Handover Request from Source gNB
+        case NmGnbXnToRrc::HANDOVER_REQUEST_RECEIVED:
+            handleHandoverRequest(0, w.xnTxId, std::move(w.rrcContainer), std::move(w.sessionList), w.isCho, EReqestingTask::XN);
+            break;
+        // Source gNB received Handover Request Ack from Target gNB
+        case NmGnbXnToRrc::HANDOVER_REQUEST_ACK_RECEIVED:
             m_logger->debug("UE[%ld] Xn handover command ready", w.ueId);
             break;
-        case NmGnbXnToRrc::HANDOVER_PREPARATION_FAILURE_RECEIVE:
-            m_logger->warn("UE[%ld] Xn handover preparation failed reason=%d", w.ueId, w.reason);
+        // Source gNB received Handover Preparation Failure from Target gNB
+        case NmGnbXnToRrc::HANDOVER_PREPARATION_FAILURE_RECEIVED:
+            handleHandoverPreparationFailure(w.ueId, w.targetNci, w.isCho, EReqestingTask::XN);
             break;
-        case NmGnbXnToRrc::UE_CONTEXT_RELEASE_RECEIVE:
+        // Source gNB received UE Context Release from Target gNB
+        case NmGnbXnToRrc::UE_CONTEXT_RELEASE_RECEIVED:
             m_logger->debug("UE[%ld] Xn source context release requested", w.ueId);
             break;
-        case NmGnbXnToRrc::HANDOVER_FAILED:
-            m_logger->warn("UE[%ld] Xn handover failed reason=%d", w.ueId, w.reason);
-            break;
-        case NmGnbXnToRrc::HANDOVER_CANCEL_RECEIVE:
+        // Target gNB received Handover Cancel from Source gNB
+        case NmGnbXnToRrc::HANDOVER_CANCEL_RECEIVED:
             m_logger->debug("UE[%ld] Xn handover cancel received", w.ueId);
             break;
-        case NmGnbXnToRrc::SN_STATUS_TRANSFER_RECEIVE:
+        // Target gNB received SN Status Transfer from Source gNB
+        case NmGnbXnToRrc::SN_STATUS_TRANSFER_RECEIVED:
             m_logger->debug("UE[%ld] Xn SN status transfer received", w.ueId);
             break;
-        case NmGnbXnToRrc::HANDOVER_SUCCESS_RECEIVE:
+        // Source gNB received Handover Success from Target gNB
+        case NmGnbXnToRrc::HANDOVER_SUCCESS_RECEIVED:
             m_logger->debug("UE[%ld] Xn handover success received", w.ueId);
-            break;
-        case NmGnbXnToRrc::CONDITIONAL_HANDOVER_CANCEL_RECEIVE:
-            m_logger->debug("UE[%ld] Xn conditional handover cancel received", w.ueId);
             break;
         }
         break;

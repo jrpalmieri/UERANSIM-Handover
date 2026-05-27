@@ -15,6 +15,74 @@
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
 
+#include <cstdio>
+#include <string>
+
+namespace {
+
+struct TunPacketInfo
+{
+    bool valid{false};
+    std::string srcIp;
+    std::string dstIp;
+    std::string proto;
+    uint16_t srcPort{0};
+    uint16_t dstPort{0};
+};
+
+static TunPacketInfo ParseTunPacket(const OctetString &data)
+{
+    TunPacketInfo info;
+    const uint8_t *p = data.data();
+    int len = data.length();
+
+    if (len < 20 || (p[0] >> 4) != 4)
+        return info;
+
+    int ihl = (p[0] & 0x0F) * 4;
+    if (len < ihl)
+        return info;
+
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%u.%u.%u.%u", p[12], p[13], p[14], p[15]);
+    info.srcIp = buf;
+    snprintf(buf, sizeof(buf), "%u.%u.%u.%u", p[16], p[17], p[18], p[19]);
+    info.dstIp = buf;
+
+    uint8_t proto = p[9];
+    switch (proto)
+    {
+    case 1:  info.proto = "ICMP"; break;
+    case 6:  info.proto = "TCP";  break;
+    case 17: info.proto = "UDP";  break;
+    default: { char pb[12]; snprintf(pb, sizeof(pb), "IP(%u)", proto); info.proto = pb; break; }
+    }
+
+    if ((proto == 6 || proto == 17) && len >= ihl + 4)
+    {
+        info.srcPort = static_cast<uint16_t>((p[ihl] << 8) | p[ihl + 1]);
+        info.dstPort = static_cast<uint16_t>((p[ihl + 2] << 8) | p[ihl + 3]);
+    }
+
+    info.valid = true;
+    return info;
+}
+
+static std::string FormatPacketDesc(const TunPacketInfo &pkt)
+{
+    if (!pkt.valid)
+        return "?";
+    char buf[72];
+    if (pkt.srcPort == 0 && pkt.dstPort == 0)
+        snprintf(buf, sizeof(buf), "%s %s->%s", pkt.proto.c_str(), pkt.srcIp.c_str(), pkt.dstIp.c_str());
+    else
+        snprintf(buf, sizeof(buf), "%s %s:%u->%s:%u", pkt.proto.c_str(), pkt.srcIp.c_str(), pkt.srcPort,
+                 pkt.dstIp.c_str(), pkt.dstPort);
+    return buf;
+}
+
+} // namespace
+
 static constexpr const int SWITCH_OFF_TIMER_ID = 1;
 static constexpr const int SWITCH_OFF_DELAY = 500;
 
@@ -56,7 +124,8 @@ void UeAppTask::onLoop()
         switch (w.present)
         {
         case NmUeTunToApp::DATA_PDU_DELIVERY: {
-            m_logger->debug("Received uplink data from TUN for PDU Session %d, size=%zu", w.psi, w.data.length());
+            auto pktInfo = ParseTunPacket(w.data);
+            m_logger->debug("Uplink PDU[%d] %s size=%zu", w.psi, FormatPacketDesc(pktInfo).c_str(), w.data.length());
             auto m = std::make_unique<NmUeAppToNas>(NmUeAppToNas::UPLINK_DATA_DELIVERY);
             m->psi = w.psi;
             m->data = std::move(w.data);
@@ -82,7 +151,8 @@ void UeAppTask::onLoop()
             auto *tunTask = m_tunTasks[w.psi];
             if (tunTask)
             {
-                m_logger->debug("Received downlink data from NAS for PDU Session %d, size=%zu", w.psi, w.data.length());
+                auto pktInfo = ParseTunPacket(w.data);
+                m_logger->debug("Downlink PDU[%d] %s size=%zu", w.psi, FormatPacketDesc(pktInfo).c_str(), w.data.length());
                 auto m = std::make_unique<NmAppToTun>(NmAppToTun::DATA_PDU_DELIVERY);
                 m->psi = w.psi;
                 m->data = std::move(w.data);
@@ -206,7 +276,7 @@ void UeAppTask::setupTunInterface(const PduSession *pduSession)
         return;
     }
 
-    auto *task = new TunTask(m_base, psi, fd);
+    auto *task = new TunTask(m_base, psi, fd, allocatedName);
     m_tunTasks[psi] = task;
     task->start();
 

@@ -80,6 +80,8 @@ void NasSm::handleUplinkDataRequest(int psi, OctetString &&data)
             handleUplinkStatusChange(psi, false);
         }
 
+        m_logger->debug("Uplink data request for PSI[%d] forwarded to RLS task. Payload size=[%zu]", psi, data.length());
+
         auto m = std::make_unique<NmUeNasToRls>(NmUeNasToRls::DATA_PDU_DELIVERY);
         m->psi = psi;
         m->pdu = std::move(data);

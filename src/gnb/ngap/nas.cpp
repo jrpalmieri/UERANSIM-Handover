@@ -180,6 +180,14 @@ void NgapTask::deliverDownlinkNasAccept(int64_t ueId, OctetString &&nasPdu, std:
     m_base->rrcTask->push(std::move(w));
 }
 
+void NgapTask::deliverPDUSessionSetupRequest(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> sessionList)
+{
+    auto w = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::PDU_SESSION_UPDATE);
+    w->ueId = ueId;
+    w->sessionList = std::move(sessionList);
+    m_base->rrcTask->push(std::move(w));
+}
+
 void NgapTask::handleUplinkNasTransport(int64_t ueId, const OctetString &nasPdu)
 {
     auto *ue = findUeContext(ueId);

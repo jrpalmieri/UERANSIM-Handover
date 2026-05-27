@@ -17,33 +17,49 @@
 namespace nr::gnb
 {
 
-inline uint64_t MakeSessionResInd(int64_t ueId, int psi)
-{
-    return (static_cast<uint64_t>(ueId) << 32ULL) | static_cast<uint64_t>(psi);
-}
+struct UeSessionId {
+  int64_t ueId;
+  int psi;
 
-inline int64_t GetUeId(uint64_t sessionResInd)
-{
-    return static_cast<int64_t>((sessionResInd >> 32ULL) & 0xFFFFFFFFULL);
-}
+  bool operator==(const UeSessionId &other) const {
+    return ueId == other.ueId && psi == other.psi;
+  }
+};
 
-inline int GetPsi(uint64_t sessionResInd)
-{
-    return static_cast<int>(sessionResInd & 0xFFFFFFFFuLL);
-}
+struct UeSessionIdHash {
+    std::size_t operator()(const UeSessionId& usi) const {
+        // Hash both individual values
+        std::size_t h1 = std::hash<int64_t>{}(usi.ueId);
+        std::size_t h2 = std::hash<int>{}(usi.psi);
+        
+        // Combine them using the standard bitwise hash-combine approach
+        return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+    }
+};
+
 
 class PduSessionTree
 {
-    std::unordered_map<uint32_t, uint64_t> mapByDownTeid;
-    std::unordered_map<int64_t, std::unordered_map<int, uint64_t>> mapByUeId;
+  private:
+    // map the downlink tunnelId to a UE ID and PDU session Id
+    std::unordered_map<uint32_t, UeSessionId> mapByDownTeid;
+    //std::unordered_map<uint32_t, uint64_t> mapByDownTeid;
+
+    // map the UE ID and PDU session Id to the tunnelId
+    // std::unordered_map<UeSessionId, uint32_t, UeSessionIdHash> mapByUePsId;
+
+    // map the UE ID to PduSessionResource structs
+    std::unordered_map<int64_t, std::vector<PduSessionResource>> mapByUeId;
 
   public:
     PduSessionTree();
-    void insert(uint64_t session, uint32_t downTeid);
-    uint64_t findByDownTeid(uint32_t teid);
+    void insertSession(int64_t ueId, int psi, PduSessionResource &session);
+    UeSessionId* findByDownTeid(uint32_t teid);
     uint64_t findBySessionId(int64_t ue, int psi);
-    void remove(uint64_t session, uint32_t downTeid);
-    void enumerateByUe(int64_t ue, std::vector<uint64_t> &output);
+    int getSession(int64_t ueId, int psi, PduSessionResource *&session);
+    void removeSession(int64_t ueId, int psi);
+    void removeAllSessions(int64_t ueId);
+    void enumerateByUe(int64_t ue, std::vector<PduSessionResource> &output);
 };
 
 class TokenBucket
@@ -68,28 +84,28 @@ class TokenBucket
 class IRateLimiter
 {
   public:
-    virtual bool allowDownlinkPacket(uint64_t pduSession, uint64_t packetSize) = 0;
-    virtual bool allowUplinkPacket(uint64_t pduSession, uint64_t packetSize) = 0;
+    virtual bool allowDownlinkPacket(int64_t ueId, int psi, uint64_t packetSize) = 0;
+    virtual bool allowUplinkPacket(int64_t ueId, int psi, uint64_t packetSize) = 0;
     virtual void updateUeUplinkLimit(int64_t ueId, uint64_t limit) = 0;
     virtual void updateUeDownlinkLimit(int64_t ueId, uint64_t limit) = 0;
-    virtual void updateSessionUplinkLimit(uint64_t pduSession, uint64_t limit) = 0;
-    virtual void updateSessionDownlinkLimit(uint64_t pduSession, uint64_t limit) = 0;
+    virtual void updateSessionUplinkLimit(int64_t ueId, int psi, uint64_t limit) = 0;
+    virtual void updateSessionDownlinkLimit(int64_t ueId, int psi, uint64_t limit) = 0;
 };
 
 class RateLimiter : public IRateLimiter
 {
     std::unordered_map<int64_t, std::unique_ptr<TokenBucket>> downlinkByUe;
     std::unordered_map<int64_t, std::unique_ptr<TokenBucket>> uplinkByUe;
-    std::unordered_map<uint64_t, std::unique_ptr<TokenBucket>> downlinkBySession;
-    std::unordered_map<uint64_t, std::unique_ptr<TokenBucket>> uplinkBySession;
+    std::unordered_map<UeSessionId, std::unique_ptr<TokenBucket>, UeSessionIdHash> downlinkBySession;
+    std::unordered_map<UeSessionId, std::unique_ptr<TokenBucket>, UeSessionIdHash> uplinkBySession;
 
   public:
-    bool allowDownlinkPacket(uint64_t pduSession, uint64_t packetSize) override;
-    bool allowUplinkPacket(uint64_t pduSession, uint64_t packetSize) override;
+    bool allowDownlinkPacket(int64_t ueId, int psi, uint64_t packetSize) override;
+    bool allowUplinkPacket(int64_t ueId, int psi, uint64_t packetSize) override;
     void updateUeUplinkLimit(int64_t ueId, uint64_t limit) override;
     void updateUeDownlinkLimit(int64_t ueId, uint64_t limit) override;
-    void updateSessionUplinkLimit(uint64_t pduSession, uint64_t limit) override;
-    void updateSessionDownlinkLimit(uint64_t pduSession, uint64_t limit) override;
+    void updateSessionUplinkLimit(int64_t ueId, int psi, uint64_t limit) override;
+    void updateSessionDownlinkLimit(int64_t ueId, int psi, uint64_t limit) override;
 };
 
 } // namespace nr::gnb

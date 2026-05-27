@@ -597,6 +597,13 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
             if (pduSession->psi == 0 || pduSession->psState == EPsState::INACTIVE)
                 continue;
 
+            // get TUN interface name from associated TUN task (if exists)
+            std::string tunName = "<not-available>";
+            if (m_base->appTask->m_tunTasks[pduSession->psi] != nullptr)
+            {
+                tunName = m_base->appTask->m_tunTasks[pduSession->psi]->interfaceName;
+            }
+
             auto obj = Json::Obj({
                 {"state", ToJson(pduSession->psState)},
                 {"session-type", ToJson(pduSession->sessionType)},
@@ -604,6 +611,7 @@ void UeCmdHandler::handleCmdImpl(NmUeCliCommand &msg)
                 {"s-nssai", ToJson(pduSession->sNssai)},
                 {"emergency", pduSession->isEmergency},
                 {"address", ::ToJson(pduSession->pduAddress)},
+                {"tun-interface", tunName},
                 {"ambr", ::ToJson(pduSession->sessionAmbr)},
                 {"data-pending", pduSession->uplinkPending},
             });

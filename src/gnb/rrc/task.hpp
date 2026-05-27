@@ -22,6 +22,7 @@
 #include <utils/nts.hpp>
 
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
+#include <asn/rrc/ASN_RRC_RadioBearerConfig.h>
 #include <asn/rrc/ASN_RRC_SecurityModeComplete.h>
 
 namespace nr::gnb
@@ -43,7 +44,7 @@ class GnbRrcTask : public NtsTask
     std::unordered_map<int64_t, RrcUeContext *> m_ueCtx;
 
     // Pending Handover Contexts, indexed by UE ID
-    std::unordered_map<int64_t, RRCHandoverPending *> m_handoversPending;
+    std::unordered_map<int64_t, RRCHandoverPending> m_handoversPending;
 
     //std::unordered_map<int64_t, int> m_tidCountersByUe - moved to UE ctx;
 
@@ -78,9 +79,8 @@ class GnbRrcTask : public NtsTask
 
     std::vector<HandoverMeasurementIdentity> getHandoverMeasurementIdentities(int64_t ueId) const;
     OctetString getHandoverMeasConfigRrcReconfiguration(int64_t ueId) const;
-    OctetString createHandoverPreparationInformation(int64_t ueId);
-    int64_t buildHandoverCommandForTransfer(int64_t ueId, int64_t targetNci, int newCrnti, int t304Ms,
-                        OctetString &rrcContainer);
+    //int64_t buildHandoverCommandForTransfer(int64_t ueId, int64_t targetNci, int newCrnti, int t304Ms,
+    //                    OctetString &rrcContainer);
     bool addPendingHandover(int64_t ueId, const HandoverPreparationInfo &handoverPrep,
                 OctetString &rrcContainer);
     void setTrueGeoPosition(const GeoPosition &value);
@@ -117,7 +117,8 @@ class GnbRrcTask : public NtsTask
     void handlePaging(const asn::Unique<ASN_NGAP_FiveG_S_TMSI> &tmsi,
                       const asn::Unique<ASN_NGAP_TAIListForPaging> &taiList);
     void handleNgapSecurityInfo(int64_t ueId, std::unique_ptr<UeSecurityInfo> secInfo);
-    void handleNgapPduSessionUpdate(int64_t ueId, std::unique_ptr<PduSessionSdapUpdate> sdapUpdate);
+    void handleNgapPduSessionUpdate(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> sessionList);
+    ASN_RRC_RadioBearerConfig_t* createRadioBearerConfig(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> &sessionList);
 
 
     void receiveUplinkInformationTransfer(int64_t ueId, const ASN_RRC_ULInformationTransfer &msg);
@@ -167,32 +168,42 @@ class GnbRrcTask : public NtsTask
     void receiveRrcSetupComplete(int64_t ueId, const ASN_RRC_RRCSetupComplete &msg);
     void receiveSecurityModeComplete(int64_t ueId, int cRnti, const ASN_RRC_SecurityModeComplete &msg);
 
-    /* Handover - handover.cpp */
-
+    /* Reconfiguration and Measurement - reconfiguration.cpp */
+    ASN_RRC_DL_DCCH_Message* makeRrcReconfiguration(int64_t ueId);
     void receiveRrcReconfigurationComplete(int64_t ueId, int cRnti, const ASN_RRC_RRCReconfigurationComplete &msg);
     void receiveMeasurementReport(int64_t ueId, int cRnti, const ASN_RRC_MeasurementReport &msg);
+    void sendMeasConfig(int64_t ueId, bool forceResend = false);
+    std::vector<long> createMeasConfig(ASN_RRC_MeasConfig *&mc, RrcUeContext *ue,
+                  std::vector<std::pair<nr::rrc::common::ReportConfigEvent, int>> taggedEvents
+                  );
+
+    /* Handover - handover.cpp */
+    void evaluateHandoverDecision(int64_t ueId, int measId);
+    void executeBasicHandover(RrcUeContext *ue, long bestNeighNci, int servingRsrp, int bestNeighRsrp);
+    void handleHandoverRequest(int sourceGnbId, uint32_t transactionId, std::unique_ptr<OctetString> rrcContainer,
+                    std::unique_ptr<std::vector<PduSessionResource>> sessionList,
+                    bool isCho, EReqestingTask requestingTask);
+    void handleHandoverAckOrCommand(int64_t ueId, std::unique_ptr<OctetString> rrcContainer, bool isCho, EReqestingTask requestingTask);
+
     void sendUeHandoverMessage(int64_t ueId, int64_t targetNci, int newCrnti, int t304Ms);
     void handleHandoverComplete(int64_t ueId);
-    void sendMeasConfig(int64_t ueId, bool forceResend = false);
-    void evaluateHandoverDecision(int64_t ueId, int measId);
     void processConditionalHandover(int64_t ueId,
                     const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
                     int choProfileIdx);
-    void handleNgapHandoverCommand(int64_t ueId, const OctetString &rrcContainer, bool hoForChoPreparation);
-    void handleNgapHandoverFailure(int64_t ueId, int64_t targetNci, bool hoForChoPreparation);
+    
+    void handleHandoverPreparationFailure(int64_t ueId, int64_t targetNci, bool fromChoPreparation, EReqestingTask requestingTask);
     void handoverContextRelease(int64_t ueId);
-    void completeConditionalHandover(RrcUeContext *ue, const OctetString &rrcContainer);
-    std::vector<ScoredNeighbor> prioritizeNeighbors(
-      const std::vector<GnbNeighborState> &neighborList,
-      int64_t servingNci,
-      const nr::sat::EcefPosition &ueEcef,
-      int tExitSec);
+    void completeConditionalHandover(RrcUeContext *ue, std::unique_ptr<OctetString> rrcContainer);
+    std::vector<ScoredNeighbor> prioritizeNeighbors(const std::vector<GnbNeighborState> &neighborList, int64_t servingNci,
+                    const nr::sat::EcefPosition &ueEcef,
+                    int tExitSec);
     void clearChoPendingState(RrcUeContext *ue, int profileIdx);
-    std::vector<long> createMeasConfig(
-      ASN_RRC_MeasConfig *&mc,
-      RrcUeContext *ue,
-      std::vector<std::pair<nr::rrc::common::ReportConfigEvent, int>> taggedEvents
-      );
+
+
+    OctetString createHandoverPreparationInformation(int64_t ueId);
+    std::unique_ptr<OctetString> makeSourceToTargetTransparentContainerSimulated(RrcUeContext &ue, uint32_t blobSize, bool choIndication);
+    std::unique_ptr<OctetString> makeTargetToSourceTransparentContainer(int64_t ueId, int newCrnti,
+                                                    int t304Ms, long rrcTxId);
 
 };
 

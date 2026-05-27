@@ -32,7 +32,7 @@ class GtpTask : public NtsTask
     udp::UdpServerTask *m_udpServer;
     std::unordered_map<int64_t, std::unique_ptr<GtpUeContext>> m_ueContexts;
     std::unique_ptr<IRateLimiter> m_rateLimiter;
-    std::unordered_map<uint64_t, std::unique_ptr<PduSessionResource>> m_pduSessions;
+    //std::unordered_map<uint64_t, std::unique_ptr<PduSessionResource>> m_pduSessions;
     PduSessionTree m_sessionTree;
 
     friend class GnbCmdHandler;
@@ -59,7 +59,7 @@ class GtpTask : public NtsTask
     void handleUplinkData(int64_t ueId, int psi, int qfi, OctetString &&data);
 
     void updateAmbrForUe(int64_t ueId);
-    void updateAmbrForSession(uint64_t pduSession);
+    void updateAmbrForSession(int64_t ueId, int psi);
 };
 
 } // namespace nr::gnb

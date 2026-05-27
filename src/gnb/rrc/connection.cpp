@@ -204,32 +204,5 @@ void GnbRrcTask::receiveSecurityModeComplete(int64_t ueId, int cRnti, const ASN_
 
 }
 
-// creates an RRCReconfiguration that tells UE how to set up SDAP and radio bearers.
-// Notifies the RLS of the mappings between QoS flows and bearers
-void GnbRrcTask::handleNgapPduSessionUpdate(int64_t ueId, std::unique_ptr<PduSessionSdapUpdate> sdapUpdate)
-{
-
-    // get Ue Context
-    auto *ue = tryFindUeByUeId(ueId);
-    if (!ue)
-    {
-        m_logger->err("UE[%ld] PDU Session Update received from NGAP. UE context not found.", ueId);
-        return;
-    }
-
-    // TODO: Implement PDU session update handling
-
-    // Process the SDAP update in the RRC context
-    if (sdapUpdate->isDelete)
-    {
-        m_logger->debug("UE[%ld] PDU Session Update: Releasing PDU session with PSI=%d", ue->ueId, sdapUpdate->psi);
-        // Handle PDU session release
-    }
-    else
-    {
-        m_logger->debug("UE[%ld] PDU Session Update: Setting up PDU session with PSI=%d", ue->ueId, sdapUpdate->psi);
-        // Handle PDU session setup
-    }
-}
 
 } // namespace nr::gnb

@@ -22,6 +22,7 @@
 #include <asn/rrc/ASN_RRC_InitialUE-Identity.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
 #include <asn/rrc/ASN_RRC_RadioBearerConfig.h>
+#include <asn/rrc/ASN_RRC_SecurityModeCommand.h>
 
 namespace nr::ue
 {
@@ -138,6 +139,7 @@ class UeRrcTask : public NtsTask
     void receiveRrcRelease(const ASN_RRC_RRCRelease &msg);
     void setupRadioBearers(const ASN_RRC_RadioBearerConfig &config);
     void receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg);
+    void receiveSecurityModeCommand(const ASN_RRC_SecurityModeCommand &msg);
 
     /* Failures */
     // void declareRadioLinkFailure(rls::ERlfCause cause);

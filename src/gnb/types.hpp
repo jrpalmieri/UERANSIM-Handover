@@ -71,6 +71,10 @@ struct RlsUeContext {
 
     explicit RlsUeContext(int64_t ueId) : ueId(ueId)
     {
+        // create SRB0 by default
+        RadioBearer srb0;
+        srb0.bearerId = 0x0; // SRB0
+        radioBearers.emplace_back(srb0);
     }
 
 };
@@ -86,7 +90,7 @@ struct RRCHandoverPending
     int64_t ueId{};
     RrcUeContext* ctx{};
     uint64_t expireTime{};
-    int64_t txId{};
+    int64_t rrcReconfigurationTxId{};
 };
 
 struct HandoverMeasurementIdentity
@@ -106,8 +110,10 @@ struct HandoverPreparationInfo
 
 struct NGAPHandoverPending
 {
+    uint32_t transactionId{};
     int64_t ueId{};
-    NgapUeContext* ctx{};
+    int amfId{};
+    std::unique_ptr<NgapUeContext> ctx{};
     int64_t expireTime{};
     bool choCandidate{};
 };
@@ -266,10 +272,10 @@ struct UeSecurityInfo {
 
     // Capabilities
     // These are all 16-bit bit strings, as received from AMF
-    uint32_t nRencryptionAlgorithmsBitmap{};
-    uint32_t eUTRAencryptionAlgorithmsBitmap{};
-    uint32_t nRintegrityProtectionAlgorithmsBitmap{};
-    uint32_t eUTRAintegrityProtectionAlgorithmsBitmap{};
+    uint16_t nRencryptionAlgorithmsBitmap{};
+    uint16_t eUTRAencryptionAlgorithmsBitmap{};
+    uint16_t nRintegrityProtectionAlgorithmsBitmap{};
+    uint16_t eUTRAintegrityProtectionAlgorithmsBitmap{};
 
     // Security Key - K_gnb (received from AMF) (256 bits)
     std::array<uint8_t, 32> k_gnb{};
@@ -309,7 +315,8 @@ struct NgapUeContext
     int uplinkStream{};
     // Downlink SCTP stream ID for this UE
     int downlinkStream{};
-    // Aggregate Maximimu Bit Rate
+
+    // Aggregate Maximum Bit Rate
     AggregateMaximumBitRate ueAmbr{};
     // All PDU Session IDs associated with this UE
     std::set<int> pduSessions{};
@@ -317,6 +324,11 @@ struct NgapUeContext
     UeSecurityInfo ueSecInfo{};
 
     std::vector<SingleSlice> allowedNssais;
+
+    // Handover-related context information
+    bool handoverInProgress{};
+    int64_t handoverTargetNci{};
+    bool handoverIsChoPreparation{};
 
     explicit NgapUeContext(int64_t ctxId) : ctxId(ctxId)
     {
@@ -560,8 +572,8 @@ struct GtpTunnel
 
 struct PduSessionResource
 {
-    const int64_t ueId;
-    const int psi;
+    int64_t ueId;
+    int psi;
 
     AggregateMaximumBitRate sessionAmbr{};
     bool dataForwardingNotPossible{};

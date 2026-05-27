@@ -696,7 +696,7 @@ void GnbCmdHandler::handleCmdImpl(NmGnbCliCommand &msg)
             {
                 json.push(Json::Obj({
                     {"handover-pending-ue-id", ue.first},
-                    {"handover-pending-expire-time", ue.second->expireTime},
+                    {"handover-pending-expire-time", ue.second.expireTime},
                 }));
             }
             sendResult(msg.address, json.dumpYaml());

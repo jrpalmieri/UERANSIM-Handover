@@ -17,56 +17,114 @@ PduSessionTree::PduSessionTree() : mapByDownTeid{}, mapByUeId{}
 {
 }
 
-void PduSessionTree::insert(uint64_t session, uint32_t downTeid)
+// insert the mapping between the given UE ID, PDU session ID, and downlink TEID into the tree
+void PduSessionTree::insertSession(int64_t ueId, int psi, PduSessionResource &session)
 {
-    mapByDownTeid[downTeid] = session;
+    UeSessionId usi = {ueId, psi};
+
+    if (mapByDownTeid.count(session.downTunnel.teid))
+        return;
+
+    auto it = mapByUeId.find(ueId);
+    if (it != mapByUeId.end())
+    {
+        for (const auto &item : it->second)
+        {
+            if (item.psi == psi)
+                return;
+        }
+    }
+
+    mapByDownTeid[session.downTunnel.teid] = usi;
+    mapByUeId[ueId].emplace_back(session);
 }
 
-uint64_t PduSessionTree::findByDownTeid(uint32_t teid)
+// returns the Ue Id and PDU session Id for a given downlink TEID (or null if not found)
+UeSessionId* PduSessionTree::findByDownTeid(uint32_t teid)
 {
     if (mapByDownTeid.count(teid))
-        return mapByDownTeid[teid];
-    return {};
+        return &mapByDownTeid[teid];
+    return nullptr;
 }
 
-uint64_t PduSessionTree::findBySessionId(int64_t ue, int psi)
+
+// removes a specific session for a given UE ID and PDU session ID
+void PduSessionTree::removeSession(int64_t ueId, int psi)
 {
-    if (!mapByUeId.count(ue))
-        return {};
-
-    auto &map = mapByUeId[ue];
-    if (!map.count(psi))
-        return {};
-
-    return map[psi];
-}
-
-void PduSessionTree::remove(uint64_t session, uint32_t downTeid)
-{
-    int64_t ueId = GetUeId(session);
-    int psi = GetPsi(session);
-
-    mapByDownTeid.erase(downTeid);
 
     if (mapByUeId.count(ueId))
     {
-        auto &map = mapByUeId[ueId];
-        if (map.count(psi))
-            map.erase(psi);
-        if (map.empty())
+        auto &vector = mapByUeId[ueId];
+        if (vector.size() > 0)
+        {
+            for (size_t i = 0; i < vector.size(); ++i)
+            {
+                if (vector[i].psi == psi)
+                {
+                    mapByDownTeid.erase(vector[i].downTunnel.teid);
+                    vector.erase(vector.begin() + i);
+                    break;
+                }
+            }
+        }
+        if (vector.empty())
             mapByUeId.erase(ueId);
+    }
+
+
+}
+
+// removes all sessions for a given UE ID
+void PduSessionTree::removeAllSessions(int64_t ueId)
+{
+    if (mapByUeId.count(ueId))
+    {
+        auto &vector = mapByUeId[ueId];
+        for (auto &item : vector)
+        {
+            mapByDownTeid.erase(item.downTunnel.teid);
+        }
+        mapByUeId.erase(ueId);
     }
 }
 
-void PduSessionTree::enumerateByUe(int64_t ue, std::vector<uint64_t> &output)
+// for a given UE ID, returns the list of sessionid to TEID mappings for that UE
+void PduSessionTree::enumerateByUe(int64_t ue, std::vector<PduSessionResource> &output)
 {
     if (mapByUeId.count(ue) == 0)
         return;
-    auto &map = mapByUeId[ue];
+    auto &vector = mapByUeId[ue];
 
-    for (auto &item : map)
-        output.push_back(item.second);
+    for (auto &item : vector)
+        output.emplace_back(item);
 }
+
+// get a PDU session resource record for a given UE ID and PDU session ID
+// return values:
+// 0: success
+// 1: UE context not found
+// 2: No sessions stored for this UE
+// 3: PDU session not found for this UE and PSI
+int PduSessionTree::getSession(int64_t ueId, int psi, PduSessionResource *&session)
+{
+
+    if (!mapByUeId.count(ueId))
+        return 1;
+
+    auto &vector = mapByUeId[ueId];
+    if (vector.size() == 0)
+        return 2;
+
+    for (auto &item : vector)    {
+        if (item.psi == psi)
+        {
+            session = &item;
+            return 0;
+        }
+    }
+    return 3;
+}
+
 
 TokenBucket::TokenBucket(int64_t byteCapacity) : byteCapacity(byteCapacity)
 {
@@ -114,9 +172,8 @@ void TokenBucket::refill()
     }
 }
 
-bool RateLimiter::allowDownlinkPacket(uint64_t pduSession, uint64_t packetSize)
+bool RateLimiter::allowDownlinkPacket(int64_t ueId, int psi, uint64_t packetSize)
 {
-    int64_t ueId = GetUeId(pduSession);
 
     if (downlinkByUe.count(ueId))
     {
@@ -125,9 +182,10 @@ bool RateLimiter::allowDownlinkPacket(uint64_t pduSession, uint64_t packetSize)
             return false;
     }
 
-    if (downlinkBySession.count(pduSession))
+    UeSessionId ueSessionId{ueId, psi};
+    if (downlinkBySession.count(ueSessionId))
     {
-        auto &bucket = downlinkBySession[pduSession];
+        auto &bucket = downlinkBySession[ueSessionId];
         if (!bucket->tryConsume(packetSize))
             return false;
     }
@@ -135,10 +193,8 @@ bool RateLimiter::allowDownlinkPacket(uint64_t pduSession, uint64_t packetSize)
     return true;
 }
 
-bool RateLimiter::allowUplinkPacket(uint64_t pduSession, uint64_t packetSize)
+bool RateLimiter::allowUplinkPacket(int64_t ueId, int psi, uint64_t packetSize)
 {
-    int64_t ueId = GetUeId(pduSession);
-
     if (uplinkByUe.count(ueId))
     {
         auto &bucket = uplinkByUe[ueId];
@@ -146,9 +202,10 @@ bool RateLimiter::allowUplinkPacket(uint64_t pduSession, uint64_t packetSize)
             return false;
     }
 
-    if (uplinkBySession.count(pduSession))
+    UeSessionId ueSessionId{ueId, psi};
+    if (uplinkBySession.count(ueSessionId))
     {
-        auto &bucket = uplinkBySession[pduSession];
+        auto &bucket = uplinkBySession[ueSessionId];
         if (!bucket->tryConsume(packetSize))
             return false;
     }
@@ -194,41 +251,43 @@ void RateLimiter::updateUeDownlinkLimit(int64_t ueId, uint64_t limit)
     }
 }
 
-void RateLimiter::updateSessionUplinkLimit(uint64_t pduSession, uint64_t limit)
+void RateLimiter::updateSessionUplinkLimit(int64_t ueId, int psi, uint64_t limit)
 {
+    UeSessionId ueSessionId{ueId, psi};
     if (limit <= 0)
     {
-        uplinkBySession.erase(pduSession);
+        uplinkBySession.erase(ueSessionId);
         return;
     }
 
-    if (uplinkBySession.count(pduSession))
+    if (uplinkBySession.count(ueSessionId))
     {
-        auto &bucket = uplinkBySession[pduSession];
+        auto &bucket = uplinkBySession[ueSessionId];
         bucket->updateCapacity(limit);
     }
     else
     {
-        uplinkBySession[pduSession] = std::make_unique<TokenBucket>(limit);
+        uplinkBySession[ueSessionId] = std::make_unique<TokenBucket>(limit);
     }
 }
 
-void RateLimiter::updateSessionDownlinkLimit(uint64_t pduSession, uint64_t limit)
+void RateLimiter::updateSessionDownlinkLimit(int64_t ueId, int psi, uint64_t limit)
 {
+    UeSessionId ueSessionId{ueId, psi};
     if (limit <= 0)
     {
-        downlinkBySession.erase(pduSession);
+        downlinkBySession.erase(ueSessionId);
         return;
     }
 
-    if (downlinkBySession.count(pduSession))
+    if (downlinkBySession.count(ueSessionId))
     {
-        auto &bucket = downlinkBySession[pduSession];
+        auto &bucket = downlinkBySession[ueSessionId];
         bucket->updateCapacity(limit);
     }
     else
     {
-        downlinkBySession[pduSession] = std::make_unique<TokenBucket>(limit);
+        downlinkBySession[ueSessionId] = std::make_unique<TokenBucket>(limit);
     }
 }
 

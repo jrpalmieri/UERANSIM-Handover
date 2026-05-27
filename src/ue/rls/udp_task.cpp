@@ -184,7 +184,7 @@ void RlsUdpTask::send(int64_t nci, const rls::RlsMessage &msg)
         sendRlsPdu(addr, msg);
         return;
     }
-    m_logger->warn("Unable to send RLS message to cell %d because address is unknown", nci);
+    m_logger->warn("Unable to send RLS message to cell %ld because address is unknown", nci);
     return;
 }
 

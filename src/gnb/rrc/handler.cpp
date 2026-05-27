@@ -58,13 +58,27 @@
 namespace nr::gnb
 {
 
-void GnbRrcTask::handleDownlinkNasAccept(int64_t ueId, const OctetString &nasPdu, std::unique_ptr<std::vector<PduSessionResource>> sessionList)
+
+ASN_RRC_RadioBearerConfig_t* GnbRrcTask::createRadioBearerConfig(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> &sessionList)
 {
+
+    m_logger->debug("UE[%ld]: Creating Radio Bearer Config. PDU session list [count=%d]", ueId, sessionList ? sessionList->size() : 0);
 
     // get UE context
     auto *ue = findCtxByUeId(ueId);
-    if (!ue)
-        return;
+    if (!ue) {
+        m_logger->err("UE[%ld]:createRadioBearerConfig: UE not found, exiting.", ueId);
+        return nullptr;
+    }
+
+    // if sessionList is empty, we can't create any radio bearers
+    if (!sessionList || sessionList->empty()) {
+        m_logger->warn("UE[%ld]:createRadioBearerConfig: No PDU sessions to create radio bearers for, exiting.", ueId);
+        return nullptr;
+    }
+
+    // return value for the radio bearer config
+    ASN_RRC_RadioBearerConfig_t* radioBearerConfig = nullptr;
 
     // SDAP: map each PDU session to a bearer based on the QoS Flows
     // Note: for now, we map all QoS Flows for each PSI onto a single DRB
@@ -72,12 +86,7 @@ void GnbRrcTask::handleDownlinkNasAccept(int64_t ueId, const OctetString &nasPdu
     auto rbUpdate = std::make_unique<RadioBearerUpdate>();
     auto sdapUpdate = std::make_unique<SdapUpdate>();
 
-    // add default SRB to the update
-    RadioBearer bearer;
-    bearer.bearerId = 0x0; // SRB0
-    rbUpdate->upsertBearers.emplace_back(bearer);
-
-    // do SDAP mappings
+    // do SDAP mappings (if sessionList is not empty)
     int drbs_used = 0;
     for (const auto &session : *sessionList)
     {
@@ -104,6 +113,12 @@ void GnbRrcTask::handleDownlinkNasAccept(int64_t ueId, const OctetString &nasPdu
             ueId, session.psi, session.qosFlows->list.count, drbs_used);
     }
 
+    m_logger->debug("UE[%ld]: creating %d DRBs and %d SDAP mappings", ueId, drbs_used, sdapUpdate->upsertSdapMappings.size());
+
+    // copy bearer/SDAP data before moving into the RLS message
+    auto bearers = rbUpdate->upsertBearers;
+    auto sdapMappings = sdapUpdate->upsertSdapMappings;
+
     // send to RLS to setup the bearers
     {
         auto m = std::make_unique<NmGnbRrcToRls>(NmGnbRrcToRls::RADIO_BEARER_UPDATE);
@@ -111,7 +126,82 @@ void GnbRrcTask::handleDownlinkNasAccept(int64_t ueId, const OctetString &nasPdu
         m->sdapUpdate = std::move(sdapUpdate);
         m->ueId = ueId;
         m_base->rlsTask->push(std::move(m));
+        m_logger->debug("UE[%ld]: Sent radio bearer and SDAP update to RLS", ueId);
     }
+
+    // radioBearer lists
+    auto drbList = asn::New<ASN_RRC_DRB_ToAddModList_t>();
+
+    // iterate the radio bearers in the update list.  DRBs must have bearerID bit 6 == 1
+    int drb_idx = 0;
+    for (const auto &bearer : bearers)
+    {
+        if ((bearer.bearerId & 0x40) != 0)
+        {
+            // DRB
+            auto drb = asn::New<ASN_RRC_DRB_ToAddMod_t>();
+            drb->drb_Identity = bearer.bearerId & 0x3F;
+
+            auto sdapConfig = asn::New<ASN_RRC_SDAP_Config_t>();
+            sdapConfig->defaultDRB = true;  // works for now, as we only use one DRB per session
+            // Note - we don't use the SDAP header UL/DL fields, because RLS includes a QoS byte in the PDU payload
+
+            // loop through each SDAP mapping, and if the mapping is for this DRB, add it to the SDAP config
+            for (const auto &mapping : sdapMappings)
+            {
+                if (mapping.radioBearer == (bearer.bearerId & 0x7F))
+                {
+                    sdapConfig->pdu_Session = mapping.psi;
+
+                    if (!sdapConfig->mappedQoS_FlowsToAdd)
+                        sdapConfig->mappedQoS_FlowsToAdd =
+                            asn::New<ASN_RRC_SDAP_Config::ASN_RRC_SDAP_Config__mappedQoS_FlowsToAdd>();
+
+                    auto *sdapQosFlow = asn::New<ASN_RRC_QFI_t>();
+                    *sdapQosFlow = mapping.qfi;
+                    asn_sequence_add(&sdapConfig->mappedQoS_FlowsToAdd->list, sdapQosFlow);
+                }
+            }
+
+            // Set the SDAP config in the DRB
+            drb->cnAssociation = asn::New<ASN_RRC_DRB_ToAddMod::ASN_RRC_DRB_ToAddMod__cnAssociation>();
+            drb->cnAssociation->present = ASN_RRC_DRB_ToAddMod__cnAssociation_PR_sdap_Config;
+            drb->cnAssociation->choice.sdap_Config = sdapConfig;
+
+            asn_sequence_add(&drbList->list, drb);
+            ++drb_idx;
+        }
+    }
+
+    if (drb_idx > 0)
+    {
+        m_logger->debug("UE[%ld]: Adding %d DRBs to the RRC Reconfiguration", ueId, drb_idx);
+        radioBearerConfig = asn::New<ASN_RRC_RadioBearerConfig_t>();
+        radioBearerConfig->drb_ToAddModList = drbList;
+    }
+
+    return radioBearerConfig;
+
+}
+
+
+
+void GnbRrcTask::handleDownlinkNasAccept(int64_t ueId, const OctetString &nasPdu, std::unique_ptr<std::vector<PduSessionResource>> sessionList)
+{
+
+    m_logger->debug("UE[%ld] Downlink NAS Accept received.  PDU session list [count=%d]", ueId, sessionList ? sessionList->size() : 0);
+
+    // get UE context
+    auto *ue = findCtxByUeId(ueId);
+    if (!ue) {
+        m_logger->err("UE[%ld]:handleDownlinkNasAccept: UE not found", ueId);
+        return;
+    }
+
+    // If there are PDU sessions, create the radio bearer configuration
+    ASN_RRC_RadioBearerConfig_t *radioBearerConfig = nullptr;
+    if (sessionList && !sessionList->empty())
+        radioBearerConfig = createRadioBearerConfig(ueId, sessionList);
 
     // ---- Build RRCReconfiguration DL-DCCH message ----
     auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
@@ -130,76 +220,89 @@ void GnbRrcTask::handleDownlinkNasAccept(int64_t ueId, const OctetString &nasPdu
     auto &ies = reconfig->criticalExtensions.choice.rrcReconfiguration =
         asn::New<ASN_RRC_RRCReconfiguration_IEs>();
 
+    m_logger->debug("UE[%ld]: Building RRC Reconfiguration with NAS Accept, radio bearer and SDAP updates.  TxId=%ld", ueId, txId);
 
     // add the NAS message to the dedicated NAS message list (in the nonCriticalExtension)
     ies->nonCriticalExtension = asn::New<ASN_RRC_RRCReconfiguration_v1530_IEs>();
+    ies->nonCriticalExtension->dedicatedNAS_MessageList =
+        asn::New<ASN_RRC_RRCReconfiguration_v1530_IEs::ASN_RRC_RRCReconfiguration_v1530_IEs__dedicatedNAS_MessageList>();
 
-    ies->nonCriticalExtension->dedicatedNAS_MessageList->list.array = asn::New<ASN_RRC_DedicatedNAS_Message_t*>();
-    ies->nonCriticalExtension->dedicatedNAS_MessageList->list.count = 1;
-    asn::SetOctetString(*ies->nonCriticalExtension->dedicatedNAS_MessageList->list.array[0], nasPdu);
+    auto *nasMsg = asn::New<ASN_RRC_DedicatedNAS_Message_t>();
+    asn::SetOctetString(*nasMsg, nasPdu);
+    asn_sequence_add(&ies->nonCriticalExtension->dedicatedNAS_MessageList->list, nasMsg);
+    m_logger->debug("UE[%ld]: Added NAS message to the dedicated NAS message list", ueId);
 
-    // add radioBearer Config
-    ies->radioBearerConfig = asn::New<ASN_RRC_RadioBearerConfig_t>();
-    ies->radioBearerConfig->drb_ToAddModList = asn::New<ASN_RRC_DRB_ToAddModList_t>();
-    ies->radioBearerConfig->srb_ToAddModList = asn::New<ASN_RRC_SRB_ToAddModList_t>();
-
-    // iterate the radio bearers in the update list.  If the bearerID bit 6 is 0, it is an SRB, otherwise it's a DRB
-    int srb_idx = 0;
-    int drb_idx = 0;
-    for (const auto &bearer : rbUpdate->upsertBearers)
+    if (radioBearerConfig)
     {
-        if ((bearer.bearerId & 0x40) == 0)
-        {
-            // SRB
-            auto srb = asn::New<ASN_RRC_SRB_ToAddMod_t>();
-            srb->srb_Identity = bearer.bearerId & 0x3F; // ID is in bits 0-5
-            ies->radioBearerConfig->srb_ToAddModList->list.array[srb_idx++] = srb;
-            ies->radioBearerConfig->srb_ToAddModList->list.count = srb_idx;
-        }
-        else
-        {
-            // DRB
-            auto drb = asn::New<ASN_RRC_DRB_ToAddMod_t>();
-            drb->drb_Identity = bearer.bearerId & 0x3F; // ID is in bits 0-5
-
-            auto sdapConfig = asn::New<ASN_RRC_SDAP_Config_t>();
-            sdapConfig->defaultDRB = true;  // works for now, as we only use one DRB per session
-            // Note - we don't use the SDAP header UL/DL fields, because RLS includes a QoS byte in the PDU payload
-
-            // loop through each SDAP mapping, and if the mapping is for this DRB, add it to the SDAP config
-            int qfi_count = 0;
-            for (const auto &mapping : sdapUpdate->upsertSdapMappings)
-            {
-                if (mapping.radioBearer == (bearer.bearerId & 0x7F))
-                {
-                    // Add the SDAP mapping to the config
-                    sdapConfig->pdu_Session = mapping.psi;
-
-                    auto sdapQosFlow = asn::New<ASN_RRC_QFI_t>();
-
-                    *sdapQosFlow = mapping.qfi;
-                    sdapConfig->mappedQoS_FlowsToAdd->list.array[qfi_count++] = sdapQosFlow;
-                    sdapConfig->mappedQoS_FlowsToAdd->list.count = qfi_count;
-                }
-            }
-
-            // Set the SDAP config in the DRB
-            drb->cnAssociation->choice.sdap_Config = sdapConfig;
-
-            // Add the DRB to the list
-            ies->radioBearerConfig->drb_ToAddModList->list.array[drb_idx++] = drb;
-            ies->radioBearerConfig->drb_ToAddModList->list.count = drb_idx;
-        }
+        ies->radioBearerConfig = radioBearerConfig;
+        m_logger->debug("UE[%ld]: Added Radio Bearer Config to the RRC Reconfiguration", ueId);
     }
 
     // send the message
     sendRrcMessage(ueId, pdu);
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
+    m_logger->debug("UE[%ld]: Sent RRC Reconfiguration with NAS Accept, radio bearer and SDAP updates", ueId);
 
 }
 
 
-    void GnbRrcTask::handleDownlinkNasDelivery(int64_t ueId, const OctetString &nasPdu)
+void GnbRrcTask::handleNgapPduSessionUpdate(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> sessionList)
+{
+
+    m_logger->debug("UE[%ld] NGAP PDU Session Update received.  PDU session list [count=%d]", ueId, sessionList ? sessionList->size() : 0);
+
+    // get UE context
+    auto *ue = findCtxByUeId(ueId);
+    if (!ue) {
+        m_logger->err("UE[%ld]:handleNgapPduSessionUpdate: UE not found", ueId);
+        return;
+    }
+
+    // If there are PDU sessions, create the radio bearer configuration
+    ASN_RRC_RadioBearerConfig_t *radioBearerConfig = nullptr;
+    if (sessionList && !sessionList->empty())
+        radioBearerConfig = createRadioBearerConfig(ueId, sessionList);
+
+    // ---- Build RRCReconfiguration DL-DCCH message ----
+    auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
+    pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
+    pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
+    pdu->message.choice.c1->present =
+        ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcReconfiguration;
+
+    auto &reconfig = pdu->message.choice.c1->choice.rrcReconfiguration =
+        asn::New<ASN_RRC_RRCReconfiguration>();
+
+    long txId = ue->getNextTid();
+    reconfig->rrc_TransactionIdentifier = txId;
+    reconfig->criticalExtensions.present =
+        ASN_RRC_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration;
+    auto &ies = reconfig->criticalExtensions.choice.rrcReconfiguration =
+        asn::New<ASN_RRC_RRCReconfiguration_IEs>();
+
+    m_logger->debug("UE[%ld]: Building RRC Reconfiguration for PDU session update.  TxId=%ld", ueId, txId);
+
+    if (radioBearerConfig)
+    {
+        ies->radioBearerConfig = radioBearerConfig;
+        m_logger->debug("UE[%ld]: Added Radio Bearer Config to the RRC Reconfiguration", ueId);
+
+        // send the message
+        sendRrcMessage(ueId, pdu);
+        asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
+        m_logger->debug("UE[%ld]: Sent RRC Reconfiguration with Radio Bearer Config, SDAP updates", ueId);
+
+    }
+    else
+    {
+        m_logger->debug("UE[%ld]: No radio bearer config to add to the RRC Reconfiguration, aborting RRC Reconfiguration", ueId);
+    }
+}
+
+
+
+
+void GnbRrcTask::handleDownlinkNasDelivery(int64_t ueId, const OctetString &nasPdu)
 {
     auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
     pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;

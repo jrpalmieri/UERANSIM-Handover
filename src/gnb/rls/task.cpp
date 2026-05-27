@@ -65,13 +65,14 @@ void GnbRlsTask::onLoop()
             break;
         }
         case NmGnbRlsToRls::SIGNAL_LOST: {
-            m_logger->debug("UE[%d] signal lost", w.ueId);
+            m_logger->debug("UE[%ld] signal lost", w.ueId);
             break;
         }
         case NmGnbRlsToRls::UPLINK_DATA: {
             auto m = std::make_unique<NmGnbRlsToGtp>(NmGnbRlsToGtp::DATA_PDU_DELIVERY);
             m->ueId = w.ueId;
             m->psi = w.psi;
+            m->qfi = w.qfi;
             m->pdu = std::move(w.data);
             m_base->gtpTask->push(std::move(m));
             break;

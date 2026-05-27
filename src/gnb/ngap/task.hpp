@@ -40,6 +40,7 @@ extern "C"
     struct ASN_NGAP_HandoverPreparationFailure;
     struct ASN_NGAP_PathSwitchRequestAcknowledge;
     struct ASN_NGAP_PathSwitchRequestFailure;
+    struct ASN_NGAP_PDUSessionResourceSetupRequestTransfer;
 }
 
 namespace nr::gnb
@@ -64,8 +65,11 @@ class NgapTask : public NtsTask
     //  (can be >1 but unlikely in practice, since usually only 1 handover preparation per target NCI would be triggered for the same UE)
     std::unordered_map<int64_t, std::unordered_map<int64_t, int>> m_hoReqChoPendingByTargetNci;
 
-    // Pending handover context tracker, indexed by ueId
-    std::unordered_map<int64_t, NGAPHandoverPending *> m_handoversPending;
+    // Pending handover context tracker, indexed by transactionId
+    std::unordered_map<uint32_t, NGAPHandoverPending> m_handoversPending;
+
+    // Transaction Id for correlating responses to requests from other tasks
+    uint32_t m_transactionIdCounter;
 
     int64_t m_ueNgapIdCounter;
     uint32_t m_downlinkTeidCounter;
@@ -140,6 +144,7 @@ class NgapTask : public NtsTask
     void deliverDownlinkNasAccept(int64_t ueId, OctetString &&nasPdu, std::unique_ptr<std::vector<PduSessionResource>> sessionList);
     void sendNasNonDeliveryIndication(int64_t ueId, const OctetString &nasPdu, NgapCause cause);
     void receiveRerouteNasRequest(int amfId, ASN_NGAP_RerouteNASRequest *msg);
+    void deliverPDUSessionSetupRequest(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> sessionList);
 
     /* PDU session management */
     void receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSessionResourceSetupRequest *msg);
@@ -152,6 +157,9 @@ class NgapTask : public NtsTask
     void receiveContextRelease(int amfId, ASN_NGAP_UEContextReleaseCommand *msg);
     void receiveContextModification(int amfId, ASN_NGAP_UEContextModificationRequest *msg);
     void sendContextRelease(int64_t ueId, NgapCause cause);
+    void makeNgapContextItems(NgapUeContext *ue, void *ie);
+    void makeNgapPduSessionItems(PduSessionResource *resource,
+                                  ASN_NGAP_PDUSessionResourceSetupRequestTransfer *transfer);
 
     /* NAS Node Selection - nnsf.cpp */
     
@@ -162,17 +170,27 @@ class NgapTask : public NtsTask
     void handleRadioLinkFailure(int64_t ueId);
     void receivePaging(int amfId, ASN_NGAP_Paging *msg);
 
-    /* Handover (N2-based, AMF-mediated) */
+    /* N2 Handover (AMF-mediated) */
 
-    void sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause cause, bool hoForChoPreparation);
-    void receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg);
+    void sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause cause, bool hoForChoPreparation, std::unique_ptr<OctetString> rrcContainer);
+    void receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg, uint16_t stream);
+    void sendHandoverRequestAcknowledge(uint32_t transactionId, int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> admittedList, 
+                                        std::unique_ptr<std::vector<PduSessionResource>> failedList, std::unique_ptr<OctetString> targetRrcContainer);
+
     void receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg);
     void receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPreparationFailure *msg);
     void sendHandoverNotify(int64_t ueId);
+    void handleHandoverNotifyFromRrc(int64_t ueId);
+    void sendHandoverFailure(NgapCause cause, int64_t ueId);
+
+    std::unique_ptr<OctetString> makeSourceTargetNgranTransparentContainer(int64_t targetNCI, const Plmn &targetPlmn, std::unique_ptr<OctetString> rrcContainer);
+
+    /* Xn Handover (gNB-gNB) */
+
     void sendPathSwitchRequest(int64_t ueId);
     void receivePathSwitchRequestAcknowledge(int amfId, ASN_NGAP_PathSwitchRequestAcknowledge *msg);
     void receivePathSwitchRequestFailure(int amfId, ASN_NGAP_PathSwitchRequestFailure *msg);
-    void handleHandoverNotifyFromRrc(int64_t ueId);
-};
+
+  };
 
 } // namespace nr::gnb

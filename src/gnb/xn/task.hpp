@@ -29,6 +29,20 @@ namespace nr::gnb
 //     InetAddress addr;
 // };
 
+// tracking of pending handover requests from source gNBs
+struct XnPendingHandover
+{
+    // The XnTxId is used to correlate the handover request with the response
+    uint32_t xnTxId;
+    int64_t ueId;
+    int64_t sourceNci;
+
+    // indicates if this is a conditional handover (CHO) request
+    bool isCho;
+
+    // start timestamp for timer comparisons
+    uint64_t timestamp;
+};
 
 class XnTask : public NtsTask
 {
@@ -41,6 +55,11 @@ class XnTask : public NtsTask
 
     // queue for requests that are deferred due to missing UE context or other information.
     std::deque<std::unique_ptr<NmGnbRrcToXn>> m_deferredQueue;
+
+    // Next available XnTxId for correlating handover requests and responses
+    uint32_t m_nextXnTxId{1};
+
+    std::vector<XnPendingHandover> m_pendingRequests;
 
     static constexpr int TIMER_NEIGHBOR_CHECK = 2001;
     static constexpr int TIMER_NEIGHBOR_CHECK_INTERVAL_MS = 10000;
@@ -76,31 +95,31 @@ class XnTask : public NtsTask
     // Decode and dispatch incoming SCTP messages
     void xnHandleSctpMessage(int gnbId, uint16_t stream, const UniqueBuffer &buffer);
 
-    // Incoming from network — target gNB handlers
-    void xnHandoverRequestTarget(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
-    void xnHandoverCancelTarget(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
-    void xnSnStatusTransferTarget(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
+    /* Handover - Phase 1 (Preparation) */
+    
+    void sendHandoverRequest(int64_t ueId, int64_t targetNci, bool isCho, std::unique_ptr<GnbHandoverUeContexts> contexts);
+    void receiveHandoverRequest(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
+    void sendHandoverRequestAck(int64_t ueId, int64_t targetNci, bool isCho, std::unique_ptr<OctetString> rrcContainer);
+    void receiveHandoverRequestAck(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
+    void sendHandoverPreparationFailure(int64_t ueId, int64_t targetNci, bool isCho,
+                                            int reason);
+    void receiveHandoverPreparationFailure(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
 
-    // Incoming from network — source gNB handlers
-    void xnHandoverRequestAckSource(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
-    void xnHandoverPreparationFailureSource(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
-    void xnUeContextReleaseSource(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
-    void xnHandoverSuccessSource(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
-    void xnConditionalHandoverCancelTarget(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
+      /* Handover - Phase 2 (execution) */
+
+    void sendSnStatusTransfer(int64_t ueId, int64_t targetNci, bool isCho);
+    void receiveSnStatusTransfer(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
+    void sendHandoverSuccess(int64_t ueId, int64_t targetNci);
+    void receiveHandoverSuccess(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
+
+    void sendUeContextRelease(int64_t ueId, int64_t targetNci);
+    void receiveUeContextRelease(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
+
 
     // Outgoing — source gNB (triggered by RrcToXn messages)
-    void xnHandoverRequestSource(int64_t ueId, int64_t targetNci, bool isCho, std::unique_ptr<GnbHandoverUeContexts> contexts);
     void xnHandoverCancelSource(int64_t ueId, int64_t targetNci, bool isCho);
-    void xnSnStatusTransferSource(int64_t ueId, int64_t targetNci, bool isCho);
-    void xnConditionalHandoverCancelSource(int64_t ueId, int64_t targetNci);
 
-    // Outgoing — target gNB (triggered by RrcToXn messages)
-    void xnHandoverRequestAckTarget(int64_t ueId, int64_t targetNci, bool isCho,
-                                    OctetString rrcReconfigIe);
-    void xnHandoverPreparationFailureTarget(int64_t ueId, int64_t targetNci, bool isCho,
-                                            int reason);
-    void xnUeContextReleaseTarget(int64_t ueId, int64_t targetNci);
-    void xnHandoverSuccessTarget(int64_t ueId, int64_t targetNci);
+    void xnHandoverCancelTarget(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
 
     // Timer handlers
     void xnHandleTimerPrep(int timerId);

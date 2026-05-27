@@ -319,135 +319,7 @@ void GnbRrcTask::receiveMeasurementReport(int64_t ueId, int cRnti,
 }
 
 
-/**
- * @brief Evaluates whether to trigger a handover based on the latest measurement report from the UE.
- * 
- * @param ueId UE ID of UE providing measurement report 
- * @param measId Measurement ID of the measurement report
- */
-void GnbRrcTask::evaluateHandoverDecision(int64_t ueId, int measId)
-{
-    auto *ue = tryFindUeByUeId(ueId);
-    if (!ue)
-        return;
 
-    // Don't trigger if handover is already in progress
-    if (ue->handoverInProgress || ue->handoverDecisionPending)
-        return;
-
-    int64_t bestNeighNci = ue->lastMeasReportNci;
-    int bestNeighRsrp = ue->lastMeasReportRsrp;
-    int servingRsrp = ue->lastServingRsrp;
-
-    auto mi = ue->measIdentities.find(measId)->second;
-    auto rc = ue->reportConfigEvents.find(mi.reportConfigId)->second;
-
-    // only evaluate events that use measurement reports
-    if (!IsMeasurementEvent(rc.eventKind))
-        return;
-
-    bool shouldHandover = false;
-
-    if (rc.eventKind == HandoverEventType::A2)
-    {
-        // A2: serving RSRP < threshold - hysteresis
-        shouldHandover = rc.evaluateA2(servingRsrp);
-        m_logger->debug("UE[%ld] HandoverEval: event=A2 measId serving=%ddBm threshold=%ddBm hysteresis=%ddB "
-                        "condition=(%d < %d) result=%s",
-                        ue->ueId, servingRsrp, rc.a2_thresholdDbm, rc.a2_hysteresisDb,
-                        servingRsrp, rc.a2_thresholdDbm - rc.a2_hysteresisDb,
-                        shouldHandover ? "true" : "false");
-    }
-    else if (rc.eventKind == HandoverEventType::A3)
-    {
-        // A3: neighbor RSRP > serving RSRP + offset + hysteresis
-        //   we just check against the best neighbor
-        shouldHandover = rc.evaluateA3Cell(servingRsrp, bestNeighRsrp);
-        m_logger->debug("UE[%ld] HandoverEval: event=A3 serving=%ddBm bestNeighNci=%ld bestNeigh=%ddBm "
-                        "offset=%ddB hysteresis=%ddB condition=(%d > %d) result=%s",
-                        ue->ueId, servingRsrp, bestNeighNci, bestNeighRsrp,
-                        rc.a3_offsetDb, rc.a3_hysteresisDb,
-                        bestNeighRsrp, servingRsrp + rc.a3_offsetDb + rc.a3_hysteresisDb,
-                        shouldHandover ? "true" : "false");
-    }
-    else if (rc.eventKind == HandoverEventType::A5)
-    {
-        // A5: serving RSRP < threshold1 - hysteresis AND neighbor RSRP > threshold2 + hysteresis
-        //   we just check against the best neighbor
-        shouldHandover = rc.evaluateA5Serving(servingRsrp) && rc.evaluateA5Neighbor(bestNeighRsrp);
-        m_logger->debug("UE[%ld] HandoverEval: event=A5 serving=%ddBm bestNeighNci=%ld bestNeigh=%ddBm "
-                        "thr1=%ddBm thr2=%ddBm hysteresis=%ddB cond1=(%d < %d) cond2=(%d > %d) result=%s",
-                        ue->ueId, servingRsrp, bestNeighNci, bestNeighRsrp,
-                        rc.a5_threshold1Dbm, rc.a5_threshold2Dbm,
-                        rc.a5_hysteresisDb,
-                        servingRsrp, rc.a5_threshold1Dbm - rc.a5_hysteresisDb,
-                        bestNeighRsrp, rc.a5_threshold2Dbm + rc.a5_hysteresisDb,
-                        shouldHandover ? "true" : "false");
-    }
-    else if (rc.eventKind == HandoverEventType::D1)
-    {
-
-        // D1: distance to serving cell (d1) > threshold1 - hysteresis AND distance to neighbor cell (d2) < threshold2 + hysteresis
-        auto uePos = m_base->getUePosition(ue->ueId);
-        if (!uePos.has_value() || !uePos->isValid)
-        {
-            m_logger->warn("UE[%ld] HandoverEval: event=D1 but UE position is invalid, skipping evaluation",
-                           ue->ueId);
-            return;
-        }
-        
-        shouldHandover = rc.evaluateD1(uePos.value());
-        
-        m_logger->debug("UE[%ld] HandoverEval: event=D1 "
-                        "distThresh1=%dm distThresh2=%dm hysteresis=%dm "
-                        "cond1=(%d > %d) cond2=(%d < %d) result=%s",
-                        ue->ueId, rc.d1_distanceThreshFromReference1, rc.d1_distanceThreshFromReference2,
-                        rc.d1_hysteresisLocation,
-                        shouldHandover ? "true" : "false");
-    }
-    else
-    {
-        m_logger->warn("UE[%ld] HandoverEval: unsupported event type %s", ue->ueId, rc.eventStr());
-        return;
-    }
-
-    if (!shouldHandover)
-        return;
-
-    // For A2, a target may not be present in this report; use last known neighbor if available.
-    if (bestNeighNci < 0)
-    {
-        m_logger->warn("UE[%ld] Handover decision met event=%s but no neighbor NCI available",
-                       ue->ueId, rc.eventStr());
-        return;
-    }
-
-    m_logger->info("UE[%ld] Handover decision (%s): targetNCI=%ld (serving=%ddBm, target=%ddBm)",
-                   ue->ueId, rc.eventStr(), bestNeighNci, servingRsrp, bestNeighRsrp);
-
-    ue->handoverDecisionPending = true;
-
-    // Determine whether to use Xn or N2 for handover
-
-    // TODO: add a check of the XnTask's xnConnections list to see of teh TargetNCI is on the list
-    // If so, we construct an RrcToXn message and push to XnTask; otherwise we fallback to N2 handover via NGAP
-    if (false)
-    {
-        // Xn handover (not implemented yet)
-        m_logger->info("UE[%ld] Xn handover started - handoverRequired sent to NCI. targetNci=%ld", ue->ueId, bestNeighNci);
-    }
-    else
-    {
-        // Initiate N2 handover via NGAP (no Xn interface available)
-        auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_REQUIRED);
-        w->ueId = ue->ueId;
-        w->hoTargetNci = bestNeighNci;
-        w->hoCause = NgapCause::RadioNetwork_handover_desirable_for_radio_reason;
-        m_base->ngapTask->push(std::move(w));
-
-        m_logger->info("UE[%ld] N2 Handover started - HandoverRequired sent to NGAP. targetNCI=%ld", ue->ueId, bestNeighNci);
-    }
-}
 
 
 /**
@@ -964,22 +836,33 @@ void GnbRrcTask::sendMeasConfig(int64_t ueId, bool forceResend)
         }
     }
 
-    // Build RRCReconfiguration with measConfig
-    auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
-    pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
-    pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
-    pdu->message.choice.c1->present =
-        ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcReconfiguration;
+    // Build RRCReconfiguration
+    auto *pdu = makeRrcReconfiguration(ueId);
 
-    auto &reconfig = pdu->message.choice.c1->choice.rrcReconfiguration =
-        asn::New<ASN_RRC_RRCReconfiguration>();
+    // error check
+    if (!pdu) {
+        m_logger->err("UE[%ld] Failed to create RRCReconfiguration", ueId);
+        return;
+    }
 
-    long txId = ue->getNextTid();
-    reconfig->rrc_TransactionIdentifier = txId;
-    reconfig->criticalExtensions.present =
-        ASN_RRC_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration;
-    auto &ies = reconfig->criticalExtensions.choice.rrcReconfiguration =
-        asn::New<ASN_RRC_RRCReconfiguration_IEs>();
+    // auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
+    // pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
+    // pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
+    // pdu->message.choice.c1->present =
+    //     ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcReconfiguration;
+
+    // auto &reconfig = pdu->message.choice.c1->choice.rrcReconfiguration =
+    //     asn::New<ASN_RRC_RRCReconfiguration>();
+
+    // long txId = ue->getNextTid();
+    // reconfig->rrc_TransactionIdentifier = txId;
+    // reconfig->criticalExtensions.present =
+    //     ASN_RRC_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration;
+    // auto &ies = reconfig->criticalExtensions.choice.rrcReconfiguration =
+    //     asn::New<ASN_RRC_RRCReconfiguration_IEs>();
+
+    long txId = pdu->message.choice.c1->choice.rrcReconfiguration->rrc_TransactionIdentifier;
+    auto *ies = pdu->message.choice.c1->choice.rrcReconfiguration->criticalExtensions.choice.rrcReconfiguration;
 
     // Force clean-slate behavior for simulation stability: UE replaces prior
     // measurement configuration instead of relying on delta persistence.
@@ -997,19 +880,19 @@ void GnbRrcTask::sendMeasConfig(int64_t ueId, bool forceResend)
     auto usedMeasIds = createMeasConfig(mc, ue, taggedEvents);
     ies->measConfig = mc;
     
-    if (!asn::DeepCopy(asn_DEF_ASN_RRC_MeasConfig, *mc, mc_saved))
-    {
-        asn::Free(asn_DEF_ASN_RRC_MeasConfig, mc_saved);
-        mc_saved = nullptr;
-        m_logger->err("UE[%ld] Failed to deep-copy MeasConfig for local storage", ue->ueId);
-    }
+    // if (!asn::DeepCopy(asn_DEF_ASN_RRC_MeasConfig, *mc, mc_saved))
+    // {
+    //     asn::Free(asn_DEF_ASN_RRC_MeasConfig, mc_saved);
+    //     mc_saved = nullptr;
+    //     m_logger->err("UE[%ld] Failed to deep-copy MeasConfig for local storage", ue->ueId);
+    // }
 
     // send the measConfig now, don't wait for CHO conditionals since they come from other GNBs
     sendRrcMessage(ue->ueId, pdu);
 
     // store the sent MeasConfig in UE context for potential future reference (e.g. handovers)
-    if (mc_saved)
-        ue->sentMeasConfigs.emplace_back(mc_saved, usedMeasIds);
+    // if (mc_saved)
+    //     ue->sentMeasConfigs.emplace_back(mc_saved, usedMeasIds);
 
 
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
@@ -1023,6 +906,120 @@ void GnbRrcTask::sendMeasConfig(int64_t ueId, bool forceResend)
         for (int profileIdx : activeChoProfileIndices)
             processConditionalHandover(ue->ueId, dynTriggerParams, profileIdx);
     }
+}
+
+/**
+ * @brief Receives an RRCReconfigurationComplete message from a UE, which may indicate the 
+ * completion of a handover.  If this is a handover completion, triggers post-handover 
+ * processing such as NGAP notification. Otherwise, just logs the completion of a normal 
+ * reconfiguration.
+ * 
+ * @param ueId 
+ * @param msg 
+ */
+void GnbRrcTask::receiveRrcReconfigurationComplete(int64_t ueId, int cRnti,
+    const ASN_RRC_RRCReconfigurationComplete &msg)
+{
+    int64_t txId = msg.rrc_TransactionIdentifier;
+
+    int64_t resolvedUeId = ueId;
+
+    // A UE can share txId values with other UEs (txId is tiny), so match by UE ID first,
+    // then verify txId for that UE's pending handover.
+    auto itPending = m_handoversPending.find(resolvedUeId);
+    bool matchedPending =
+        itPending != m_handoversPending.end() &&
+        itPending->second != nullptr &&
+        itPending->second->ctx != nullptr &&
+        itPending->second->txId == txId &&
+        (cRnti <= 0 || itPending->second->ctx->cRnti == cRnti);
+
+    // if matchedPending is False, this either isn't associated with a pending handover, or its got a bad UEID
+    //   We check the cRNTI and txId against the pending handovers to see if we can find a match 
+    //   and resolve the correct UE ID
+    if (!matchedPending && cRnti > 0)
+    {
+        // If UE ID was mis-associated on UL delivery, remap using (txId, cRnti).
+        for (auto it = m_handoversPending.begin(); it != m_handoversPending.end(); ++it)
+        {
+            auto *pending = it->second;
+            if (!pending || !pending->ctx)
+                continue;
+
+            if (pending->txId == txId && pending->ctx->cRnti == cRnti)
+            {
+                resolvedUeId = it->first;
+                itPending = it;
+                matchedPending = true;
+
+                if (resolvedUeId != ueId)
+                {
+                    m_logger->warn(
+                        "RRCReconfigurationComplete UE remap: incomingUeId=%ld resolvedUeId=%ld txId=%ld cRnti=%d",
+                        ueId, resolvedUeId, txId, cRnti);
+                }
+                break;
+            }
+        }
+    }
+
+    m_logger->debug("UE[%ld]: RRCReconfigurationComplete received with txId=%ld cRnti=%d matchedPendingHandover=%s",
+                    ueId, txId, cRnti, matchedPending ? "true" : "false");
+
+    // matchedPending is True if there is pending handover, so complete it by moving the pending
+    // context to the main UE context map.
+    if (matchedPending)
+    {
+
+        /* move the ctx from pending handover to UE context */
+
+        // get ptr to rrc context in the pending handover map (indexed by UE ID)
+        auto *handoverCtx = itPending->second->ctx;
+
+        // check for old UE context with the same UE ID, if exists, remove it 
+        // (since after handover completion, the old UE context is no longer valid)
+        auto *ue = findCtxByUeId(resolvedUeId);
+        if (ue)
+        {
+            releaseCrnti(ue->cRnti);
+            delete ue;
+            m_ueCtx.erase(resolvedUeId);
+        }
+
+        // move the UE context from pending handover to UE context map and erase the pending handover
+        m_ueCtx[resolvedUeId] = handoverCtx;
+        m_handoversPending.erase(itPending);
+
+        // not sure if this is still needed, but clean it up anyway
+        handoverCtx->handoverInProgress = false;
+
+        // Send measurement config to UE to restart measurement reporting
+        // after handover.
+        sendMeasConfig(resolvedUeId, true);
+
+        // Notify NGAP of handover completion.
+        auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_NOTIFY);
+        w->ueId = resolvedUeId;
+        m_base->ngapTask->push(std::move(w));
+
+        m_logger->info("UE[%ld] Handover completed. NGAP layer notification sent.", resolvedUeId);
+        return;
+
+    }
+
+    // other RRCReconfigComplete msgs
+
+    auto *ue = tryFindUeByUeId(ueId);
+    if (!ue)
+    {
+        m_logger->warn("UE[%ld] RRCReconfigurationComplete received from unknown UE, ignoring", ueId);
+        return;
+    }
+
+    // no gnb action needed for non-handover RRCReconfigurationComplete, just log it
+
+    m_logger->info("UE[%ld] RRCReconfigurationComplete received txId=%ld", ueId, txId);
+
 }
 
 

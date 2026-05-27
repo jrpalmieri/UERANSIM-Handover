@@ -134,26 +134,33 @@ void NgapTask::sendNgapNonUe(int associatedAmf, ASN_NGAP_NGAP_PDU *pdu)
     asn::Free(asn_DEF_ASN_NGAP_NGAP_PDU, pdu);
 }
 
+
+// Sends a UE-associated NGAP message to the AMF.
+// Fills in the RAN-UE-NGAP-ID and AMF-UE-NGAP-ID IEs from the UE context
 void NgapTask::sendNgapUeAssociated(int64_t ueId, ASN_NGAP_NGAP_PDU *pdu)
 {
     /* Find UE and AMF contexts */
 
     NgapUeContext *ue = nullptr;
 
+    // check active UE contexts
     auto itActive = m_ueCtx.find(ueId);
     if (itActive != m_ueCtx.end())
         ue = itActive->second;
 
+    // if not in active, check the pending handovers
     if (ue == nullptr)
     {
-        auto it = m_handoversPending.find(ueId);
-        if (it != m_handoversPending.end() && it->second != nullptr)
-            ue = it->second->ctx;
+        // match against ueId field in the pending handover structures
+        auto it = std::find_if(m_handoversPending.begin(), m_handoversPending.end(),
+                               [ueId](const auto &pair) { return pair.second->ueId == ueId; });
+        if (it != m_handoversPending.end())
+            ue = it->second->ctx.get();
     }
 
     if (ue == nullptr)
     {
-        m_logger->err("UE context not found with id: %ld", ueId);
+        m_logger->err("UE[%ld]: NGAP context not found. NGAP send aborted.", ueId);
         asn::Free(asn_DEF_ASN_NGAP_NGAP_PDU, pdu);
         return;
     }
@@ -161,6 +168,7 @@ void NgapTask::sendNgapUeAssociated(int64_t ueId, ASN_NGAP_NGAP_PDU *pdu)
     auto *amf = findAmfContext(ue->associatedAmfId);
     if (amf == nullptr)
     {
+        m_logger->err("UE[%ld]: AMF context not found. NGAP send aborted.", ueId);
         asn::Free(asn_DEF_ASN_NGAP_NGAP_PDU, pdu);
         return;
     }
@@ -238,11 +246,14 @@ void NgapTask::sendNgapUeAssociated(int64_t ueId, ASN_NGAP_NGAP_PDU *pdu)
     asn::Free(asn_DEF_ASN_NGAP_NGAP_PDU, pdu);
 }
 
+
+
+
 /**
  * @brief Handles incoming SCTP messages from AMF over N2.
  * 
  * @param amfId ID of AMF that sent the message
- * @param stream SCTP stream ID of the message (shoudl map to a stream ID in the UE NGAP context)
+ * @param stream SCTP stream ID of the message
  * @param buffer Buffer containing the SCTP message
  */
 void NgapTask::handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer &buffer)
@@ -324,7 +335,7 @@ void NgapTask::handleSctpMessage(int amfId, uint16_t stream, const UniqueBuffer 
             break;
         // AMF message HANDOVER_REQUEST, sent to target GNB to prepare for handover.
         case ASN_NGAP_InitiatingMessage__value_PR_HandoverRequest:
-            receiveHandoverRequest(amf->ctxId, &value.choice.HandoverRequest);
+            receiveHandoverRequest(amf->ctxId, &value.choice.HandoverRequest, stream);
             break;
         default:
             m_logger->err("Unhandled NGAP initiating-message received (%d)", value.present);

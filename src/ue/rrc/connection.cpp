@@ -21,6 +21,9 @@
 #include <lib/asn/rrc.hpp>
 #include <asn/rrc/ASN_RRC_RRCSetupRequest-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCSetupRequest.h>
+#include <asn/rrc/ASN_RRC_SecurityModeComplete.h>
+#include <asn/rrc/ASN_RRC_SecurityModeComplete-IEs.h>
+#include <asn/rrc/ASN_RRC_SecurityModeCommand.h>
 
 namespace nr::ue
 {
@@ -101,6 +104,10 @@ void UeRrcTask::receiveRrcSetup(int64_t cellId, const ASN_RRC_RRCSetup &msg)
         return;
     }
 
+    // extract cRnti from the RRC Setup message
+
+    // Send RRCSetupComplete response, with the Initial NAS PDU and S-TMSI/GUAMI if available.
+
     auto *pdu = asn::New<ASN_RRC_UL_DCCH_Message>();
     pdu->message.present = ASN_RRC_UL_DCCH_MessageType_PR_c1;
     pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
@@ -168,5 +175,41 @@ void UeRrcTask::handleEstablishmentFailure()
 {
     m_base->nasTask->push(std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::RRC_ESTABLISHMENT_FAILURE));
 }
+
+// Handles receipt of the RRC SecurityModeCommand message.
+// The simulator does not do encryption or integrity checking on the radio link, so
+//  the content are ignored and the UE always responds with SecurityModeComplete.
+void UeRrcTask::receiveSecurityModeCommand(const ASN_RRC_SecurityModeCommand &msg)
+{
+
+    long txId = msg.rrc_TransactionIdentifier;
+
+    m_logger->debug("RRC Security Mode Command received. txId=%d", txId);
+
+    auto *pdu = asn::New<ASN_RRC_UL_DCCH_Message>();
+    pdu->message.present = ASN_RRC_UL_DCCH_MessageType_PR_c1;
+    pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
+    pdu->message.choice.c1->present = ASN_RRC_UL_DCCH_MessageType__c1_PR_securityModeComplete;
+
+    auto *securityModeComplete = asn::New<ASN_RRC_SecurityModeComplete>();
+    securityModeComplete->rrc_TransactionIdentifier = txId;
+
+    // criticalExtensions is a mandatory CHOICE in PER; PR_NOTHING causes encoding failure.
+    // Assumption: select the securityModeComplete branch (3GPP TS 38.331 §5.3.4).
+    // Both IEs inside SecurityModeComplete-IEs (lateNonCriticalExtension,
+    // nonCriticalExtension) are OPTIONAL, so an empty allocation is valid.
+    securityModeComplete->criticalExtensions.present =
+        ASN_RRC_SecurityModeComplete__criticalExtensions_PR_securityModeComplete;
+    securityModeComplete->criticalExtensions.choice.securityModeComplete =
+        asn::New<ASN_RRC_SecurityModeComplete_IEs>();
+
+    pdu->message.choice.c1->choice.securityModeComplete = securityModeComplete;
+    sendRrcMessage(pdu);
+    asn::Free(asn_DEF_ASN_RRC_UL_DCCH_Message, pdu);
+
+    m_logger->debug("RRC SecurityModeComplete sent. txId=%d", txId);
+}
+
+
 
 } // namespace nr::ue

@@ -74,7 +74,7 @@ static void ReceiverThread(ReceiverArgs *args)
 namespace nr::ue
 {
 
-ue::TunTask::TunTask(TaskBase *base, int psi, int fd) : m_base{base}, m_psi{psi}, m_fd{fd}, m_receiver{}
+ue::TunTask::TunTask(TaskBase *base, int psi, int fd, std::string interfaceName) : m_base{base}, m_psi{psi}, m_fd{fd}, m_receiver{}, interfaceName{interfaceName}
 {
 }
 

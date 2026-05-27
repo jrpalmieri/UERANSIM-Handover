@@ -64,48 +64,40 @@ namespace nr::gnb
 // Incoming from network — target gNB handlers
 // ---------------------------------------------------------------------------
 
-void XnTask::xnHandoverRequestTarget(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
-{
-    m_logger->debug("xnHandoverRequestTarget gnbId=%d", gnbId);
-}
 
 void XnTask::xnHandoverCancelTarget(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 {
     m_logger->debug("xnHandoverCancelTarget gnbId=%d", gnbId);
 }
 
-void XnTask::xnSnStatusTransferTarget(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
+void XnTask::receiveSnStatusTransfer(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 {
-    m_logger->debug("xnSnStatusTransferTarget gnbId=%d", gnbId);
+    m_logger->debug("receiveSnStatusTransfer gnbId=%d", gnbId);
 }
 
-void XnTask::xnConditionalHandoverCancelTarget(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
-{
-    m_logger->debug("xnConditionalHandoverCancelTarget gnbId=%d", gnbId);
-}
 
 // ---------------------------------------------------------------------------
 // Incoming from network — source gNB handlers
 // ---------------------------------------------------------------------------
 
-void XnTask::xnHandoverRequestAckSource(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
+void XnTask::receiveHandoverRequestAck(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 {
-    m_logger->debug("xnHandoverRequestAckSource gnbId=%d", gnbId);
+    m_logger->debug("receiveHandoverRequestAck gnbId=%d", gnbId);
 }
 
-void XnTask::xnHandoverPreparationFailureSource(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
+void XnTask::receiveHandoverPreparationFailure(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 {
-    m_logger->debug("xnHandoverPreparationFailureSource gnbId=%d", gnbId);
+    m_logger->debug("receiveHandoverPreparationFailure gnbId=%d", gnbId);
 }
 
-void XnTask::xnUeContextReleaseSource(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
+void XnTask::receiveUeContextRelease(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 {
-    m_logger->debug("xnUeContextReleaseSource gnbId=%d", gnbId);
+    m_logger->debug("receiveUeContextRelease gnbId=%d", gnbId);
 }
 
-void XnTask::xnHandoverSuccessSource(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
+void XnTask::receiveHandoverSuccess(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 {
-    m_logger->debug("xnHandoverSuccessSource gnbId=%d", gnbId);
+    m_logger->debug("receiveHandoverSuccess gnbId=%d", gnbId);
 }
 
 // -----------------------------------------------------------------------
@@ -146,7 +138,7 @@ static void setXnPlmn(ASN_XNAP_PLMN_Identity_t &dst, const Plmn &plmn)
 // and returns without sending.
 // ---------------------------------------------------------------------------
 
-void XnTask::xnHandoverRequestSource(int64_t ueId, int64_t targetNci, bool isCho, std::unique_ptr<GnbHandoverUeContexts> contexts)
+void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci, bool isCho, std::unique_ptr<GnbHandoverUeContexts> contexts)
 {
     m_logger->debug("xnHandoverRequestSource ueId=%ld targetNci=0x%09lx isCho=%d",
                     ueId, targetNci, isCho);
@@ -644,44 +636,128 @@ void XnTask::xnHandoverRequestSource(int64_t ueId, int64_t targetNci, bool isCho
     asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu);
 }
 
+
+// Handle an incoming XnAP HandoverRequest from a source gNB.
+// Called from SCTP msg handler.
+void XnTask::receiveHandoverRequest(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
+{
+    uint32_t xnTxId = m_nextXnTxId++;
+
+    // Validate outer PDU structure.
+    if (pdu->present != ASN_XNAP_XnAP_PDU_PR_initiatingMessage ||
+        !pdu->choice.initiatingMessage ||
+        !pdu->choice.initiatingMessage->value.buf)
+    {
+        m_logger->err("receiveHandoverRequest: malformed PDU from gnbId=%d", gnbId);
+        return;
+    }
+
+    auto *initMsg = pdu->choice.initiatingMessage;
+
+    // Decode the HandoverRequest from the InitiatingMessage OPEN TYPE value.
+    auto *hoReq = xnap_encode::Decode<ASN_XNAP_HandoverRequest_t>(
+        asn_DEF_ASN_XNAP_HandoverRequest,
+        reinterpret_cast<const uint8_t *>(initMsg->value.buf),
+        static_cast<size_t>(initMsg->value.size));
+    if (!hoReq)
+    {
+        m_logger->err("receiveHandoverRequest: failed to decode HandoverRequest from gnbId=%d", gnbId);
+        return;
+    }
+
+    // Iterate IEs to find UEContextInfoHORequest (id=83) and extract rrc-Context.
+    std::unique_ptr<OctetString> rrcContainer;
+
+    for (int i = 0; i < hoReq->protocolIEs.list.count; ++i)
+    {
+        auto *ie = hoReq->protocolIEs.list.array[i];
+        if (!ie || ie->id != XNAP_IE_UEContextInfoHORequest || !ie->value.buf)
+            continue;
+
+        auto *ueCtxInfo = xnap_encode::Decode<ASN_XNAP_UEContextInfoHORequest_t>(
+            asn_DEF_ASN_XNAP_UEContextInfoHORequest,
+            reinterpret_cast<const uint8_t *>(ie->value.buf),
+            static_cast<size_t>(ie->value.size));
+        if (!ueCtxInfo)
+        {
+            m_logger->err("receiveHandoverRequest: failed to decode UEContextInfoHORequest from gnbId=%d", gnbId);
+            break;
+        }
+
+        if (ueCtxInfo->rrc_Context.buf && ueCtxInfo->rrc_Context.size > 0)
+            rrcContainer = std::make_unique<OctetString>(
+                OctetString::FromArray(ueCtxInfo->rrc_Context.buf,
+                                       static_cast<size_t>(ueCtxInfo->rrc_Context.size)));
+
+        asn::Free(asn_DEF_ASN_XNAP_UEContextInfoHORequest, ueCtxInfo);
+        break;
+    }
+
+    asn::Free(asn_DEF_ASN_XNAP_HandoverRequest, hoReq);
+
+    if (!rrcContainer)
+    {
+        m_logger->err("receiveHandoverRequest: missing or empty rrc-Context from gnbId=%d", gnbId);
+        return;
+    }
+
+    // Send XnToRrc msg to RRC task. xnTxId correlates when the response is returned.
+    auto msg = std::make_unique<NmGnbXnToRrc>(NmGnbXnToRrc::HANDOVER_REQUEST_RECEIVED);
+    msg->xnTxId = xnTxId;
+    msg->sourceGnbId = gnbId;
+    msg->rrcContainer = std::move(rrcContainer);
+    m_base->rrcTask->push(std::move(msg));
+}
+
+
+
+
+
 void XnTask::xnHandoverCancelSource(int64_t ueId, int64_t targetNci, bool isCho)
 {
     m_logger->debug("xnHandoverCancelSource ueId=%ld targetNci=%ld isCho=%d", ueId, targetNci, isCho);
 }
 
-void XnTask::xnSnStatusTransferSource(int64_t ueId, int64_t targetNci, bool isCho)
+void XnTask::sendSnStatusTransfer(int64_t ueId, int64_t targetNci, bool isCho)
 {
-    m_logger->debug("xnSnStatusTransferSource ueId=%ld targetNci=%ld isCho=%d", ueId, targetNci, isCho);
+    m_logger->debug("sendSnStatusTransfer ueId=%ld targetNci=%ld isCho=%d", ueId, targetNci, isCho);
 }
 
-void XnTask::xnConditionalHandoverCancelSource(int64_t ueId, int64_t targetNci)
-{
-    m_logger->debug("xnConditionalHandoverCancelSource ueId=%ld targetNci=%ld", ueId, targetNci);
-}
 
 // ---------------------------------------------------------------------------
 // Outgoing — target gNB (triggered by RrcToXn messages)
 // ---------------------------------------------------------------------------
 
-void XnTask::xnHandoverRequestAckTarget(int64_t ueId, int64_t targetNci, bool isCho,
-                                         OctetString rrcReconfigIe)
+
+// called from an RrcToXn msg to acknowledge the HandoverRequest.
+//  Msg passes the RRC Reconfiguration container with the HO command for the UE.
+void XnTask::sendHandoverRequestAck(int64_t ueId, int64_t targetNci, bool isCho,
+                                         std::unique_ptr<OctetString> rrcContainer)
 {
+
+    // instruct GTP to setup Xn-U tunnels
+
+    // create XnHandoverRequestAck message with the RRC container
+
+    // send the XnHandoverRequestAck message to the target gNB
+
+
     m_logger->debug("xnHandoverRequestAckTarget ueId=%ld targetNci=%ld isCho=%d", ueId, targetNci, isCho);
 }
 
-void XnTask::xnHandoverPreparationFailureTarget(int64_t ueId, int64_t targetNci, bool isCho,
+void XnTask::sendHandoverPreparationFailure(int64_t ueId, int64_t targetNci, bool isCho,
                                                  int reason)
 {
     m_logger->debug("xnHandoverPreparationFailureTarget ueId=%ld targetNci=%ld reason=%d",
                     ueId, targetNci, reason);
 }
 
-void XnTask::xnUeContextReleaseTarget(int64_t ueId, int64_t targetNci)
+void XnTask::sendUeContextRelease(int64_t ueId, int64_t targetNci)
 {
     m_logger->debug("xnUeContextReleaseTarget ueId=%ld targetNci=%ld", ueId, targetNci);
 }
 
-void XnTask::xnHandoverSuccessTarget(int64_t ueId, int64_t targetNci)
+void XnTask::sendHandoverSuccess(int64_t ueId, int64_t targetNci)
 {
     m_logger->debug("xnHandoverSuccessTarget ueId=%ld targetNci=%ld", ueId, targetNci);
 }

@@ -58,6 +58,10 @@ void RlsControlTask::initialize(NtsTask *mainTask, RlsUdpTask *udpTask)
 {
     m_mainTask = mainTask;
     m_udpTask = udpTask;
+
+    // Add the SRB0 bearer by default
+    RadioBearer srb0{0, 0, 0};
+    radioBearers.emplace_back(srb0);
 }
 
 void RlsControlTask::onStart()
@@ -147,6 +151,7 @@ void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
     else if (msg.msgType == rls::EMessageType::PDU_TRANSMISSION)
     {
         auto &m = (rls::RlsPduTransmission &)msg;
+        
 
         // store a pending ACK for this PDU, indexed by cellId,
         //  to be sent back to the gnb in the next ACK_SEND timer cycle.
@@ -163,6 +168,8 @@ void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
                 return;
             }
 
+            m_logger->debug("Downlink Data transmission.  PduID=%ud, Radio Bearer=%02x, SDAP Byte=%02x, Ack PDU=%s, size=%zu",  m.pduId, m.radioBearer, m.sdapByte, m.ackPdu ? "true" : "false", m.pdu.length());
+
             auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::DOWNLINK_DATA);
             w->psi = static_cast<int>(m.payloadType);
             w->data = std::move(m.pdu);
@@ -171,6 +178,7 @@ void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
         // for RRC messages, forward to main task as a DOWNLINK_RRC message
         else if (m.pduType == rls::EPduType::RRC)
         {
+            m_logger->debug("Downlink RRC transmission.  PduID=%ud, Radio Bearer=%02x, RRC Channel=%d, Ack PDU=%s, size=%zu", m.pduId, m.radioBearer, static_cast<int>(m.payloadType), m.ackPdu ? "true" : "false", m.pdu.length());
             auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::DOWNLINK_RRC);
             w->cellId = cellId;
             w->rrcChannel = static_cast<rrc::RrcChannel>(m.payloadType);
@@ -179,7 +187,7 @@ void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
         }
         else
         {
-            m_logger->err("Unhandled RLS PDU type");
+            m_logger->debug("Downlink UNKNOWN transmission. PDUTypeValue=%u, PduID=%ud, Radio Bearer=%02x, SDAP Byte=%02x, Ack PDU=%s, size=%zu", m.pduType,  m.pduId, m.radioBearer, m.sdapByte, m.ackPdu ? "true" : "false", m.pdu.length());
         }
     }
     else
@@ -257,6 +265,8 @@ void RlsControlTask::handleUplinkRrcDelivery(int64_t nci, rrc::RrcChannel channe
         info.rrcChannel = channel;
         info.sentTime = utils::CurrentTimeMillis();
     }
+    
+    m_logger->debug("Uplink RRC delivery.  NCI=%ld, Channel=%d, PduID=%uu, Radio Bearer=%02x, Ack PDU=%s, size=%zu", nci, static_cast<int>(channel), pduId, radioBearer, ackPdu ? "true" : "false", data.length());
 
     // create a new RlsPduTransmission message with the provided RRC payload and 
     //  send it to the UDP task to be forwarded to the gnb
@@ -280,6 +290,8 @@ void RlsControlTask::handleUplinkRrcDelivery(int64_t nci, rrc::RrcChannel channe
  */
 void RlsControlTask::handleUplinkDataDelivery(int pduSessionId, OctetString &&data)
 {
+
+
     uint8_t radioBearer = 0X41; // DRB1
     uint32_t pduId = 0;
     int qfi = 0;
@@ -287,6 +299,9 @@ void RlsControlTask::handleUplinkDataDelivery(int pduSessionId, OctetString &&da
     // get the appropriate radio bearer and PDU ID for this data packet
     sdapMapping(pduSessionId, data, &radioBearer, &pduId, &qfi);
     bool ackPdu = requireDataAck(pduSessionId);
+
+
+    m_logger->debug("Uplink data delivery. PSI=%d, PduID=%u, SDAP Byte=%02x, Radio Bearer=%02x, Ack PDU=%s, size=%zu", pduSessionId, pduId, static_cast<uint8_t>(qfi), radioBearer, ackPdu ? "true" : "false", data.length());
 
     // create a new RlsPduTransmission message with the provided data payload and
     //  send it to the UDP task to be forwarded to the gnb
@@ -298,8 +313,8 @@ void RlsControlTask::handleUplinkDataDelivery(int pduSessionId, OctetString &&da
     msg.payloadType = static_cast<uint32_t>(pduSessionId);
     msg.pduId = pduId;
     msg.sdapByte = static_cast<uint8_t>(qfi);
-
     m_udpTask->send(m_servingCell, msg);
+
 }
 
 /**
@@ -371,6 +386,8 @@ void RlsControlTask::onAckSendTimerExpired()
 void RlsControlTask::sdapMapping(int pduSessionId, OctetString &data, uint8_t *radioBearer, uint32_t *pduId, int *qfi)
 {
 
+    m_logger->debug("SDAP Mapping for PDU session %d", pduSessionId);
+
     // if want to map based on QoS flow, would need to insert some logic here
     //  to parse the QoS flow ID from the data, and then find the corresponding SDAP mapping based on both PDU session ID and QoS flow ID.
 
@@ -383,13 +400,18 @@ void RlsControlTask::sdapMapping(int pduSessionId, OctetString &data, uint8_t *r
         *radioBearer = it->radioBearer;
         *qfi = it->qfi;
     }
+    else
+    {
+        m_logger->err("No SDAP mapping found for PDU session ID %d", pduSessionId);
+        return;
+    }
 
     // use radioBearer to determine the next PDU ID to use for this session, and increment the sequence number for the radio bearer
     auto rbIt = std::find_if(radioBearers.begin(), radioBearers.end(),
         [&](const RadioBearer &b) { return b.bearerId == *radioBearer; });
     if (rbIt == radioBearers.end())
     {
-        m_logger->err("No radio bearer found for SDAP mapping");
+        m_logger->err("No radio bearer found for SDAP mapping, psi=%d", pduSessionId);
         return;
     }
 

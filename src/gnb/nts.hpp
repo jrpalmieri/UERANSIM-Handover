@@ -23,6 +23,8 @@
 #include <utils/octet_string.hpp>
 #include <utils/unique_buffer.hpp>
 
+#include <asn/xnap/ASN_XNAP_Cause.h>
+
 extern "C"
 {
     struct ASN_NGAP_FiveG_S_TMSI;
@@ -31,6 +33,15 @@ extern "C"
 
 namespace nr::gnb
 {
+
+enum class EReqestingTask
+{
+    NGAP,
+    RRC,
+    XN,
+    GTP,
+    RLS,
+};
 
 struct NmGnbRlsToRrc : NtsMessage
 {
@@ -129,6 +140,7 @@ struct NmGnbRlsToRls : NtsMessage
     // UPLINK_DATA
     // UPLINK_RRC
     int64_t ueId{};
+    int cRnti{};
 
     // RECEIVE_RLS_MESSAGE
     std::unique_ptr<rls::RlsMessage> msg{};
@@ -201,19 +213,22 @@ struct NmGnbNgapToRrc : NtsMessage
         AN_RELEASE,
         PAGING,
         UE_CONTEXT_RELEASE,
-        HANDOVER_COMMAND_DELIVERY,
-        HANDOVER_FAILURE,
+        HANDOVER_REQUEST_RECEIVED,
+        HANDOVER_COMMAND_RECEIVED,
+        HANDOVER_PREPARATION_FAILURE_RECEIVED,
         PATH_SWITCH_REQUEST_ACK,
         PATH_SWITCH_REQUEST_FAILURE,
         SECURITY_INFO,
         PDU_SESSION_UPDATE,
     } present;
 
+    uint32_t ngapTxId{};
+
     // HANDOVER_COMMAND_DELIVERY
-    OctetString rrcContainer{};
+    std::unique_ptr<OctetString> rrcContainer{};
     int64_t hoTargetNci{};
     int hoNewCrnti{};
-    bool hoForChoPreparation{};
+    bool isCho{};
 
     // NAS_DELIVERY
     // AN_RELEASE
@@ -249,16 +264,22 @@ struct NmGnbRrcToNgap : NtsMessage
         INITIAL_NAS_DELIVERY,
         UPLINK_NAS_DELIVERY,
         RADIO_LINK_FAILURE,
+        HANDOVER_REQUEST_ACK_SEND,
         HANDOVER_NOTIFY,
         HANDOVER_REQUIRED,
         PATH_SWITCH_REQUEST,
     } present;
+
+    uint32_t ngapTxId{};
 
     // HANDOVER_REQUIRED
     int64_t hoTargetNci{};
     NgapCause hoCause{};
     bool hoForChoPreparation{};
     int retries=0;
+    std::unique_ptr<OctetString> rrcContainer{};
+    std::unique_ptr<std::vector<PduSessionResource>> admittedSessions{};
+    std::unique_ptr<std::vector<PduSessionResource>> rejectedSessions{};
 
     // INITIAL_NAS_DELIVERY
     // UPLINK_NAS_DELIVERY
@@ -323,12 +344,15 @@ struct NmGnbRrcToXn : NtsMessage
         CONDITION_HANDOVER_CANCEL_SEND,   // ueId, targetNci
     } present;
 
+    int xnTxId{};
     int64_t ueId{};
     int64_t targetNci{};
     bool isCho{};
-    OctetString rrcReconfigIe;
-    int reason{};
+    ASN_XNAP_Cause_PR reason{};
     int retries=0;
+    std::unique_ptr<OctetString> rrcContainer{};
+    std::unique_ptr<std::vector<PduSessionResource>> admittedSessions{};
+    std::unique_ptr<std::vector<PduSessionResource>> rejectedSessions{};
 
     explicit NmGnbRrcToXn(PR present) : NtsMessage(NtsMessageType::GNB_RRC_TO_XN), present(present)
     {
@@ -339,20 +363,22 @@ struct NmGnbXnToRrc : NtsMessage
 {
     enum PR
     {
-        HANDOVER_FAILED,                      // ueId, targetNci, isCho, reason
-        HANDOVER_PREPARATION_FAILURE_RECEIVE, // ueId, targetNci, isCho, reason
-        HANDOVER_REQUEST_ACK_RECEIVE,         // ueId, targetNci, isCho, rrcReconfigIe
-        HANDOVER_CANCEL_RECEIVE,              // ueId, targetNci, isCho
-        UE_CONTEXT_RELEASE_RECEIVE,           // ueId, targetNci
-        SN_STATUS_TRANSFER_RECEIVE,           // ueId, targetNci, isCho
-        HANDOVER_SUCCESS_RECEIVE,             // ueId, targetNci
-        CONDITIONAL_HANDOVER_CANCEL_RECEIVE,  // ueId, targetNci
+        HANDOVER_REQUEST_RECEIVED,             // ueId, gnbId, pdu
+        HANDOVER_PREPARATION_FAILURE_RECEIVED, // ueId, targetNci, isCho, reason
+        HANDOVER_REQUEST_ACK_RECEIVED,         // ueId, targetNci, isCho, rrcContainer
+        HANDOVER_CANCEL_RECEIVED,              // ueId, targetNci, isCho
+        UE_CONTEXT_RELEASE_RECEIVED,           // ueId, targetNci
+        SN_STATUS_TRANSFER_RECEIVED,           // ueId, targetNci, isCho
+        HANDOVER_SUCCESS_RECEIVED,             // ueId, targetNci
     } present;
 
+    uint32_t xnTxId{};
     int64_t ueId{};
     int64_t targetNci{};
+    uint32_t sourceGnbId{};
     bool isCho{};
-    OctetString rrcReconfigIe;
+    std::unique_ptr<OctetString> rrcContainer{};
+    std::unique_ptr<std::vector<PduSessionResource>> sessionList{};
     int reason{};
 
     explicit NmGnbXnToRrc(PR present) : NtsMessage(NtsMessageType::GNB_XN_TO_RRC), present(present)

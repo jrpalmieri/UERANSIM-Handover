@@ -108,11 +108,13 @@ void NgapTask::handleAssociationShutdown(int amfId)
 
 void NgapTask::sendNgSetupRequest(int amfId)
 {
-    m_logger->debug("Sending NG Setup Request");
+    m_logger->debug("Sending NG Setup Request to AMF=%d", amfId);
 
     auto *amf = findAmfContext(amfId);
-    if (amf == nullptr)
+    if (amf == nullptr) {
+        m_logger->err("Failed to find AMF context for AMF=%d.  Aborting setup procedure.", amfId);
         return;
+    }
 
     amf->state = EAmfState::WAITING_NG_SETUP;
 
@@ -179,16 +181,23 @@ void NgapTask::sendNgSetupRequest(int amfId)
 
 void NgapTask::receiveNgSetupResponse(int amfId, ASN_NGAP_NGSetupResponse *msg)
 {
-    m_logger->debug("NG Setup Response received");
+    m_logger->debug("NG Setup Response received from AMF=%d", amfId);
 
     auto *amf = findAmfContext(amfId);
-    if (amf == nullptr)
+    if (amf == nullptr) {
+        m_logger->err("Failed to find AMF context for AMF=%d.  Aborting setup procedure.", amfId);
         return;
+    }
+
+    if (amf->state != EAmfState::WAITING_NG_SETUP) {
+        m_logger->err("Received NG Setup Response from AMF=%d, but AMF is not in the expected state (WAITING_NG_SETUP).  Aborting setup procedure.", amfId);
+        return;
+    }
 
     AssignDefaultAmfConfigs(amf, msg);
 
     amf->state = EAmfState::CONNECTED;
-    m_logger->info("NG Setup procedure is successful");
+    m_logger->info("NG Setup procedure with AMF %d is successful", amfId);
 
     if (!m_isInitialized && std::all_of(m_amfCtx.begin(), m_amfCtx.end(),
                                         [](auto &amfCtx) { return amfCtx.second->state == EAmfState::CONNECTED; }))
@@ -206,16 +215,18 @@ void NgapTask::receiveNgSetupResponse(int amfId, ASN_NGAP_NGSetupResponse *msg)
 void NgapTask::receiveNgSetupFailure(int amfId, ASN_NGAP_NGSetupFailure *msg)
 {
     auto *amf = findAmfContext(amfId);
-    if (amf == nullptr)
+    if (amf == nullptr) {
+        m_logger->err("Failed to find AMF context for AMF=%d.  Aborting setup procedure.", amfId);
         return;
+    }
 
     amf->state = EAmfState::WAITING_NG_SETUP;
 
     auto *ie = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_Cause);
     if (ie)
-        m_logger->err("NG Setup procedure is failed. Cause: %s", ngap_utils::CauseToString(ie->Cause).c_str());
+        m_logger->err("NG Setup procedure failed for AMF ID=%d. Response msg cause: %s", amfId, ngap_utils::CauseToString(ie->Cause).c_str());
     else
-        m_logger->err("NG Setup procedure is failed.");
+        m_logger->err("NG Setup procedure failed for AMF ID=%d. No response received from AMF", amfId);
 }
 
 void NgapTask::receiveErrorIndication(int amfId, ASN_NGAP_ErrorIndication *msg)
@@ -255,11 +266,13 @@ void NgapTask::sendErrorIndication(int amfId, NgapCause cause, int64_t ueId)
 
 void NgapTask::receiveAmfConfigurationUpdate(int amfId, ASN_NGAP_AMFConfigurationUpdate *msg)
 {
-    m_logger->debug("AMF configuration update received");
+    m_logger->debug("AMF configuration update received for AMF=%d", amfId);
 
     auto *amf = findAmfContext(amfId);
-    if (amf == nullptr)
+    if (amf == nullptr) {
+        m_logger->err("Failed to find AMF context for AMF=%d.  Aborting configuration update.", amfId);
         return;
+    }
 
     bool tnlModified = false;
 
@@ -278,7 +291,7 @@ void NgapTask::receiveAmfConfigurationUpdate(int amfId, ASN_NGAP_AMFConfiguratio
     // TODO: AMF TNL modification is not supported
     if (tnlModified)
     {
-        m_logger->err("TNL modification is not supported, rejecting AMF configuration update");
+        m_logger->err("TNL modification is not supported, rejecting AMF %d configuration update", amfId);
 
         auto *ieCause = asn::New<ASN_NGAP_AMFConfigurationUpdateFailureIEs>();
         ieCause->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
@@ -305,11 +318,13 @@ void NgapTask::receiveAmfConfigurationUpdate(int amfId, ASN_NGAP_AMFConfiguratio
 
 void NgapTask::receiveOverloadStart(int amfId, ASN_NGAP_OverloadStart *msg)
 {
-    m_logger->debug("AMF overload start received");
+    m_logger->debug("AMF overload start received from AMF ID=%d", amfId);
 
     auto *amf = findAmfContext(amfId);
-    if (amf == nullptr)
+    if (amf == nullptr) {
+        m_logger->err("Failed to find AMF context for AMF=%d.  Aborting overload start.", amfId);
         return;
+    }
 
     amf->overloadInfo = {};
     amf->overloadInfo.status = EOverloadStatus::OVERLOADED;
@@ -332,7 +347,7 @@ void NgapTask::receiveOverloadStart(int amfId, ASN_NGAP_OverloadStart *msg)
             amf->overloadInfo.indication.action = EOverloadAction::ONLY_HIGH_PRI_AND_MT;
             break;
         default:
-            m_logger->warn("AMF overload action [%d] could not understand",
+            m_logger->warn("AMF ID=%d: Overload action [%d] could not understand", amfId,
                            (int)ie->OverloadResponse.choice.overloadAction);
             break;
         }
@@ -354,7 +369,7 @@ void NgapTask::receiveOverloadStart(int amfId, ASN_NGAP_OverloadStart *msg)
 
 void NgapTask::receiveOverloadStop(int amfId, ASN_NGAP_OverloadStop *msg)
 {
-    m_logger->debug("AMF overload stop received");
+    m_logger->debug("AMF %d: Overload stop received", amfId);
 
     // TODO
 }

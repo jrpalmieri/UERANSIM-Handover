@@ -91,11 +91,12 @@ void NgapTask::onLoop()
                 deferred->hoTargetNci = w.hoTargetNci;
                 deferred->hoCause = w.hoCause;
                 deferred->hoForChoPreparation = w.hoForChoPreparation;
+                deferred->rrcContainer = std::move(w.rrcContainer);
                 deferred->retries = w.retries;
                 enqueueDeferred(std::move(deferred));
                 break;
             }
-            sendHandoverRequired(w.ueId, w.hoTargetNci, w.hoCause, w.hoForChoPreparation);
+            sendHandoverRequired(w.ueId, w.hoTargetNci, w.hoCause, w.hoForChoPreparation, std::move(w.rrcContainer));
             break;
         }
         case NmGnbRrcToNgap::PATH_SWITCH_REQUEST: {
@@ -163,7 +164,7 @@ void NgapTask::processDeferredQueue()
 
         if (m_ueCtx.count(msg->ueId) && (m_ueCtx[msg->ueId]->amfUeNgapId > 0 && !m_ueCtx[msg->ueId]->pduSessions.empty()))
         {
-            sendHandoverRequired(msg->ueId, msg->hoTargetNci, msg->hoCause, msg->hoForChoPreparation);
+            sendHandoverRequired(msg->ueId, msg->hoTargetNci, msg->hoCause, msg->hoForChoPreparation, std::move(msg->rrcContainer));
         }
         else if (msg->retries >= DEFERRED_MAX_RETRIES)
         {

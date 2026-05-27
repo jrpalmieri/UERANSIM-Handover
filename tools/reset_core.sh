@@ -1,1 +1,0 @@
-/home/joe/repos/GT/cs8903/docker_open5gs/reset_state.sh

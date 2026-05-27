@@ -368,7 +368,7 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
     // RadioBearerConfig present, set up the radio bearers (RLS)
     if (ies->radioBearerConfig)
     {
-        m_logger->info("RRCReconfiguration contains RadioBearerConfig");
+        m_logger->info("RRCReconfiguration contains RadioBearerConfig, updating radio bearers");
         setupRadioBearers(*ies->radioBearerConfig);
     }
  
@@ -537,7 +537,7 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
         sendRrcMessage(pdu);
         asn::Free(asn_DEF_ASN_RRC_UL_DCCH_Message, pdu);
 
-        m_logger->info("RRCReconfigurationComplete sent (non-handover reconfiguration)");
+        m_logger->info("RRCReconfigurationComplete sent (non-handover reconfiguration).  TxId=%d", txId);
     }
 }
 
@@ -545,15 +545,29 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
 void UeRrcTask::setupRadioBearers(const ASN_RRC_RadioBearerConfig &config)
 {
     // Set up the radio bearers based on the provided configuration
-    std::vector<RadioBearer> upsertBearers;
-    std::vector<uint8_t> deleteBearers;
-
-    std::vector<SdapMapping> upsertSdapMappings;
-    std::vector<SdapMapping> deleteSdapMappings;
-
-
-    if (config.srb_ToAddModList)
+    auto upsertBearers = std::vector<RadioBearer>();
+    auto deleteBearers = std::vector<uint8_t>();
+    auto upsertSdapMappings = std::vector<SdapMapping>();
+    auto deleteSdapMappings = std::vector<SdapMapping>();
+    
+    // Handle DRB release requests
+    if (config.drb_ToReleaseList && config.drb_ToReleaseList->list.count > 0)
     {
+        m_logger->debug("Found %d DRBs to release in the RRC Reconfiguration", config.drb_ToReleaseList->list.count);
+        auto &list = config.drb_ToReleaseList->list;
+        for (int i = 0; i < list.count; i++)
+        {
+            if (list.array[i])
+            {
+                deleteBearers.emplace_back(static_cast<uint8_t>(*list.array[i]));
+            }
+        }
+    }
+
+    // handle SRB (Signaling Radio Bearer) additions and modifications
+    if (config.srb_ToAddModList && config.srb_ToAddModList->list.count > 0)
+    {
+        m_logger->debug("Found %d SRBs to add or modify in the RRC Reconfiguration", config.srb_ToAddModList->list.count);
         auto &list = config.srb_ToAddModList->list;
         for (int i = 0; i < list.count; i++)
         {
@@ -572,8 +586,10 @@ void UeRrcTask::setupRadioBearers(const ASN_RRC_RadioBearerConfig &config)
         }
     }
 
-    if (config.drb_ToAddModList)
+    // Handle DRB (Data Radio Bearer) additions and modifications
+    if (config.drb_ToAddModList && config.drb_ToAddModList->list.count > 0)
     {
+        m_logger->debug("Found %d DRBs to add or modify in the RRC Reconfiguration", config.drb_ToAddModList->list.count);
         auto &list = config.drb_ToAddModList->list;
         for (int i = 0; i < list.count; i++)
         {
@@ -589,28 +605,35 @@ void UeRrcTask::setupRadioBearers(const ASN_RRC_RadioBearerConfig &config)
                 {
                     if (item->cnAssociation->choice.sdap_Config)
                     {
-                        // Delete existing SDAP QoS Flow associations for this DRB
-                        for (int i = 0; i < item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToRelease->list.count; i++)
+                        // Process release list to delete existing SDAP QoS Flow associations for this DRB
+                        if (item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToRelease)
                         {
-                            auto qos = item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToRelease->list.array[i];
-                            SdapMapping mapping{};
-                            auto *sdap = item->cnAssociation->choice.sdap_Config;
-                            mapping.psi = sdap->pdu_Session;
-                            mapping.qfi = static_cast<int>(*qos);
-                            mapping.radioBearer = item->drb_Identity;
-                            deleteSdapMappings.emplace_back(mapping);
+                            m_logger->debug("Found %d QoS flows to release for DRB %d", item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToRelease->list.count, item->drb_Identity);
+                            for (int i = 0; i < item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToRelease->list.count; i++)
+                            {
+                                auto qos = item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToRelease->list.array[i];
+                                SdapMapping mapping{};
+                                auto *sdap = item->cnAssociation->choice.sdap_Config;
+                                mapping.psi = sdap->pdu_Session;
+                                mapping.qfi = static_cast<int>(*qos);
+                                mapping.radioBearer = item->drb_Identity;
+                                deleteSdapMappings.emplace_back(mapping);
+                            }
                         }
-
                         // Add SDAP associations for each QOS flow
-                        for (int i = 0; i < item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToAdd->list.count; i++)
+                        if (item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToAdd)
                         {
-                            auto qos = item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToAdd->list.array[i];
-                            SdapMapping mapping{};
-                            auto *sdap = item->cnAssociation->choice.sdap_Config;
-                            mapping.psi = sdap->pdu_Session;
-                            mapping.radioBearer = item->drb_Identity;
-                            mapping.qfi = static_cast<int>(*qos);
-                            upsertSdapMappings.emplace_back(mapping);
+                            m_logger->debug("Found %d QoS flows to add for DRB %d", item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToAdd->list.count, item->drb_Identity);
+                            for (int i = 0; i < item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToAdd->list.count; i++)
+                            {
+                                auto qos = item->cnAssociation->choice.sdap_Config->mappedQoS_FlowsToAdd->list.array[i];
+                                SdapMapping mapping{};
+                                auto *sdap = item->cnAssociation->choice.sdap_Config;
+                                mapping.psi = sdap->pdu_Session;
+                                mapping.radioBearer = item->drb_Identity;
+                                mapping.qfi = static_cast<int>(*qos);
+                                upsertSdapMappings.emplace_back(mapping);
+                            }
                         }
                     }
                 }
@@ -619,25 +642,15 @@ void UeRrcTask::setupRadioBearers(const ASN_RRC_RadioBearerConfig &config)
         }
     }
 
-    if (config.drb_ToReleaseList)
-    {
-        auto &list = config.drb_ToReleaseList->list;
-        for (int i = 0; i < list.count; i++)
-        {
-            if (list.array[i])
-            {
-                deleteBearers.push_back(static_cast<uint8_t>(*list.array[i]));
-            }
-        }
-    }
+
 
     // send the updates to the RLS layer to apply the new radio bearer configuration
     auto rbUpdates = std::make_unique<RadioBearerUpdate>();
-    rbUpdates->upsertBearers = std::move(upsertBearers);
-    rbUpdates->deleteBearers = std::move(deleteBearers);
+    rbUpdates->upsertBearers = upsertBearers;
+    rbUpdates->deleteBearers = deleteBearers;
     auto sdapUpdates = std::make_unique<SdapUpdate>();
-    sdapUpdates->upsertSdapMappings = std::move(upsertSdapMappings);
-    sdapUpdates->deleteSdapMappings = std::move(deleteSdapMappings);
+    sdapUpdates->upsertSdapMappings = upsertSdapMappings;
+    sdapUpdates->deleteSdapMappings = deleteSdapMappings;
 
     auto rlsUpdate = std::make_unique<NmUeRrcToRls>(NmUeRrcToRls::RADIO_BEARER_UPDATE);
     rlsUpdate->rbUpdate = std::move(rbUpdates);

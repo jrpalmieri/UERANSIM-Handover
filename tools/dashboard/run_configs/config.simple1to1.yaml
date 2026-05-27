@@ -1,0 +1,134 @@
+demo_name: 'Single UE to single gNB connection'
+
+command_cli: ./build/nr-cli
+ui:
+  poll_interval_sec: 1.0
+  max_log_lines: 400
+  command_timeout_sec: 3.0
+
+core:
+  name: 'Open5GS - Docker Deployed'
+  dir: /home/joe/repos/GT/cs8903/docker_open5gs
+  start_command: "%core/run_sa.sh"
+  start_command_args: ["on", "-g=1","-A=172.22.0.202"]
+  stop_command: "%core/run_sa.sh"
+  stop_command_args: ["off"]
+  reset_command: "%core/run_sa.sh"
+  reset_command_args: ["reset", "--savelogs"]
+  status_command: "%core/run_sa.sh"
+  status_command_args: ["status"]
+  address_check_command: "%core/run_sa.sh"
+  address_check_command_args: ["status","--gnb-address=172.22.0.202"]
+
+  amf:
+    host: 172.22.0.10
+    port: 38412
+    protocol: sctp
+    active_probe: false
+    connect_timeout_sec: 1.0
+    source_log_file: "%core/log/amf.log"
+    #amf_log_file: amf_%i.log
+    local_log_file: amf.log_%i
+
+  user_plane:
+    upf_ip: 172.22.0.8
+    upf_port: 5000
+    source_log_file: "%core/log/upf.log"
+    local_log_file: upf.log_%i
+    capture_enabled: true
+    capture_use_sudo: true
+    capture_sudo_non_interactive: true
+    move_tun_to_netns: true
+    netns_name: ue1
+    netns_prefix_len: 16
+    ensure_host_route_to_ue: true
+    host_route_gateway: 172.22.0.8
+    host_route_subnet: 172.22.0.0/24
+    max_log_lines: 400
+
+  core_db:
+    warn_missing_subscribers: true
+    dbctl_script: ./tools/open5gs-dbctl.py
+    db_uri: mongodb://localhost/open5gs
+    check_timeout_sec: 10.0
+    python: python3
+
+ue:
+  node: UE1
+  count: 1
+  ue_command: ./build/nr-ue
+  config: ./tools/dashboard/configs/ue1.yaml
+  ue_log_file: ue.log_%i
+  create_db_profiles: false
+  start_delay_sec: 5.0
+  # latitude: 40.00
+  # longitude: -72.00
+  # altitude: 0.0
+  auto_setcap: true
+  run_with_sudo: true
+  sudo_non_interactive: false
+  cli_with_sudo: true
+  cli_sudo_non_interactive: true
+  args: []
+
+gnb:
+  gnb_command: ./build/nr-gnb
+  gnbs:
+  - node: GNB1
+    nci: '0x000000011'  # NR Cell Identity (36-bit), low bits encode non-zero cell ID
+    config: ./tools/dashboard/configs/gnb1.yaml
+    gnb_log_file: gnb1_%i.log
+    #gnb_host_sat_name: 'SYNTH-1-01'
+    args: []
+
+user_plane_test:
+  enabled: true
+  ue_source: all
+  start_trigger: tun-up
+  start_delay_sec: 0.0
+  cycle_time_sec: 1.0
+  end_time_sec: 60.0
+  end_count: 0
+  message_text: "Hello, World!"
+  message_size_bytes: 100
+  pad_byte_value: 0x20
+
+pcap:
+  core:
+    enabled: true
+    # interface to capture on (e.g. "amf" for interface connected to AMF, "ue1-tun", "ue1-ran")
+    interface: amf
+    # output pcap file (stored in log directory)
+    output_file: core_trace_%i.pcap
+    # whether to use sudo for tcpdump (often required to capture on interfaces)
+    use_sudo: true
+    # whether to use non-interactive sudo (i.e. assume passwordless sudo) for tcpdump
+    sudo_non_interactive: true
+  ran:
+    enabled: true
+    # interface to capture on (e.g. "amf" for interface connected to AMF, "ue1-tun", "ue1-ran")
+    interface: lo
+    # output pcap file (stored in log directory)
+    output_file: ran_trace_%i.pcap
+    # whether to use sudo for tcpdump (often required to capture on interfaces)
+    use_sudo: true
+    # whether to use non-interactive sudo (i.e. assume passwordless sudo) for tcpdump
+    sudo_non_interactive: true
+
+run:
+  stop_after_sec: 60
+  iterations: 1
+  reset_core: true
+  run_log: demorun.log
+  logging:
+    log_dir: ./tools/dashboard/logs
+    run_log_dir_name: demo-simple-%u-%t
+    copy_core_logs: true
+
+script:
+- time: 10
+  commands:
+  - node: GNB1
+    command: set-rsrp
+    args: [-90]
+

@@ -48,6 +48,7 @@ void XnTask::onLoop()
                 deferred->ueId = w.ueId;
                 deferred->targetNci = w.targetNci;
                 deferred->reason = w.reason;
+                deferred->rrcContainer = std::move(w.rrcContainer);
                 deferred->isCho = w.isCho;
                 deferred->retries = w.retries;
                 enqueueDeferred(std::move(deferred));
@@ -58,7 +59,7 @@ void XnTask::onLoop()
             break;
         }
         case NmGnbRrcToXn::HANDOVER_REQUEST_ACK_SEND:
-            xnHandoverRequestAckTarget(w.ueId, w.targetNci, w.isCho, std::move(w.rrcReconfigIe));
+            xnHandoverRequestAckTarget(w.ueId, w.targetNci, w.isCho, std::move(w.rrcContainer));
             break;
         case NmGnbRrcToXn::HANDOVER_CANCEL_SEND:
             xnHandoverCancelSource(w.ueId, w.targetNci, w.isCho);
