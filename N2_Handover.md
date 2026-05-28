@@ -1,264 +1,32 @@
-# Xn Interface
+# N2/N3 Interface
 
-The Xn Layer is implemented using the XnTask class.  The XnTask uses the standard NTS message queue to handle messages between layers.
+The N2 interface is the control plane interface to AMF and is implemented using SCTP as transport and NGAP as its application layer protocol. NGAP is standardized to use SCTP port 38421.  All non-UE-Associated messages are sent using StreamID 0.  Ue-associated messages are assigned an available StreamId for the initial message in a procedure sequence.  Since messages can be identified from their application layer content, strict StreamID checking can be disabled.
 
-The Xn control plane interface (Xn-C) is implemented using SCTP as transport and XNAP as its application layer protocol. XNAP is standardized to use SCTP port 38422.  All non-UE-Associated messages are sent using StreamID 0.  Ue-associated messages are assigned an available StreamId for the initial message in a procedure sequence.  Since messages can be identified from their application layer content, strict StreamID checking can be disabled.
+The N3 interface is the user plane interface to UPF and is implemented using UDP as transport and GTP-U as tunneling transport.
 
-The Xn user plane interface (Xn-U) is implemented using UDP as transport and GTP-U as tunneling transport.
 
-The XnTask class implements the following functionality:
-
-- Periodic updates to Xn connections list based on current state of neighbors
-- Mobility Management (handover)
-    -   Handover Preparation
-    -	Handover Cancel
-    -	SN Status Transfer
-    -	Retrieve UE Context
-    -	RAN Paging
-    -	Xn-U Address Indication
-    -	UE Context Release
-    -	Handover Success Indication
-    -	Conditional Handover Cancel
-    -	Retrieve UE Context Confirm
+The following UE Mobility management procedures are used to prepare, execute or cancel handovers:
+-	Handover Preparation;
+-	Handover Resource Allocation;
+-	Handover Notification;
+-	Path Switch Request;
+-	Uplink RAN Status Transfer;
+-	Downlink RAN Status Transfer;
+-	Handover Cancellation ;
+-	Handover Success;
+-	Uplink RAN Early Status Transfer;
+-	Downlink RAN Early Status Transfer.
 
 Relevant 3GPP documentation: 
-- TS 38.420 - Xn General Principles
-- TS 38.421 - XN Layer 1 (no requirements)
-- TS 38.422 - Xn Signalling Transport  (SCTP)
-- TS 38.423 - Xn Application Protocol (XNAP)
-- TS 38.424 - Xn Data transport
-
-## Xn Messages:
-
-### RrcToXn:
-- HANDOVER_REQUEST_SEND
-    ueId
-    targetNci
-    isCho
-- HANDOVER_REQUEST_ACK_SEND
-    ueId
-    targetNci
-    isCho
-    rrcReconfigIe
-- HANDOVER_CANCEL_SEND
-    ueId
-    targetNci
-    isCho
-- HANDOVER_PREPARATION_FAILURE_SEND
-    ueId
-    targetNci
-    isCho
-    reason
-- UE_CONTEXT_RELEASE_SEND
-    ueId
-    targetNci
-- SN_STATUS_TRANSFER_SEND
-    ueId
-    targetNci
-    isCho
-- HANDOVER_SUCCESS_SEND
-    ueId
-    targetNci
-- CONDITION_HANDOVER_CANCEL_SEND
-    ueId
-    targetNci
+- TS 38.410 - NG General Principles
+- TS 38.411 - NG Layer 1 (no requirements)
+- TS 38.422 - NG Signalling Transport  (SCTP)
+- TS 38.413 - NG Application Protocol (NGAP)
+- TS 38.414 - NG Data transport
+- TS 38.415 - NG PDU Session user plane protocol
 
 
-### XnToRrc:
-- HANDOVER_FAILED
-    ueId
-    targetNci
-    isCho
-    reason
-- HANDOVER_PREPARATION_FAILURE_RECEIVE
-    ueId
-    targetNci
-    isCho
-    reason
-- HANDOVER_REQUEST_ACK_RECEIVE
-    ueId
-    targetNci
-    isCho
-    rrcReconfigIe
-- HANDOVER_CANCEL_RECEIVE
-    ueId
-    targetNci
-    isCho
-- UE_CONTEXT_RELEASE_RECEIVE
-    ueId
-    targetNci
-- SN_STATUS_TRANSFER_RECEIVE
-    ueId
-    targetNci
-    isCho
-- HANDOVER_SUCCESS_RECEIVE
-    ueId
-    targetNci
-- CONDITIONAL_HANDOVER_CANCEL_RECEIVE
-    ueId
-    targetNci
-
-
-### Timers:
-- TX_N_RELOC_PREP (per UE, per targetNci)
-- TX_N_RELOC_OVERALL (per UE, per targetNci)
-
-## State
-
-- XnConnections : stores active Xn connections with peer gNBs. Connections include Xn IP Address, NCI
-- XnUeCtx : stores Ue context for Xn operations.  Used to track pending Xn operation state (e.g., timers)
-
-## On Start
-
-When instantiated, the XnTask:
-
-- instantiates an SCTP task to manage the SCTP connection between gNBs.
-    used agreed-upon Xn Ports
-- attempts initial XN Setup with any gNBs on its initial neighbor list.
-    neighbor list includes IP addresses for Xn connections
-- sets a timer to periodically monitor for stale/new gNB neighbors to remove/setup connections
-- Creates a GTPTask that creates a connection that allows GTP-U tunnels to be provided over Xn
-    uses agreed-upon ports
-
-## On Loop
-
-- read a message from the queue
-
-RrcToXn messages:
-- HANDOVER_REQUEST_SEND : call xnHandoverRequestSource()
-- HANDOVER_CANCEL_SEND : call xnHandoverCancelSource()
-- HANDOVER_REQUEST_ACK_SEND : call xnHandoverRequestAckTarget()
-- HANDOVER_PREPARATION_FAILURE_SEND : call xnHandoverPreparationFailureTarget()
-- SN_STATUS_TRANSFER_SEND : call xnSnStatusTransferSource()
-- UE_CONTEXT_RELEASE_SEND : call xnUeContextReleaseTarget()
-- CONDITION_HANDOVER_CANCEL_SEND : call xnConditionalHandoverCancelSource()
-- HANDOVER_SUCCESS_SEND : call xnHandoverSuccessTarget()
-
-GnbSctp messages:
-- RECEIVE_MESSAGE : call xnHandleSctpMessage()
-
-Timers:
-- TX_N_RELOC_PREP : call xnHandleTimerPrep()
-- TX_N_RELOC_OVERALL : call xnHandleTimerOverall()
-
-
-## Supported Xn Message Types
-
-### UE-Associated
-    Xn Handover Request : call xnHandoverRequestTarget()
-    Xn Handover Cancel : call xnHandoverCancelTarget()
-    Xn Handover Request Acknowledge : call xnHandoverRequestAckSource()
-    Xn Handover Preparation Failure : call xnHandoverPreparationFailureSource()
-    Xn SN Status Transfer : call xnSnStatusTransferTarget()
-    Xn UE Context Release : call xnUeContextReleaseSource()
-    Xn Handover Success : call xnHandoverSuccessSource()
-
-### General
-    Xn Setup Request : call xnSetupRequestTarget()
-    Xn Setup Response : call xnSetupResponseSource()
-    Xn Setup Failure : call xnSetupFailureSource()
-
-
-## Xn Handover Functions
-
-### Joint source/target gNB functions
-
-`xnHandleSctpMessage()`:
-
-1. Receive msg from Sctp.
-2. Decode to find Xn Message Type.
-3. Call related handler function.
-
-`xnHandleTimerPrep()`:
-
-1. If TX_N_RELOC_PREP timer expires before Xn Handover Request Ack from target:
-    - create Xn handover Cancel message.  Send to Sctp for target gnb.
-    - send XnToRrc::HANDOVER_FAILED to RRCtask with cause Timer Expired
-
-`xnHandleTimerOverall()`:
-
-2. If TX_N_RELOC_OVERALL timer expires before Xn UE Context Release from target:
-    38.423, 8.2.7.4: If the UE Context Release procedure is not initiated towards the source NG-RAN node from any prepared NG-RAN node before the expiry of the timer TXnRELOCoverall, the source NG-RAN node shall request the AMF to release the UE context.
-
-### Source gNB functions:
-
-`sendHandoverRequest()`: Source gNB sends XnAP Handover Request msg to Target gNB
-
-    - triggered by RrcToXn msg RRC HANDOVER_REQUEST_SEND
-    - Identify target gNB address from XnConnections table, based on provided targetNci.
-        - if missing, send XnToRrc::HANDOVER_FAILED to RRCTask with reason "GNB not available on Xn"
-    - Create Xn HandoverRequest message.  Send to SctpTask with target gNB IP address.
-    - Start TX_N_RELOC_PREP timer.
-
-
-`receiveHandoverRequestAck()`: Source gNB receives XnAP Handover Request Ack message from Target gNB
-
-    - check TX_N_RELOC_PREP timer not expired - if expired, discard message.
-    - create GTP-U tunnel using XnTask's GTPTask using info in msg.
-    - send XnToRrc::HANDOVER_REQUEST_ACK_RECEIVE to RRCTask.  Should include the RRCReconfigurationWithSync IE from target.
-    - enable handover tunneling using GTP-U tunnel. 
-    - Disable TX_N_RELOC_PREP timer. If not CHO, Start TX_N_RELOC_OVERALL timer.
-
-`receiveHandoverPreparationFailure()`:  Source gNB receives XnAP Handover Preparation Failure message from Target gNB
-
-    - check TX_N_RELOC_PREP timer not expired - if expired, discard message.
-    - send XnToRrc::HANDOVER_PREPARATION_FAILURE_RECEIVE msg to RRCTask.
-    - Disable TX_N_RELOC_PREP timer.
-
-`sendSnStatusTransfer()`:  Process RRC SN_STATUS_TRANSFER message
-
-    - create Xn SN Status Transfer message
-    - send to Sctp task, directed at targetNCI
-
-`receiveUeContextRelease()`: Source gNB receives XnAP UE Context Release message from Target gNB
-
-    - check TX_N_RELOC_OVERALL timer not expired - if expired, discard message.
-    - send XnToRrc::UE_CONTEXT_RELEASE_RECEIVE message to RRCTask.
-    - disable TX_N_RELOC_OVERALL timer
-    - erase any UE context in XnTask.
-
-
-
-### Target gNB Functions:
-
-`receiveHandoverRequest()`:  Target gNB processes received Xn Handover Request from Source gnb.
-
-    - decode Source to Target Transpa
-    - send XnToRrc::HANDOVER_REQUEST_RECEIVE to RRCtask.
-
-`receiveHandoverCancel()`:  target gNB processes received Xn Handover Cancel from Source gnb
-
-    - send XnToRrc::HANDOVER_CANCEL_RECEIVE to RRCtask.
-
-`sendHandoverRequestAck()`:  Target gNB sends an xN Handover Request Acknowledge to Source gNB
-
-    - triggered by RrcToXn msg HANDOVER_REQUEST_ACK_SEND
-    - generate Xn Handover Request Ack message.  Use information provided in the rrc msg.
-    - send to Sctp task, directed at sourceNCI
-
-`sendHandoverPreparationFailure()`:  Target gNB sends an Xn handover Preparation Failure message to Source gNB
-
-    - triggered by RrcToXn msg HANDOVER_PREPARATION_FAILURE_SEND
-    - generate Xn Handover Preparation Failure message
-    - send to Sctp task, directed at sourceNCI
-
-`receiveSnStatusTransfer()`: Target gNB receives an Xn SN Status Transfer from Source gNB
-
-    - send XnToRrc::SN_STATUS_TRANSFER_RECEIVE to RRCtask.
-
-`xnUeContextReleaseTarget()`:  Process RRC UE_CONTEXT_RELEASE_SEND message
-
-    - generate Xn UE Context Release message
-    - send to Sctp task, directed at sourceNCI
-
-`xnHandoverSuccessTarget()`:  Process RRC HANDOVER_SUCCESS_SEND message (CHO only)
-
-    - create Xn Handover Success message for sourceNci in RRC message
-    - send to Sctp task, directed at sourceNci
-
-
-
-## Xn Handover - Basic Handover Procedure (Intra-RAT)
+## N2 Handover - Basic Handover Procedure (Intra-RAT)
 
 ```
       UE              Source gNB                       Target gNB                           AMF            UPF(s)
@@ -276,14 +44,22 @@ Timers:
       |             \------+------/                         |                                |                |  R
       |                    |                                |                                |                |
       |                    |                                |                                |                |  
-      |                    |-- 3. HANDOVER REQUEST -------->|                                |                |  P
+      |                    |-------------------- 3. HANDOVER REQUIRED ---------------------->|                |  P
       |                    |                                |                                |                |  R
-      |                    |                         /------+------\                         |                |  E
-      |                    |                         | 4. Admission|                         |                |  P
-      |                    |                         |    Control  |                         |                |  .
+      |                    |                                |                                |                |  E
+      |                    |                                |<---- 4. HANDOVER REQUEST ------|                |  P
+      |                    |                                |                                |                |
+      |                    |                                |                                |                |
+      |                    |                         /------+------\                         |                |
+      |                    |                         | 5. Admission|                         |                |
+      |                    |                         |    Control  |                         |                |
       |                    |                         \------+------/                         |                |  
       |                    |                                |                                |                |
-      |                    |<-- 5. HANDOVER REQUEST ACK ----|                                |                |
+      |                    |                                |                                |                |
+      |                    |                                |-- 6. HANDOVER REQUEST ACK ---->|                |
+      |                    |                                |                                |                |
+      |                    |                                |                                |                |
+      |                    |<------------------ 5. HANDOVER COMMAND -------------------------|                |
       |                    |                                |                                |                |
       |<- 6. RRCReconfig --|                                |                                |                |
       |                    |                                |                                |                |
@@ -291,29 +67,27 @@ Timers:
       |             /------+------\                         |                                |                |  
       |             | Buffer User |                         |                                |                |  
       |             | Data        |                         |                                |                |  
-      |             \------+------/                         |                                |                |  
- /----+----\               |                                |                                |                |  H
- | Detach/ |               |                                |                                |                |  O
- | Sync    |               |                                |                                |                |  
- \----+----/               |-- 7.  SN STATUS TRANSFER ----->|                                |                |  
+      |             \------+------/                         |                                |                |
       |                    |                                |                                |                |
+      |                    |========================= User Data (DL) ========================================>|
+      |                    |                                |<================================================|
       |                    |                                |                                |                |
-      |                    |========= User Data (DL) ======>|                                |                |
       |                    |                        /-------------\                          |                |  
       |                    |                        | Buffer User |                          |                |  
       |                    |                        | Data        |                          |                |  
       |                    |                        \------+------/                          |                |  
+ /----+----\               |                                |                                |                |
+ | Detach/ |               |                                |                                |                |
+ | Sync    |               |                                |                                |                |  
+ \----+----/               |                                |                                |                |  
       |                    |                                |                                |                |
-      |- RRCReconfigComplete ------------------------------>|                                |                | 
-      |                    |                                |                                |                |
+      |------- 7. RRCReconfigComplete --------------------->|                                |                | 
       |                    |                                |                                |                |
       |=========== User Data (UL) =========================>|============ User Data (UL) ====================>|
       |<========== User Data (DL) ==========================|                                |                |
-      |                    |                                |                                |                | 
       |                    |                                |                                |                |
-      |                    |                                |-- 9. PATH SWITCH REQUEST ----->|                |
       |                    |                                |                                |                |
-      |                    |                                |<-- 11. PATH SWITCH REQ. ACK ---|                |
+      |                    |                                |--- 8. HANDOVER COMPLETE  ----->|                |
       |                    |                                |                                |                |
       |                    |<========== 10. End Marker (DL) ==================================================|
       |                    |                                |                                |                |
@@ -321,54 +95,12 @@ Timers:
       |=========== User Data (DL/UL) =======================|============ User Data (DL/UL) ==================|
       |                    |                                |                                |                | 
       |                    |                                |                                |                |
-      |                    |<-- 12. UE CONTEXT RELEASE -----|                                |                |
+      |                    |<------------------- 9. UE CONTEXT RELEASE ----------------------|                |
       |                    |                                |                                |                |
 ```
 Control Plane Signalling - Basic Handover
 
 
-Pre-conditions:
-
-0.	The UE context within the source gNB contains information regarding roaming and access restrictions which were provided either at connection establishment or at the last TA update.
-
-1.	The source gNB configures the UE measurement procedures and the UE reports according to the measurement configuration.
-
-Handover Preparation:
-
-2.	The source gNB decides to handover the UE, based on MeasurementReport.
-
-3.	The source gNB issues a Handover Request message to the target gNB passing a transparent RRC container with necessary information to prepare the handover at the target side. The information includes at least the target cell ID, KgNB*, the C-RNTI of the UE in the source gNB, RRM-configuration including UE inactive time, basic AS-configuration including antenna Info and DL Carrier Frequency, the current QoS flow to DRB mapping rules applied to the UE, the SIB1 information from source gNB, the UE capabilities for different RATs, PDU session related information, and can include the UE reported measurement information including beam-related information if available. The PDU session related information includes the slice information and QoS flow level QoS profile(s).
-
-4.	Admission Control may be performed by the target gNB. Slice-aware admission control shall be performed if the slice information is sent to the target gNB. If the PDU sessions are associated with non-supported slices the target gNB shall reject such PDU Sessions.
-
-5.	The target gNB prepares the handover with L1/L2 and sends the HANDOVER REQUEST ACKNOWLEDGE to the source gNB, which includes a transparent container to be sent to the UE as an RRC message to perform the handover.
-
-NOTE 2:	As soon as the source gNB receives the HANDOVER REQUEST ACKNOWLEDGE, or as soon as the transmission of the handover command is initiated in the downlink, data forwarding may be initiated by source gNB.
-
-Handover Execution:
-
-6.	The source gNB triggers the Uu handover by sending an RRCReconfiguration message to the UE, containing the information required to access the target cell: at least the target cell ID, the new C-RNTI, the target gNB security algorithm identifiers for the selected security algorithms. It can also include a set of dedicated RACH resources, the association between RACH resources and SSB(s), the association between RACH resources and UE-specific CSI-RS configuration(s), common RACH resources, and system information of the target cell, etc.
-
-7.	The source gNB sends the SN STATUS TRANSFER message to the target gNB to convey the uplink PDCP SN receiver status and the downlink PDCP SN transmitter status of DRBs for which PDCP status preservation applies (i.e. for RLC AM). The uplink PDCP SN receiver status includes at least the PDCP SN of the first missing UL PDCP SDU and may include a bit map of the receive status of the out of sequence UL PDCP SDUs that the UE needs to retransmit in the target cell, if any. The downlink PDCP SN transmitter status indicates the next PDCP SN that the target gNB shall assign to new PDCP SDUs, not having a PDCP SN yet.
-
-8.	The UE synchronises to the target cell and completes the RRC handover procedure by sending RRCReconfigurationComplete message to target gNB. The UE releases the source resources and configurations and stops DL/UL reception/transmission with the source upon receiving an explicit release from the target node.
-
-9.	The target gNB sends a PATH SWITCH REQUEST message to AMF to trigger 5GC to switch the DL data path towards the target gNB and to establish an NG-C interface instance towards the target gNB.
-
-10.	5GC switches the DL data path towards the target gNB. The UPF sends one or more "end marker" packets on the old path to the source gNB per PDU session/tunnel and then can release any U-plane/TNL resources towards the source gNB.
-
-11.	The AMF confirms the PATH SWITCH REQUEST message with the PATH SWITCH REQUEST ACKNOWLEDGE message.
-
-12.	Upon reception of the PATH SWITCH REQUEST ACKNOWLEDGE message from the AMF, the target gNB sends the UE CONTEXT RELEASE to inform the source gNB about the success of the handover. The source gNB can then release radio and C-plane related resources associated to the UE context. Any ongoing data forwarding may continue.
-
-User Plane:
-
-The U-plane handling during the Intra-NR-Access mobility activity for UEs in RRC_CONNECTED takes the following principles into account to avoid data loss during HO:
--	During HO preparation, U-plane tunnels can be established between the source gNB and the target gNB;
--	During HO execution, user data can be forwarded from the source gNB to the target gNB;
--	Forwarding should take place in order as long as packets are received at the source gNB from the UPF or the source gNB buffer has not been emptied.
--	During HO completion, the target gNB sends a path switch request message to the AMF to inform that the UE has gained access and the AMF then triggers path switch related 5GC internal signalling and actual path switch of the source gNB to the target gNB in UPF;
--	The source gNB should continue forwarding data as long as packets are received at the source gNB from the UPF or the source gNB buffer has not been emptied.
 
 
 ## Xn Handover - Conditional Handover Procedure

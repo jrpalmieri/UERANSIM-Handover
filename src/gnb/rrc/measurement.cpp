@@ -929,10 +929,9 @@ void GnbRrcTask::receiveRrcReconfigurationComplete(int64_t ueId, int cRnti,
     auto itPending = m_handoversPending.find(resolvedUeId);
     bool matchedPending =
         itPending != m_handoversPending.end() &&
-        itPending->second != nullptr &&
-        itPending->second->ctx != nullptr &&
-        itPending->second->txId == txId &&
-        (cRnti <= 0 || itPending->second->ctx->cRnti == cRnti);
+        itPending->second.ctx != nullptr &&
+        itPending->second.rrcReconfigurationTxId == txId &&
+        (cRnti <= 0 || itPending->second.ctx->cRnti == cRnti);
 
     // if matchedPending is False, this either isn't associated with a pending handover, or its got a bad UEID
     //   We check the cRNTI and txId against the pending handovers to see if we can find a match 
@@ -942,11 +941,11 @@ void GnbRrcTask::receiveRrcReconfigurationComplete(int64_t ueId, int cRnti,
         // If UE ID was mis-associated on UL delivery, remap using (txId, cRnti).
         for (auto it = m_handoversPending.begin(); it != m_handoversPending.end(); ++it)
         {
-            auto *pending = it->second;
-            if (!pending || !pending->ctx)
+            auto &pending = it->second;
+            if (!pending.ctx)
                 continue;
 
-            if (pending->txId == txId && pending->ctx->cRnti == cRnti)
+            if (pending.rrcReconfigurationTxId == txId && pending.ctx->cRnti == cRnti)
             {
                 resolvedUeId = it->first;
                 itPending = it;
@@ -974,7 +973,7 @@ void GnbRrcTask::receiveRrcReconfigurationComplete(int64_t ueId, int cRnti,
         /* move the ctx from pending handover to UE context */
 
         // get ptr to rrc context in the pending handover map (indexed by UE ID)
-        auto *handoverCtx = itPending->second->ctx;
+        auto *handoverCtx = itPending->second.ctx;
 
         // check for old UE context with the same UE ID, if exists, remove it 
         // (since after handover completion, the old UE context is no longer valid)

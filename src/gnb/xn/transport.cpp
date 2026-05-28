@@ -55,25 +55,25 @@ void XnTask::xnHandleSctpMessage(int gnbId, uint16_t stream, const UniqueBuffer 
         switch (xnProcCode(pdu->choice.initiatingMessage))
         {
         case XN_PROC_HANDOVER_PREPARATION:
-            xnHandoverRequestTarget(gnbId, pdu);
+            receiveHandoverRequest(gnbId, pdu);
             break;
         case XN_PROC_SN_STATUS_TRANSFER:
-            xnSnStatusTransferTarget(gnbId, pdu);
+            receiveSnStatusTransfer(gnbId, pdu);
             break;
         case XN_PROC_HANDOVER_CANCEL:
             xnHandoverCancelTarget(gnbId, pdu);
             break;
         case XN_PROC_UE_CONTEXT_RELEASE:
-            xnUeContextReleaseSource(gnbId, pdu);
+            receiveUeContextRelease(gnbId, pdu);
             break;
         case XN_PROC_XN_SETUP:
             xnSetupRequestReceive(gnbId, pdu);
             break;
         case XN_PROC_HANDOVER_SUCCESS:
-            xnHandoverSuccessSource(gnbId, pdu);
+            receiveHandoverSuccess(gnbId, pdu);
             break;
         case XN_PROC_CONDITIONAL_HO_CANCEL:
-            xnConditionalHandoverCancelTarget(gnbId, pdu);
+            xnHandoverCancelTarget(gnbId, pdu);
             break;
         default:
             m_logger->warn("Unhandled XnAP initiating procedureCode=%ld from gnbId=%d",
@@ -93,7 +93,7 @@ void XnTask::xnHandleSctpMessage(int gnbId, uint16_t stream, const UniqueBuffer 
         switch (xnProcCode(pdu->choice.successfulOutcome))
         {
         case XN_PROC_HANDOVER_PREPARATION:
-            xnHandoverRequestAckSource(gnbId, pdu);
+            receiveHandoverRequestAck(gnbId, pdu);
             break;
         case XN_PROC_XN_SETUP:
             xnSetupResponseReceive(gnbId, pdu);
@@ -116,7 +116,7 @@ void XnTask::xnHandleSctpMessage(int gnbId, uint16_t stream, const UniqueBuffer 
         switch (xnProcCode(pdu->choice.unsuccessfulOutcome))
         {
         case XN_PROC_HANDOVER_PREPARATION:
-            xnHandoverPreparationFailureSource(gnbId, pdu);
+            receiveHandoverPreparationFailure(gnbId, pdu);
             break;
         case XN_PROC_XN_SETUP:
             xnSetupFailureReceive(gnbId, pdu);

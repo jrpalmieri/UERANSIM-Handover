@@ -75,6 +75,8 @@
 #include <asn/rrc/ASN_RRC_HandoverPreparationInformation.h>
 #include <asn/rrc/ASN_RRC_HandoverPreparationInformation-IEs.h>
 
+
+
 #include <asn/xnap/ASN_XNAP_Cause.h>
 
 #include <cmath>
@@ -95,6 +97,8 @@ static constexpr int MAX_COND_RECONFIG_ID = 8;
 
 namespace nr::gnb
 {
+
+static RrcUeContext *DecodeCustomRrcContext(const OctetString &data);
 
 using HandoverEventType = nr::rrc::common::HandoverEventType;
 using nr::rrc::common::ReportConfigEvent;
@@ -528,10 +532,11 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
     
     long rrcTxId = ue->getNextTid();
     int t304Ms = 1000; // default T304 value to include in the RRCReconfiguration
-    auto rrcContainer = makeTargetToSourceTransparentContainer(ue->ueId, ue->cRnti, t304Ms, rrcTxId);
+    auto targetContainer = makeTargetToSourceTransparentContainer(ue->ueId, ue->cRnti, t304Ms, rrcTxId);
+    if (!targetContainer)
     {
         m_logger->err("handleHandoverRequest: Failed to create target-to-source RRC Container for UE[%ld]", ue->ueId);
-        return; 
+        return;
     }
 
     // store in pending handover map keyed by ueId
@@ -548,18 +553,18 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
     {
         auto w = std::make_unique<NmGnbRrcToXn>(NmGnbRrcToXn::HANDOVER_REQUEST_ACK_SEND);
         w->ueId = ue->ueId;
-        w->rrcContainer = std::move(rrcContainer);
+        w->rrcContainer = std::move(targetContainer);
         w->xnTxId = transactionId;
         w->admittedSessions = std::move(admittedSessions);
-        w->rejectedSessions = nullptr; // for now we don't have any failed sessions, but this is where we would indicate them if we did
-        m_base->xnTask->push(std::move(w)); 
+        w->rejectedSessions = nullptr;
+        m_base->xnTask->push(std::move(w));
     }
     else if (requestingTask == EReqestingTask::NGAP)
     {
         auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_REQUEST_ACK_SEND);
         w->ueId = ue->ueId;
         w->ngapTxId = transactionId;
-        w->rrcContainer = std::move(rrcContainer);
+        w->rrcContainer = std::move(targetContainer);
         w->admittedSessions = std::move(admittedSessions);
         w->rejectedSessions = nullptr;
         m_base->ngapTask->push(std::move(w));
@@ -1199,7 +1204,7 @@ std::unique_ptr<OctetString> GnbRrcTask::makeTargetToSourceTransparentContainer(
                    m_logger->debug("UE[%ld] buildHandoverCommandForTransfer: encoded RRCReconfiguration size=%dB txId=%ld",
                     ueId, encoded.length(), rrcTxId);
 
-    return std::make_unique<OctetString>(encoded);
+    return std::make_unique<OctetString>(std::move(encoded));
 }
 
 /**

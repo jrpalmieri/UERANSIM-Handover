@@ -153,9 +153,9 @@ void NgapTask::sendNgapUeAssociated(int64_t ueId, ASN_NGAP_NGAP_PDU *pdu)
     {
         // match against ueId field in the pending handover structures
         auto it = std::find_if(m_handoversPending.begin(), m_handoversPending.end(),
-                               [ueId](const auto &pair) { return pair.second->ueId == ueId; });
+                               [ueId](const auto &pair) { return pair.second.ueId == ueId; });
         if (it != m_handoversPending.end())
-            ue = it->second->ctx.get();
+            ue = it->second.ctx.get();
     }
 
     if (ue == nullptr)

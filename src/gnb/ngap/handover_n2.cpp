@@ -717,8 +717,25 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg, 
     ue->uplinkStream = stream;
     ue->downlinkStream = stream;
 
-    // add any context items provided in the message IEs
-    makeNgapContextItems(ue.get(), msg);
+    // Extract AMBR from HandoverRequest
+    if (auto *ie = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UEAggregateMaximumBitRate))
+    {
+        ue->ueAmbr.dlAmbr = asn::GetUnsigned64(ie->UEAggregateMaximumBitRate.uEAggregateMaximumBitRateDL) / 8ull;
+        ue->ueAmbr.ulAmbr = asn::GetUnsigned64(ie->UEAggregateMaximumBitRate.uEAggregateMaximumBitRateUL) / 8ull;
+    }
+
+    // Extract UE Security Capabilities from HandoverRequest
+    if (auto *ie = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UESecurityCapabilities))
+    {
+        ue->ueSecInfo.nRencryptionAlgorithmsBitmap =
+            static_cast<uint16_t>(asn::GetOctetString(ie->UESecurityCapabilities.nRencryptionAlgorithms).get4UI(0));
+        ue->ueSecInfo.eUTRAencryptionAlgorithmsBitmap =
+            static_cast<uint16_t>(asn::GetOctetString(ie->UESecurityCapabilities.eUTRAencryptionAlgorithms).get4UI(0));
+        ue->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap =
+            static_cast<uint16_t>(asn::GetOctetString(ie->UESecurityCapabilities.nRintegrityProtectionAlgorithms).get4UI(0));
+        ue->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap =
+            static_cast<uint16_t>(asn::GetOctetString(ie->UESecurityCapabilities.eUTRAintegrityProtectionAlgorithms).get4UI(0));
+    }
 
     // Create a list to store the PDU session resources for RRC message
     auto sessionList = std::make_unique<std::vector<PduSessionResource>>();

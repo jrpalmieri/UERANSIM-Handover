@@ -157,7 +157,7 @@ class NgapTask : public NtsTask
     void receiveContextRelease(int amfId, ASN_NGAP_UEContextReleaseCommand *msg);
     void receiveContextModification(int amfId, ASN_NGAP_UEContextModificationRequest *msg);
     void sendContextRelease(int64_t ueId, NgapCause cause);
-    void makeNgapContextItems(NgapUeContext *ue, void *ie);
+    void makeNgapContextItems(NgapUeContext *ue, ASN_NGAP_InitialContextSetupRequest *ie);
     void makeNgapPduSessionItems(PduSessionResource *resource,
                                   ASN_NGAP_PDUSessionResourceSetupRequestTransfer *transfer);
 

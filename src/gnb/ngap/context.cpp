@@ -19,6 +19,7 @@
 #include <asn/ngap/ASN_NGAP_AssociatedQosFlowList.h>
 #include <asn/ngap/ASN_NGAP_GTPTunnel.h>
 #include <asn/ngap/ASN_NGAP_InitialContextSetupRequest.h>
+#include <asn/ngap/ASN_NGAP_HandoverRequest.h>
 #include <asn/ngap/ASN_NGAP_InitialContextSetupResponse.h>
 #include <asn/ngap/ASN_NGAP_NGAP-PDU.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceFailedToSetupItemCxtRes.h>
@@ -407,10 +408,7 @@ void NgapTask::sendContextRelease(int64_t ueId, NgapCause cause)
 }
 
 
-// populates the provied Ngap UE context with the information from the given IE
-// IE is specified as VOID* because it can come from different types of NGAP messages
-//  The GetProtocolIE function handles the IE based on its type and extracts the relevant information
-void NgapTask::makeNgapContextItems(NgapUeContext *ue, void *ie)
+void NgapTask::makeNgapContextItems(NgapUeContext *ue, ASN_NGAP_InitialContextSetupRequest *ie)
 {
 
     // Extract Aggregate Maximum Bit Rate
@@ -466,6 +464,7 @@ void NgapTask::makeNgapContextItems(NgapUeContext *ue, void *ie)
     }
 
 }
+
 
 void NgapTask::makeNgapPduSessionItems(PduSessionResource *resource,
                                         ASN_NGAP_PDUSessionResourceSetupRequestTransfer *transfer)
