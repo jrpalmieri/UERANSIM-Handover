@@ -59,15 +59,15 @@ void XnTask::onLoop()
             break;
         }
         case NmGnbRrcToXn::HANDOVER_REQUEST_ACK_SEND:
-            sendHandoverRequestAck(w.ueId, w.targetNci, w.isCho, std::move(w.rrcContainer));
-            break;
-        case NmGnbRrcToXn::HANDOVER_CANCEL_SEND:
-            xnHandoverCancelSource(w.ueId, w.targetNci, w.isCho);
+            sendHandoverRequestAck(w.xnTxId, w.ueId, std::move(w.rrcContainer), std::move(w.admittedSessions), std::move(w.rejectedSessions));
             break;
         case NmGnbRrcToXn::HANDOVER_PREPARATION_FAILURE_SEND:
-            sendHandoverPreparationFailure(w.ueId, w.targetNci, w.isCho, w.reason);
+            sendHandoverPreparationFailure(w.xnTxId, w.reason);
             break;
-        case NmGnbRrcToXn::UE_CONTEXT_RELEASE_SEND:
+         case NmGnbRrcToXn::HANDOVER_CANCEL_SEND:
+            xnHandoverCancelSource(w.ueId, w.targetNci, w.isCho);
+            break;
+       case NmGnbRrcToXn::UE_CONTEXT_RELEASE_SEND:
             sendUeContextRelease(w.ueId, w.targetNci);
             break;
         case NmGnbRrcToXn::SN_STATUS_TRANSFER_SEND:

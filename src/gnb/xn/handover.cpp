@@ -7,6 +7,7 @@
 #include <gnb/ngap/task.hpp>
 #include <gnb/gtp/utils.hpp>
 #include <lib/asn/utils.hpp>
+#include <utils/common.hpp>
 
 #include <asn/ngap/ASN_NGAP_QosFlowSetupRequestItem.h>
 #include <asn/ngap/ASN_NGAP_QosCharacteristics.h>
@@ -23,8 +24,10 @@ extern "C"
 #include <ASN_XNAP_ProtocolIE-Field.h>
 #include <ASN_XNAP_ProtocolIE-Container.h>
 
-// IE type headers for HandoverRequest
+// IE type headers for HandoverRequest and HandoverRequestAcknowledge
 #include <ASN_XNAP_HandoverRequest.h>
+#include <ASN_XNAP_HandoverRequestAcknowledge.h>
+#include <ASN_XNAP_SuccessfulOutcome.h>
 #include <ASN_XNAP_NG-RANnodeUEXnAPID.h>
 #include <ASN_XNAP_Cause.h>
 #include <ASN_XNAP_Target-CGI.h>
@@ -55,6 +58,18 @@ extern "C"
 #include <ASN_XNAP_UEHistoryInformation.h>
 #include <ASN_XNAP_LastVisitedCell-Item.h>
 #include <ASN_XNAP_LastVisitedNGRANCellInformation.h>
+
+// IE type headers for HandoverRequestAcknowledge
+#include <ASN_XNAP_PDUSessionResourcesAdmitted-List.h>
+#include <ASN_XNAP_PDUSessionResourcesAdmitted-Item.h>
+#include <ASN_XNAP_PDUSessionResourceAdmittedInfo.h>
+#include <ASN_XNAP_QoSFlowsAdmitted-List.h>
+#include <ASN_XNAP_QoSFlowsAdmitted-Item.h>
+#include <ASN_XNAP_DataForwardingInfoFromTargetNGRANnode.h>
+#include <ASN_XNAP_QoSFLowsAcceptedToBeForwarded-List.h>
+#include <ASN_XNAP_QoSFLowsAcceptedToBeForwarded-Item.h>
+#include <ASN_XNAP_PDUSessionResourcesNotAdmitted-List.h>
+#include <ASN_XNAP_PDUSessionResourcesNotAdmitted-Item.h>
 }
 
 namespace nr::gnb
@@ -114,6 +129,14 @@ static constexpr long XNAP_IE_targetCellGlobalID            = 78; // id-targetCe
 static constexpr long XNAP_IE_GUAMI                         = 15; // id-GUAMI
 static constexpr long XNAP_IE_UEContextInfoHORequest        = 83; // id-UEContextInfoHORequest
 static constexpr long XNAP_IE_UEHistoryInformation          = 88; // id-UEHistoryInformation
+
+// -----------------------------------------------------------------------
+// IE IDs for HandoverRequestAcknowledge (TS 38.423 / XnAP rel-18)
+// -----------------------------------------------------------------------
+static constexpr long XNAP_IE_targetNG_RAN_node_UE_XnAP_ID      = 79; // id-targetNG-RANnodeUEXnAPID
+static constexpr long XNAP_IE_PDUSessionResourcesAdmitted_List  = 42; // id-PDUSessionResourcesAdmitted-List
+static constexpr long XNAP_IE_PDUSessionResourcesNotAdmitted    = 43; // id-PDUSessionResourcesNotAdmitted-List
+static constexpr long XNAP_IE_Target2SourceTranspContainer      = 77; // id-Target2SourceNG-RANnodeTranspContainer
 
 // Helper: pack a typed ASN.1 value into the open ANY field of a ProtocolIE-Field via APER.
 static bool setHoIeValue(ASN_XNAP_ProtocolIE_Field_14202P0_t *ie,
@@ -641,6 +664,7 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci, bool isCho, st
 // Called from SCTP msg handler.
 void XnTask::receiveHandoverRequest(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 {
+    // pull the next transaction ID 
     uint32_t xnTxId = m_nextXnTxId++;
 
     // Validate outer PDU structure.
@@ -665,32 +689,49 @@ void XnTask::receiveHandoverRequest(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
         return;
     }
 
-    // Iterate IEs to find UEContextInfoHORequest (id=83) and extract rrc-Context.
+    // Iterate IEs
+    int64_t sourceUeXnApId = 0;
     std::unique_ptr<OctetString> rrcContainer;
 
     for (int i = 0; i < hoReq->protocolIEs.list.count; ++i)
     {
         auto *ie = hoReq->protocolIEs.list.array[i];
-        if (!ie || ie->id != XNAP_IE_UEContextInfoHORequest || !ie->value.buf)
+        if (!ie || !ie->value.buf)
             continue;
 
-        auto *ueCtxInfo = xnap_encode::Decode<ASN_XNAP_UEContextInfoHORequest_t>(
-            asn_DEF_ASN_XNAP_UEContextInfoHORequest,
-            reinterpret_cast<const uint8_t *>(ie->value.buf),
-            static_cast<size_t>(ie->value.size));
-        if (!ueCtxInfo)
+        // extract sourceNG-RANnodeUEXnAPID (id=73)
+        if (ie->id == XNAP_IE_sourceNG_RAN_node_UE_XnAP_ID)
         {
-            m_logger->err("receiveHandoverRequest: failed to decode UEContextInfoHORequest from gnbId=%d", gnbId);
-            break;
+            auto *srcId = xnap_encode::Decode<ASN_XNAP_NG_RANnodeUEXnAPID_t>(
+                asn_DEF_ASN_XNAP_NG_RANnodeUEXnAPID,
+                reinterpret_cast<const uint8_t *>(ie->value.buf),
+                static_cast<size_t>(ie->value.size));
+            if (srcId)
+            {
+                sourceUeXnApId = static_cast<int64_t>(*srcId);
+                asn::Free(asn_DEF_ASN_XNAP_NG_RANnodeUEXnAPID, srcId);
+            }
         }
+        // extract UEContextInfoHORequest (id=83)
+        else if (ie->id == XNAP_IE_UEContextInfoHORequest)
+        {
+            auto *ueCtxInfo = xnap_encode::Decode<ASN_XNAP_UEContextInfoHORequest_t>(
+                asn_DEF_ASN_XNAP_UEContextInfoHORequest,
+                reinterpret_cast<const uint8_t *>(ie->value.buf),
+                static_cast<size_t>(ie->value.size));
+            if (!ueCtxInfo)
+            {
+                m_logger->err("receiveHandoverRequest: failed to decode UEContextInfoHORequest from gnbId=%d", gnbId);
+                continue;
+            }
 
-        if (ueCtxInfo->rrc_Context.buf && ueCtxInfo->rrc_Context.size > 0)
-            rrcContainer = std::make_unique<OctetString>(
-                OctetString::FromArray(ueCtxInfo->rrc_Context.buf,
-                                       static_cast<size_t>(ueCtxInfo->rrc_Context.size)));
+            if (ueCtxInfo->rrc_Context.buf && ueCtxInfo->rrc_Context.size > 0)
+                rrcContainer = std::make_unique<OctetString>(
+                    OctetString::FromArray(ueCtxInfo->rrc_Context.buf,
+                                           static_cast<size_t>(ueCtxInfo->rrc_Context.size)));
 
-        asn::Free(asn_DEF_ASN_XNAP_UEContextInfoHORequest, ueCtxInfo);
-        break;
+            asn::Free(asn_DEF_ASN_XNAP_UEContextInfoHORequest, ueCtxInfo);
+        }
     }
 
     asn::Free(asn_DEF_ASN_XNAP_HandoverRequest, hoReq);
@@ -699,6 +740,18 @@ void XnTask::receiveHandoverRequest(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     {
         m_logger->err("receiveHandoverRequest: missing or empty rrc-Context from gnbId=%d", gnbId);
         return;
+    }
+
+    // Record this pending request so sendHandoverRequestAck can route the response.
+    {
+        XnPendingHandover pending{};
+        pending.xnTxId       = xnTxId;
+        pending.ueId         = 0; // filled when RRC sends the Ack back
+        pending.sourceGnbId  = gnbId;
+        pending.sourceUeXnApId = sourceUeXnApId;
+        pending.isCho        = false;
+        pending.timestamp    = static_cast<uint64_t>(utils::CurrentTimeMillis());
+        m_pendingRequests.push_back(pending);
     }
 
     // Send XnToRrc msg to RRC task. xnTxId correlates when the response is returned.
@@ -710,7 +763,317 @@ void XnTask::receiveHandoverRequest(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 }
 
 
+// called from an RrcToXn msg to acknowledge the HandoverRequest.
+//  Msg passes the RRC Reconfiguration container with the HO command for the UE.
+void XnTask::sendHandoverRequestAck(uint32_t xnTxId, uint64_t ueId,
+    std::unique_ptr<OctetString> rrcContainer,
+    std::unique_ptr<std::vector<PduSessionResource>> admittedSessions,
+    std::unique_ptr<std::vector<PduSessionResource>> rejectedSessions)
+{
+    // -----------------------------------------------------------------------
+    // 1. Look up pending handover entry by xnTxId to get routing info.
+    // -----------------------------------------------------------------------
+    XnPendingHandover *pending = nullptr;
+    for (auto &p : m_pendingRequests)
+    {
+        if (p.xnTxId == xnTxId)
+        {
+            pending = &p;
+            break;
+        }
+    }
 
+    if (!pending)
+    {
+        m_logger->err("sendHandoverRequestAck: no pending entry for xnTxId=%u", xnTxId);
+        return;
+    }
+
+    int sourceGnbId      = pending->sourceGnbId;
+    int64_t targetUeId   = ueId;
+    int64_t srcUeXnApId  = pending->sourceUeXnApId;
+
+    // confirm the source gNB is still connected by xN
+    XnPeerInfo *sourcePeer = m_xnPeerTable.getPeerInfo(sourceGnbId);
+    if (!sourcePeer)
+    {
+        m_logger->err("sendHandoverRequestAck: no peer for sourceGnbId=%d xnTxId=%u",
+                      sourceGnbId, xnTxId);
+        return;
+    }
+
+    if (sourcePeer->connectionState != EXnConnectionState::CONNECTED)
+    {
+        m_logger->err("sendHandoverRequestAck: peer gnbId=%d not CONNECTED, dropping Ack for xnTxId=%u",
+                      sourceGnbId, xnTxId);
+        return;
+    }
+
+    const GnbConfig *cfg = m_base->config;
+    std::string gtpIp = cfg->gtpAdvertiseIp.value_or(cfg->gtpIp);
+
+    // -----------------------------------------------------------------------
+    // IE 1 — sourceNG-RANnodeUEXnAPID  (id=73, mandatory, criticality=ignore)
+    //   Echo the source gNB's UE XnAP ID back so it can correlate the Ack.
+    // -----------------------------------------------------------------------
+    auto srcUeId = static_cast<ASN_XNAP_NG_RANnodeUEXnAPID_t>(srcUeXnApId);
+
+    auto *ieSrcUeId = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    ieSrcUeId->id          = XNAP_IE_sourceNG_RAN_node_UE_XnAP_ID;
+    ieSrcUeId->criticality = ASN_XNAP_Criticality_ignore;
+    if (!setHoIeValue(ieSrcUeId, &asn_DEF_ASN_XNAP_NG_RANnodeUEXnAPID, &srcUeId))
+    {
+        m_logger->err("sendHandoverRequestAck: failed to encode sourceNG-RANnodeUEXnAPID");
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieSrcUeId);
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // IE 2 — targetNG-RANnodeUEXnAPID  (id=79, mandatory, criticality=ignore)
+    //   The target gNB's handle for this UE on the Xn interface.
+    // -----------------------------------------------------------------------
+    auto tgtUeId = static_cast<ASN_XNAP_NG_RANnodeUEXnAPID_t>(targetUeId);
+
+    auto *ieTgtUeId = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    ieTgtUeId->id          = XNAP_IE_targetNG_RAN_node_UE_XnAP_ID;
+    ieTgtUeId->criticality = ASN_XNAP_Criticality_ignore;
+    if (!setHoIeValue(ieTgtUeId, &asn_DEF_ASN_XNAP_NG_RANnodeUEXnAPID, &tgtUeId))
+    {
+        m_logger->err("sendHandoverRequestAck: failed to encode targetNG-RANnodeUEXnAPID");
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieTgtUeId);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieSrcUeId);
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // IE 3 — PDUSessionResourcesAdmitted-List  (id=42, mandatory, criticality=ignore)
+    //   For each admitted PDU session, allocate a DL Xn-U forwarding tunnel
+    //   and list the admitted QoS flows.
+    // -----------------------------------------------------------------------
+    auto *admittedList = asn::New<ASN_XNAP_PDUSessionResourcesAdmitted_List_t>();
+
+    if (admittedSessions)
+    {
+        for (auto &resource : *admittedSessions)
+        {
+            // Allocate a DL forwarding TEID for the Xn-U interface.
+            // TODO: register this tunnel with the GTP task once XN→GTP messaging is in place.
+            uint32_t dlTeid = ++m_xnDownlinkTeidCounter;
+
+            // Build QoS flows admitted list and forwarding-accepted list in one pass.
+            auto *admittedInfo = asn::New<ASN_XNAP_PDUSessionResourceAdmittedInfo_t>();
+
+            auto *fwdInfo = asn::New<ASN_XNAP_DataForwardingInfoFromTargetNGRANnode_t>();
+
+            bool addedFlow = false;
+            if (resource.qosFlows && resource.qosFlows->list.count > 0)
+            {
+                for (int iFlow = 0; iFlow < resource.qosFlows->list.count; iFlow++)
+                {
+                    auto *ngapFlow = resource.qosFlows->list.array[iFlow];
+                    if (!ngapFlow) continue;
+
+                    long qfi = static_cast<long>(ngapFlow->qosFlowIdentifier);
+
+                    auto *admittedItem = asn::New<ASN_XNAP_QoSFlowsAdmitted_Item_t>();
+                    admittedItem->qfi = qfi;
+                    asn::SequenceAdd(admittedInfo->qosFlowsAdmitted_List, admittedItem);
+
+                    auto *fwdItem = asn::New<ASN_XNAP_QoSFLowsAcceptedToBeForwarded_Item_t>();
+                    fwdItem->qosFlowIdentifier = qfi;
+                    asn::SequenceAdd(fwdInfo->qosFlowsAcceptedForDataForwarding_List, fwdItem);
+
+                    addedFlow = true;
+                }
+            }
+
+            if (!addedFlow)
+            {
+                // Fallback: a single default QFI=1 flow when no NGAP flows are present.
+                auto *admittedItem = asn::New<ASN_XNAP_QoSFlowsAdmitted_Item_t>();
+                admittedItem->qfi = 1;
+                asn::SequenceAdd(admittedInfo->qosFlowsAdmitted_List, admittedItem);
+
+                auto *fwdItem = asn::New<ASN_XNAP_QoSFLowsAcceptedToBeForwarded_Item_t>();
+                fwdItem->qosFlowIdentifier = 1;
+                asn::SequenceAdd(fwdInfo->qosFlowsAcceptedForDataForwarding_List, fwdItem);
+            }
+
+            // DL data forwarding tunnel endpoint at this (target) gNB.
+            {
+                auto *gtpTunnel = asn::New<ASN_XNAP_GTPtunnelTransportLayerInformation_t>();
+                uint32_t ipBe = 0;
+                {
+                    unsigned a, b, c, d;
+                    if (sscanf(gtpIp.c_str(), "%u.%u.%u.%u", &a, &b, &c, &d) == 4)
+                        ipBe = (a << 24) | (b << 16) | (c << 8) | d;
+                }
+                asn::SetBitString(gtpTunnel->tnl_address, octet4{ipBe}, 32);
+                asn::SetOctetString4(gtpTunnel->gtp_teid, octet4{dlTeid});
+
+                auto *dlFwdTnl = asn::New<ASN_XNAP_UPTransportLayerInformation_t>();
+                dlFwdTnl->present = ASN_XNAP_UPTransportLayerInformation_PR_gtpTunnel;
+                dlFwdTnl->choice.gtpTunnel = gtpTunnel;
+
+                fwdInfo->pduSessionLevelDLDataForwardingInfo = dlFwdTnl;
+            }
+
+            admittedInfo->dataForwardingInfoFromTarget = fwdInfo;
+
+            auto *pduItem = asn::New<ASN_XNAP_PDUSessionResourcesAdmitted_Item_t>();
+            pduItem->pduSessionId = static_cast<ASN_XNAP_PDUSession_ID_t>(resource.psi);
+            pduItem->pduSessionResourceAdmittedInfo = *admittedInfo;
+            free(admittedInfo);
+
+            asn::SequenceAdd(*admittedList, pduItem);
+        }
+    }
+
+    auto *ieAdmitted = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    ieAdmitted->id          = XNAP_IE_PDUSessionResourcesAdmitted_List;
+    ieAdmitted->criticality = ASN_XNAP_Criticality_ignore;
+    if (!setHoIeValue(ieAdmitted, &asn_DEF_ASN_XNAP_PDUSessionResourcesAdmitted_List, admittedList))
+    {
+        m_logger->err("sendHandoverRequestAck: failed to encode PDUSessionResourcesAdmitted-List");
+        asn::Free(asn_DEF_ASN_XNAP_PDUSessionResourcesAdmitted_List, admittedList);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieAdmitted);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieTgtUeId);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieSrcUeId);
+        return;
+    }
+    asn::Free(asn_DEF_ASN_XNAP_PDUSessionResourcesAdmitted_List, admittedList);
+
+    // -----------------------------------------------------------------------
+    // IE 4 — PDUSessionResourcesNotAdmitted-List  (id=43, optional, criticality=ignore)
+    // -----------------------------------------------------------------------
+    ASN_XNAP_ProtocolIE_Field_14202P0_t *ieNotAdmitted = nullptr;
+
+    if (rejectedSessions && !rejectedSessions->empty())
+    {
+        auto *notAdmittedList = asn::New<ASN_XNAP_PDUSessionResourcesNotAdmitted_List_t>();
+
+        for (const auto &resource : *rejectedSessions)
+        {
+            auto *pduItem = asn::New<ASN_XNAP_PDUSessionResourcesNotAdmitted_Item_t>();
+            pduItem->pduSessionId = static_cast<ASN_XNAP_PDUSession_ID_t>(resource.psi);
+            asn::SequenceAdd(*notAdmittedList, pduItem);
+        }
+
+        ieNotAdmitted = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+        ieNotAdmitted->id          = XNAP_IE_PDUSessionResourcesNotAdmitted;
+        ieNotAdmitted->criticality = ASN_XNAP_Criticality_ignore;
+        if (!setHoIeValue(ieNotAdmitted, &asn_DEF_ASN_XNAP_PDUSessionResourcesNotAdmitted_List, notAdmittedList))
+        {
+            m_logger->err("sendHandoverRequestAck: failed to encode PDUSessionResourcesNotAdmitted-List");
+            asn::Free(asn_DEF_ASN_XNAP_PDUSessionResourcesNotAdmitted_List, notAdmittedList);
+            asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieNotAdmitted);
+            ieNotAdmitted = nullptr;
+        }
+        else
+        {
+            asn::Free(asn_DEF_ASN_XNAP_PDUSessionResourcesNotAdmitted_List, notAdmittedList);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // IE 5 — Target2SourceNG-RANnodeTranspContainer  (id=77, mandatory, criticality=ignore)
+    //   OCTET STRING carrying the RRCReconfiguration (handover command) for the UE.
+    // -----------------------------------------------------------------------
+    OCTET_STRING_t rrcOs{};
+    OCTET_STRING_fromBuf(&rrcOs,
+                         reinterpret_cast<const char *>(rrcContainer->data()),
+                         static_cast<int>(rrcContainer->length()));
+
+    auto *ieRrcContainer = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    ieRrcContainer->id          = XNAP_IE_Target2SourceTranspContainer;
+    ieRrcContainer->criticality = ASN_XNAP_Criticality_ignore;
+    if (!setHoIeValue(ieRrcContainer, &asn_DEF_OCTET_STRING, &rrcOs))
+    {
+        m_logger->err("sendHandoverRequestAck: failed to encode Target2SourceNG-RANnodeTranspContainer");
+        ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_OCTET_STRING, &rrcOs);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieRrcContainer);
+        if (ieNotAdmitted)
+            asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieNotAdmitted);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieAdmitted);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieTgtUeId);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieSrcUeId);
+        return;
+    }
+    ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_OCTET_STRING, &rrcOs);
+
+    // -----------------------------------------------------------------------
+    // Assemble HandoverRequestAcknowledge and wrap in SuccessfulOutcome
+    // -----------------------------------------------------------------------
+    auto *hoAck = asn::New<ASN_XNAP_HandoverRequestAcknowledge_t>();
+    asn::SequenceAdd(hoAck->protocolIEs, ieSrcUeId);
+    asn::SequenceAdd(hoAck->protocolIEs, ieTgtUeId);
+    asn::SequenceAdd(hoAck->protocolIEs, ieAdmitted);
+    if (ieNotAdmitted)
+        asn::SequenceAdd(hoAck->protocolIEs, ieNotAdmitted);
+    asn::SequenceAdd(hoAck->protocolIEs, ieRrcContainer);
+
+    auto *succMsg = asn::New<ASN_XNAP_SuccessfulOutcome_t>();
+    succMsg->procedureCode = XN_PROC_HANDOVER_PREPARATION;
+    succMsg->criticality   = ASN_XNAP_Criticality_reject;
+    if (ANY_fromType_aper(&succMsg->value, &asn_DEF_ASN_XNAP_HandoverRequestAcknowledge, hoAck) != 0)
+    {
+        m_logger->err("sendHandoverRequestAck: failed to encode HandoverRequestAcknowledge into SuccessfulOutcome");
+        asn::Free(asn_DEF_ASN_XNAP_HandoverRequestAcknowledge, hoAck);
+        asn::Free(asn_DEF_ASN_XNAP_SuccessfulOutcome, succMsg);
+        return;
+    }
+    asn::Free(asn_DEF_ASN_XNAP_HandoverRequestAcknowledge, hoAck);
+
+    auto *outerPdu = asn::New<ASN_XNAP_XnAP_PDU_t>();
+    outerPdu->present                  = ASN_XNAP_XnAP_PDU_PR_successfulOutcome;
+    outerPdu->choice.successfulOutcome = succMsg;
+
+    // -----------------------------------------------------------------------
+    // APER-encode and send via SCTP
+    // -----------------------------------------------------------------------
+    ssize_t encoded;
+    uint8_t *buffer;
+    if (!xnap_encode::Encode(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu, encoded, buffer))
+    {
+        m_logger->err("sendHandoverRequestAck: APER encoding failed for xnTxId=%u gnbId=%d",
+                      xnTxId, sourceGnbId);
+        asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu);
+        return;
+    }
+
+    auto streamId = sourcePeer->streamIdManager.allocate();
+    if (!streamId.has_value())
+    {
+        m_logger->err("sendHandoverRequestAck: no free SCTP stream for gnbId=%d xnTxId=%u",
+                      sourceGnbId, xnTxId);
+        delete[] buffer;
+        asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu);
+        return;
+    }
+
+    auto sctpMsg = std::make_unique<NmGnbSctp>(NmGnbSctp::SEND_MESSAGE);
+    sctpMsg->clientId = sourceGnbId;
+    sctpMsg->stream   = streamId.value();
+    sctpMsg->buffer   = UniqueBuffer{buffer, static_cast<size_t>(encoded)};
+    m_base->sctpTask->push(std::move(sctpMsg));
+
+    m_logger->info("XnAP HandoverRequestAcknowledge sent to gnbId=%d for xnTxId=%u ueId=%ld",
+                   sourceGnbId, xnTxId, targetUeId);
+
+    // Remove the pending entry now that the Ack has been sent.
+    m_pendingRequests.erase(
+        std::remove_if(m_pendingRequests.begin(), m_pendingRequests.end(),
+                       [xnTxId](const XnPendingHandover &p){ return p.xnTxId == xnTxId; }),
+        m_pendingRequests.end());
+
+    asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu);
+}
+
+void XnTask::sendHandoverPreparationFailure(uint32_t xnTxId, int reason)
+{
+    m_logger->debug("xnHandoverPreparationFailureTarget xnTxId=%ld reason=%d",
+                    xnTxId, reason);
+}
 
 
 void XnTask::xnHandoverCancelSource(int64_t ueId, int64_t targetNci, bool isCho)
@@ -729,28 +1092,9 @@ void XnTask::sendSnStatusTransfer(int64_t ueId, int64_t targetNci, bool isCho)
 // ---------------------------------------------------------------------------
 
 
-// called from an RrcToXn msg to acknowledge the HandoverRequest.
-//  Msg passes the RRC Reconfiguration container with the HO command for the UE.
-void XnTask::sendHandoverRequestAck(int64_t ueId, int64_t targetNci, bool isCho,
-                                         std::unique_ptr<OctetString> rrcContainer)
-{
-
-    // instruct GTP to setup Xn-U tunnels
-
-    // create XnHandoverRequestAck message with the RRC container
-
-    // send the XnHandoverRequestAck message to the target gNB
 
 
-    m_logger->debug("xnHandoverRequestAckTarget ueId=%ld targetNci=%ld isCho=%d", ueId, targetNci, isCho);
-}
 
-void XnTask::sendHandoverPreparationFailure(int64_t ueId, int64_t targetNci, bool isCho,
-                                                 int reason)
-{
-    m_logger->debug("xnHandoverPreparationFailureTarget ueId=%ld targetNci=%ld reason=%d",
-                    ueId, targetNci, reason);
-}
 
 void XnTask::sendUeContextRelease(int64_t ueId, int64_t targetNci)
 {

@@ -34,8 +34,10 @@ struct XnPendingHandover
 {
     // The XnTxId is used to correlate the handover request with the response
     uint32_t xnTxId;
-    int64_t ueId;
+    int64_t ueId;              // target UE ID; populated when RRC ACK arrives
     int64_t sourceNci;
+    int     sourceGnbId{-1};   // gnbId to route the Ack back to
+    int64_t sourceUeXnApId{0}; // source's UE ID echoed in the Ack
 
     // indicates if this is a conditional handover (CHO) request
     bool isCho;
@@ -58,6 +60,9 @@ class XnTask : public NtsTask
 
     // Next available XnTxId for correlating handover requests and responses
     uint32_t m_nextXnTxId{1};
+
+    // TEID counter for DL Xn-U forwarding tunnels allocated at the target gNB
+    uint32_t m_xnDownlinkTeidCounter{0};
 
     std::vector<XnPendingHandover> m_pendingRequests;
 
@@ -99,10 +104,10 @@ class XnTask : public NtsTask
     
     void sendHandoverRequest(int64_t ueId, int64_t targetNci, bool isCho, std::unique_ptr<GnbHandoverUeContexts> contexts);
     void receiveHandoverRequest(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
-    void sendHandoverRequestAck(int64_t ueId, int64_t targetNci, bool isCho, std::unique_ptr<OctetString> rrcContainer);
+    void sendHandoverRequestAck(uint32_t xnTxId, uint64_t ueId, std::unique_ptr<OctetString> rrcContainer, 
+        std::unique_ptr<std::vector<PduSessionResource>> admittedSessions, std::unique_ptr<std::vector<PduSessionResource>> rejectedSessions);
     void receiveHandoverRequestAck(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
-    void sendHandoverPreparationFailure(int64_t ueId, int64_t targetNci, bool isCho,
-                                            int reason);
+    void sendHandoverPreparationFailure(uint32_t xnTxId, int reason);
     void receiveHandoverPreparationFailure(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
 
       /* Handover - Phase 2 (execution) */
