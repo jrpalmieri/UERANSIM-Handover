@@ -70,11 +70,10 @@ void NgapTask::onLoop()
             handleRadioLinkFailure(w.ueId);
             break;
         }
-        // RRC (target gnb) notifies NGAP of handover completion (RRCReconfigComplete). NGAP will notify AMF with HANDOVER_NOTIFY.
+        // RRC (target gnb) notifies NGAP of handover completion. NGAP will notify AMF with NGAP HANDOVER NOTIFY.
         //      AMF will notify source gnb to delete UE context.
-        case NmGnbRrcToNgap::HANDOVER_NOTIFY: {
-            m_logger->info("UE[%ld] Handover complete notification from RRC", w.ueId);
-            handleHandoverNotifyFromRrc(w.ueId);
+        case NmGnbRrcToNgap::HANDOVER_NOTIFY_SEND: {
+            sendHandoverNotify(w.ueId);
             break;
         }
         // RRC (source gnb) notifies NGAP of handover start. NGAP will notify AMF with HANDOVER_REQUIRED.
@@ -90,13 +89,13 @@ void NgapTask::onLoop()
                 deferred->ueId = w.ueId;
                 deferred->hoTargetNci = w.hoTargetNci;
                 deferred->hoCause = w.hoCause;
-                deferred->hoForChoPreparation = w.hoForChoPreparation;
+                deferred->choParams = std::move(w.choParams);
                 deferred->rrcContainer = std::move(w.rrcContainer);
                 deferred->retries = w.retries;
                 enqueueDeferred(std::move(deferred));
                 break;
             }
-            sendHandoverRequired(w.ueId, w.hoTargetNci, w.hoCause, w.hoForChoPreparation, std::move(w.rrcContainer));
+            sendHandoverRequired(w.ueId, w.hoTargetNci, w.hoCause, w.choParams != nullptr, std::move(w.rrcContainer));
             break;
         }
         case NmGnbRrcToNgap::PATH_SWITCH_REQUEST: {
@@ -164,7 +163,7 @@ void NgapTask::processDeferredQueue()
 
         if (m_ueCtx.count(msg->ueId) && (m_ueCtx[msg->ueId]->amfUeNgapId > 0 && !m_ueCtx[msg->ueId]->pduSessions.empty()))
         {
-            sendHandoverRequired(msg->ueId, msg->hoTargetNci, msg->hoCause, msg->hoForChoPreparation, std::move(msg->rrcContainer));
+            sendHandoverRequired(msg->ueId, msg->hoTargetNci, msg->hoCause, msg->choParams != nullptr, std::move(msg->rrcContainer));
         }
         else if (msg->retries >= DEFERRED_MAX_RETRIES)
         {

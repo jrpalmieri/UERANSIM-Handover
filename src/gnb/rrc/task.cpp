@@ -109,17 +109,12 @@ void GnbRrcTask::onLoop()
             handleDownlinkNasAccept(w.ueId, w.pdu, std::move(w.sessionList));
             break;
         }
-        case NmGnbNgapToRrc::AN_RELEASE: {
-            releaseConnection(w.ueId);
+        case NmGnbNgapToRrc::UE_CONTEXT_RELEASE_RECEIVED: {
+            handleUeContextRelease(w.ueId, w.cause);
             break;
         }
         case NmGnbNgapToRrc::PAGING: {
             handlePaging(w.uePagingTmsi, w.taiListForPaging);
-            break;
-        }
-        // UE context release after handover completion.
-        case NmGnbNgapToRrc::UE_CONTEXT_RELEASE: {
-            handoverContextRelease(w.ueId);
             break;
         }
         // Target gNB received Handover Request from AMF

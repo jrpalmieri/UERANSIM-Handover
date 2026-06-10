@@ -63,7 +63,7 @@ void GtpTask::onLoop()
             handleUeContextUpdate(*w.update);
             break;
         }
-        case NmGnbNgapToGtp::UE_CONTEXT_RELEASE: {
+        case NmGnbNgapToGtp::UE_CONTEXT_RELEASE_RECEIVED: {
             handleUeContextDelete(w.ueId);
             break;
         }
@@ -132,7 +132,11 @@ void GtpTask::handleSessionCreate(PduSessionResource *session)
     updateAmbrForUe(session->ueId);
     updateAmbrForSession(session->ueId, session->psi);
 
-    m_logger->debug("UE[%ld]: PDU session resource created. PSI[%d], DownTunnelId=%d, UpTunnelId=%d", session->ueId, session->psi, session->downTunnel.teid, session->upTunnel.teid);
+    m_logger->debug("UE[%ld]: PDU session resource created. PSI[%d], sNssai SST=%d SD=%s, DownTunnelId=%d, UpTunnelId=%d",
+        session->ueId, session->psi,
+        (int)session->sNssai.sst,
+        session->sNssai.sd.has_value() ? std::to_string((int)(uint32_t)session->sNssai.sd.value()) : "none",
+        session->downTunnel.teid, session->upTunnel.teid);
 
 }
 

@@ -102,7 +102,7 @@ class XnTask : public NtsTask
 
     /* Handover - Phase 1 (Preparation) */
     
-    void sendHandoverRequest(int64_t ueId, int64_t targetNci, bool isCho, std::unique_ptr<GnbHandoverUeContexts> contexts);
+    void sendHandoverRequest(int64_t ueId, int64_t targetNci, std::unique_ptr<GnbHandoverUeContexts> contexts, std::unique_ptr<OctetString> rrcContainer, std::unique_ptr<GnbCondHandoverRequest> choParams);
     void receiveHandoverRequest(int gnbId, ASN_XNAP_XnAP_PDU *pdu);
     void sendHandoverRequestAck(uint32_t xnTxId, uint64_t ueId, std::unique_ptr<OctetString> rrcContainer, 
         std::unique_ptr<std::vector<PduSessionResource>> admittedSessions, std::unique_ptr<std::vector<PduSessionResource>> rejectedSessions);

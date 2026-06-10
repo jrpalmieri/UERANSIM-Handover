@@ -22,7 +22,7 @@ namespace nr::gnb
 void NgapTask::handleRadioLinkFailure(int64_t ueId)
 {
     // Notify GTP task
-    auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_RELEASE);
+    auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_RELEASE_RECEIVED);
     w->ueId = ueId;
     m_base->gtpTask->push(std::move(w));
 

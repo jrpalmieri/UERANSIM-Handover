@@ -465,6 +465,7 @@ void GnbRrcTask::executeBasicHandover(RrcUeContext *ue, long targetNci, int serv
         w->targetNci = targetNci;
         w->rrcContainer = std::move(rrcContainer);
         w->reason = ASN_XNAP_Cause_PR::ASN_XNAP_Cause_PR_radioNetwork;
+        w->choParams = nullptr; 
         m_base->xnTask->push(std::move(w));
 
         m_logger->info("UE[%ld] Xn handover started - handoverRequired sent to NCI. targetNci=%ld", ue->ueId, targetNci);
@@ -477,6 +478,7 @@ void GnbRrcTask::executeBasicHandover(RrcUeContext *ue, long targetNci, int serv
         w->hoTargetNci = targetNci;
         w->hoCause = NgapCause::RadioNetwork_handover_desirable_for_radio_reason;
         w->rrcContainer = std::move(rrcContainer);
+        w->choParams = nullptr;
         m_base->ngapTask->push(std::move(w));
 
         m_logger->info("UE[%ld] N2 Handover started - HandoverRequired sent to NGAP. targetNCI=%ld", ue->ueId, targetNci);
@@ -513,7 +515,7 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
     // depends on whether this is a CHO or not
     int timeoutMs = isCho ? COND_HANDOVER_TIMEOUT_MS : HANDOVER_TIMEOUT_MS;
 
-    // TODO: if NTN enbaled, use SatTime instead
+    // TODO: if NTN enabled, use SatTime instead
     uint64_t expireTime = utils::CurrentTimeMillis() + timeoutMs;
 
     // Here we would do some checking for admission of the PDU sessions.
@@ -527,7 +529,11 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
             admittedSessions->push_back(session);
         }
     }
-    
+
+    // TODO: setup radio bearers for the admitted sessions
+
+
+
     // create the RRCReconfiguration message to send to the UE
     
     long rrcTxId = ue->getNextTid();
@@ -548,9 +554,17 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
         rrcTxId
     };
 
+
     // Send the HANDOVER_REQUEST_ACK back to the requester with the rrcContainer
     if (requestingTask == EReqestingTask::XN)
     {
+
+        // Msg to NGAP to create pending handover CTX and reserve GTP tunnels
+        // TODO
+
+
+        // Msg to Xn to send Handover Request Ack to source gNB
+
         auto w = std::make_unique<NmGnbRrcToXn>(NmGnbRrcToXn::HANDOVER_REQUEST_ACK_SEND);
         w->ueId = ue->ueId;
         w->rrcContainer = std::move(targetContainer);
@@ -561,6 +575,7 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
     }
     else if (requestingTask == EReqestingTask::NGAP)
     {
+        // Msg to NGAP to send Handover Request Ack to AMF
         auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_REQUEST_ACK_SEND);
         w->ueId = ue->ueId;
         w->ngapTxId = transactionId;
@@ -793,16 +808,23 @@ void GnbRrcTask::processConditionalHandover(int64_t ueId, const nr::rrc::common:
     }
     prepState.measIds = usedMeasIds;
 
-    // Send handover required to NGAP with CHO preparation flag for each candidate,
+    // Send handover required to NGAP with CHO preparation for each candidate,
     // so NGAP can prepare each target gNB and reply with CHO commands independently.
 
     for (int64_t targetNci : prepState.candidateNcis)
     {
+        auto choReq = std::make_unique<GnbCondHandoverRequest>();
+        // TODO: setup the CHO request parameters based on score and T1 conditions
+        choReq->choTrigger = 0;
+        choReq->choArrivalProbabilityPercent = static_cast<int>(prepState.candidateScores[targetNci]);
+        choReq->targetNGRANnodeUeXnapId = 0;
+        choReq->maxNumCondReconfigsToPrepare = 0;
+
         auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_REQUIRED);
         w->ueId = ue->ueId;
         w->hoTargetNci = targetNci;
         w->hoCause = NgapCause::RadioNetwork_handover_desirable_for_radio_reason;
-        w->hoForChoPreparation = true;
+        w->choParams = std::move(choReq);
         m_base->ngapTask->push(std::move(w));
     }
 
@@ -1604,24 +1626,6 @@ std::unique_ptr<OctetString> GnbRrcTask::makeSourceToTargetTransparentContainerS
     return std::make_unique<OctetString>(std::move(encoded));
 }
 
-/**
- * @brief Deletes the UE's context due to a successful handover to the target gNB.
- *
- * @param ueId
- */
-void GnbRrcTask::handoverContextRelease(int64_t ueId)
-{
-    auto *ctx = findCtxByUeId(ueId);
-    if (ctx)
-    {
-        releaseCrnti(ctx->cRnti);
-        delete ctx;
-        m_ueCtx.erase(ueId);
-        m_logger->info("UE[%ld] RRC context released", ueId);
-        return;
-    }
 
-    m_logger->warn("UE[%ld] handoverContextRelease: context not found", ueId);
-}
 
 } // namespace gnb

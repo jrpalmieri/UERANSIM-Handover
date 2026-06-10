@@ -756,6 +756,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg, 
             }
 
             sessionList->emplace_back(ue->ctxId, static_cast<int>(item->pDUSessionID));
+            sessionList->back().sNssai = ngap_utils::SnssaiFromAsn(item->s_NSSAI);
             makeNgapPduSessionItems(&sessionList->back(), transfer);
 
             asn::Free(asn_DEF_ASN_NGAP_PDUSessionResourceSetupRequestTransfer, transfer);
@@ -1124,16 +1125,36 @@ void NgapTask::receiveHandoverPreparationFailure(int amfId, ASN_NGAP_HandoverPre
  * @brief target GNB sends a HandoverNotify to the AMF to indicate that the handover has 
  * been completed and the UE is now being served by the target gNB. This allows the AMF 
  * to update its context for the UE and notify the source gNB to release resources associated with the UE. 
+ * Triggered by a message from the RRC task indicating that the UE has successfully connected to the target 
+ * and completed the RRC handover procedure.
  * 
  * @param ueId 
  */
 void NgapTask::sendHandoverNotify(int64_t ueId)
 {
 
+    m_logger->debug("UE[%ld]: sendHandoverNotify - HANDOVER_NOTIFY_SEND received from RRC", ueId);
+
+    // move the UE context from handover pending map to ueCtx map
+    // since the handover pending map is indexed by transaction ID, we need to find the corresponding entry for this UE ID
+    auto it = std::find_if(m_handoversPending.begin(), m_handoversPending.end(),
+                           [ueId](const auto &entry) { return entry.second.ctx && entry.second.ctx->ctxId == ueId; });
+    if (it == m_handoversPending.end())
+    {
+        m_logger->warn("UE[%ld] Ignoring handover complete: no pending NGAP handover context", ueId);
+        return;
+    }
+
+    m_logger->info("UE[%ld]: sendHandoverNotify - activating UE NGAP context, sending HandoverNotify", ueId);
+
+    m_ueCtx[ueId] = it->second.ctx.release();
+    m_handoversPending.erase(it);
+
+    // sanity check - the UE context should now be in the main UE context map
     auto *ue = findUeContext(ueId);
     if (!ue)
     {
-        m_logger->err("sendHandoverNotify: UE context not found UE[%ld] ", ueId);
+        m_logger->err("UE[%ld]: sendHandoverNotify - UE context activation failed", ueId);
         return;
     }
 
@@ -1168,36 +1189,6 @@ void NgapTask::sendHandoverNotify(int64_t ueId)
     sendNgapUeAssociated(ue->ctxId, pdu);
 
     m_logger->info("UE[%ld]: HandoverNotify sent to AMF", ueId);
-}
-
-
-/**
- * @brief Handles handover notify messages received from the RRC task. 
- * Activates the context from the handover pending map.
- * Send the HandoverNotify message to AMF to indicate handover completion. 
- * 
- * @param ueId 
- */
-
-void NgapTask::handleHandoverNotifyFromRrc(int64_t ueId)
-{
-    // move the UE context from handover pending map to ueCtx map
-    // since the handover pending map is indexed by transaction ID, we need to find the corresponding entry for this UE ID
-    auto it = std::find_if(m_handoversPending.begin(), m_handoversPending.end(),
-                           [ueId](const auto &entry) { return entry.second.ctx && entry.second.ctx->ctxId == ueId; });
-    if (it == m_handoversPending.end())
-    {
-        m_logger->warn("UE[%ld] Ignoring handover complete: no pending NGAP handover context", ueId);
-        return;
-    }
-
-    m_logger->info("UE[%ld]: handleHandoverNotify - activating UE NGAP context, sending HandoverNotify", ueId);
-
-    m_ueCtx[ueId] = it->second.ctx.release();
-    m_handoversPending.erase(it);
-
-    // Send HandoverNotify to AMF to indicate handover completion and update UE location.
-    sendHandoverNotify(ueId);
 }
 
 

@@ -185,6 +185,7 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
             }
 
             auto *resource = new PduSessionResource(ue->ctxId, static_cast<int>(item->pDUSessionID));
+            resource->sNssai = ngap_utils::SnssaiFromAsn(item->s_NSSAI);
             makeNgapPduSessionItems(resource, transfer);
 
             // Instructs GTP to setup the UP Tunnel
@@ -304,6 +305,12 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
     m_logger->debug("UE[%ld] Initial Context Setup Response sent to AMF", ue->ctxId);
 }
 
+/*
+ * @brief Handles UE Context Release Command messages received from the AMF.
+ * 
+ * @param amfId - AMF ID sending the message
+ * @param msg - NGAP UEContextRelease message
+ */
 void NgapTask::receiveContextRelease(int amfId, ASN_NGAP_UEContextReleaseCommand *msg)
 {
     m_logger->debug("UE Context Release Command received from AMF[%d]", amfId);
@@ -317,14 +324,23 @@ void NgapTask::receiveContextRelease(int amfId, ASN_NGAP_UEContextReleaseCommand
     
     m_logger->debug("UE[%ld] Context Release Command mapped to UE", ue->ctxId);
 
+    auto *causeIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_Cause);
+    NgapCause cause = causeIe ? ngap_utils::FromCauseAsn(causeIe->Cause) : NgapCause::RadioNetwork_unspecified;
+    if (causeIe)
+        m_logger->debug("UE[%ld] Context Release Command cause: %s", ue->ctxId, ngap_utils::CauseToString(causeIe->Cause).c_str());
+    else
+        m_logger->warn("UE[%ld] Context Release Command missing Cause IE", ue->ctxId);
+
     // Notify RRC task
-    auto w1 = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::AN_RELEASE);
+    auto w1 = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::UE_CONTEXT_RELEASE_RECEIVED);
     w1->ueId = ue->ctxId;
+    w1->cause = cause;
     m_base->rrcTask->push(std::move(w1));
 
     // Notify GTP task
-    auto w2 = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_RELEASE);
+    auto w2 = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_RELEASE_RECEIVED);
     w2->ueId = ue->ctxId;
+    w2->cause = cause;
     m_base->gtpTask->push(std::move(w2));
 
     auto *response = asn::ngap::NewMessagePdu<ASN_NGAP_UEContextReleaseComplete>({});

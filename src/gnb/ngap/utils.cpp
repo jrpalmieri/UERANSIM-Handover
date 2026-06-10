@@ -96,6 +96,15 @@ SingleSlice SliceSupportFromAsn(ASN_NGAP_SliceSupportItem &supportItem)
     return s;
 }
 
+SingleSlice SnssaiFromAsn(const ASN_NGAP_S_NSSAI_t &snssai)
+{
+    SingleSlice s{};
+    s.sst = asn::GetOctet1(snssai.sST);
+    if (snssai.sD)
+        s.sd = asn::GetOctet3(*snssai.sD);
+    return s;
+}
+
 std::string CauseToString(const ASN_NGAP_Cause_t &cause)
 {
     std::string result;
@@ -184,6 +193,25 @@ void ToCauseAsn_Ref(NgapCause source, ASN_NGAP_Cause_t &target)
     {
         target.present = ASN_NGAP_Cause_PR_radioNetwork;
         target.choice.radioNetwork = static_cast<ASN_NGAP_CauseRadioNetwork_t>(val);
+    }
+}
+
+NgapCause FromCauseAsn(const ASN_NGAP_Cause_t &source)
+{
+    switch (source.present)
+    {
+    case ASN_NGAP_Cause_PR_radioNetwork:
+        return static_cast<NgapCause>(static_cast<int>(source.choice.radioNetwork));
+    case ASN_NGAP_Cause_PR_transport:
+        return static_cast<NgapCause>(100 + static_cast<int>(source.choice.transport));
+    case ASN_NGAP_Cause_PR_nas:
+        return static_cast<NgapCause>(200 + static_cast<int>(source.choice.nas));
+    case ASN_NGAP_Cause_PR_protocol:
+        return static_cast<NgapCause>(300 + static_cast<int>(source.choice.protocol));
+    case ASN_NGAP_Cause_PR_misc:
+        return static_cast<NgapCause>(400 + static_cast<int>(source.choice.misc));
+    default:
+        return NgapCause::RadioNetwork_unspecified;
     }
 }
 

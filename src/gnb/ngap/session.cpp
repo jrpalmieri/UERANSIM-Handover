@@ -85,6 +85,7 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
             }
 
             auto *resource = new PduSessionResource(ue->ctxId, static_cast<int>(item->pDUSessionID));
+            resource->sNssai = ngap_utils::SnssaiFromAsn(item->s_NSSAI);
             makeNgapPduSessionItems(resource, transfer);
 
             // Instruct GTP to setup the UP tunnel

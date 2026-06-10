@@ -574,7 +574,8 @@ struct PduSessionResource
 {
     int64_t ueId;
     int psi;
-
+    
+    SingleSlice sNssai{};
     AggregateMaximumBitRate sessionAmbr{};
     bool dataForwardingNotPossible{};
     PduSessionType sessionType = PduSessionType::UNSTRUCTURED;
@@ -587,7 +588,7 @@ struct PduSessionResource
     PduSessionResource(PduSessionResource &&) = default;
     PduSessionResource &operator=(PduSessionResource &&) = default;
     PduSessionResource(const PduSessionResource &o)
-        : ueId(o.ueId), psi(o.psi), sessionAmbr(o.sessionAmbr),
+        : ueId(o.ueId), psi(o.psi), sNssai(o.sNssai), sessionAmbr(o.sessionAmbr),
           dataForwardingNotPossible(o.dataForwardingNotPossible), sessionType(o.sessionType),
           upTunnel(o.upTunnel), downTunnel(o.downTunnel),
           qosFlows(o.qosFlows ? asn::UniqueCopy(*o.qosFlows, asn_DEF_ASN_NGAP_QosFlowSetupRequestList) : nullptr)
@@ -754,6 +755,18 @@ struct GnbChoCandidateProfileConfig
     std::vector<int> conditionEventIds{};
 };
 
+struct GnbCondHandoverRequest {
+
+    int choTrigger{0};  // 0 = CHO-initiation, 1 = CHO-replace
+    int targetNGRANnodeUeXnapId{0};  // used for CHO-replace to identify the target UE in the candidate cell.  otherwise omit.
+    int choArrivalProbabilityPercent{100};  // probability 1-100
+    bool tbiProvided{false};  // whether the time-based information IE should be included in the message
+    int64_t tbiWindowStart{0};  // time-based information - event T1 threshold value (0-549755813887)
+    int32_t tbiDuration{0};  // time-based information - event T1 duration value (1-6000)
+    int maxNumCondReconfigsToPrepare{0};  // maximum number of PSCells to include in handover (each PSCell gets an RRCReconfig).  if 0, omit
+
+
+};
 
 struct GnbXnConfig
 {

@@ -336,27 +336,50 @@ void GnbRrcTask::receiveUplinkInformationTransfer(int64_t ueId, const ASN_RRC_UL
             ueId, asn::GetOctetString(*msg.criticalExtensions.choice.ulInformationTransfer->dedicatedNAS_Message));
 }
 
-void GnbRrcTask::releaseConnection(int64_t ueId)
+
+
+/**
+ * @brief handler for NGAP UE Context Release messages received from the AMF.
+ * Called by the RRC task when it receives a UE_CONTEXT_RELEASE_RECEIVED message from NGAP.
+ * 
+ * @param ueId 
+ */
+void GnbRrcTask::handleUeContextRelease(int64_t ueId, NgapCause cause)
 {
- 
-    // Send RRC Release message
-    auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
-    pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
-    pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
-    pdu->message.choice.c1->present = ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcRelease;
-    auto &rrcRelease = pdu->message.choice.c1->choice.rrcRelease = asn::New<ASN_RRC_RRCRelease>();
-    auto *releaseUe = findCtxByUeId(ueId);
-    rrcRelease->rrc_TransactionIdentifier = releaseUe ? releaseUe->getNextTid() : 0;
-    rrcRelease->criticalExtensions.present = ASN_RRC_RRCRelease__criticalExtensions_PR_rrcRelease;
-    rrcRelease->criticalExtensions.choice.rrcRelease = asn::New<ASN_RRC_RRCRelease_IEs>();
+    bool isHandover = (cause == NgapCause::RadioNetwork_successful_handover);
 
-    m_logger->info("UE[%ld] Sending RRC Release message to UE", ueId);
+    m_logger->debug("UE[%ld] handleUeContextRelease: cause=%d, isHandover=%s",
+        ueId, static_cast<int>(cause), isHandover ? "true" : "false");
 
-    sendRrcMessage(ueId, pdu);
-    asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
+    if (!isHandover)
+    {
+        // Send RRC Release to the UE only for non-handover releases
+        auto *releaseUe = findCtxByUeId(ueId);
+        if (releaseUe)
+        {
+            auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
+            pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
+            pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
+            pdu->message.choice.c1->present = ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcRelease;
+            auto &rrcRelease = pdu->message.choice.c1->choice.rrcRelease = asn::New<ASN_RRC_RRCRelease>();
+            rrcRelease->rrc_TransactionIdentifier = releaseUe->getNextTid();
+            rrcRelease->criticalExtensions.present = ASN_RRC_RRCRelease__criticalExtensions_PR_rrcRelease;
+            rrcRelease->criticalExtensions.choice.rrcRelease = asn::New<ASN_RRC_RRCRelease_IEs>();
 
-    handoverContextRelease(ueId);
+            m_logger->info("UE[%ld] Sending RRC Release message to UE", ueId);
+
+            sendRrcMessage(ueId, pdu);
+            asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
+        }
+    }
+    else
+    {
+        m_logger->info("UE[%ld] Skipping RRC Release - context release is handover-related", ueId);
+    }
+
+    ueContextRelease(ueId);
 }
+
 
 void GnbRrcTask::handleRadioLinkFailure(int64_t ueId)
 {
@@ -365,7 +388,8 @@ void GnbRrcTask::handleRadioLinkFailure(int64_t ueId)
     w->ueId = ueId;
     m_base->ngapTask->push(std::move(w));
 
-    handoverContextRelease(ueId);
+    // erase UE RRC Context
+    ueContextRelease(ueId);
 }
 
 void GnbRrcTask::handlePaging(const asn::Unique<ASN_NGAP_FiveG_S_TMSI> &tmsi,

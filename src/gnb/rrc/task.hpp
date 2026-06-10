@@ -107,18 +107,19 @@ class GnbRrcTask : public NtsTask
     RrcUeContext* findCtxByCrnti(int cRnti);
     RrcUeContext* findCtxByUeId(int64_t ueId);
 
-    /* Handlers for RRC-NAS - handlers.cpp */
+    /* Handlers for NAS and NGAP messages - handlers.cpp */
 
     void handleDownlinkNasDelivery(int64_t ueId, const OctetString &nasPdu);
     void handleDownlinkNasAccept(int64_t ueId, const OctetString &nasPdu, std::unique_ptr<std::vector<PduSessionResource>> sessionList);
     void deliverUplinkNas(int64_t ueId, OctetString &&nasPdu);
-    void releaseConnection(int64_t ueId);
     void handleRadioLinkFailure(int64_t ueId);
     void handlePaging(const asn::Unique<ASN_NGAP_FiveG_S_TMSI> &tmsi,
                       const asn::Unique<ASN_NGAP_TAIListForPaging> &taiList);
     void handleNgapSecurityInfo(int64_t ueId, std::unique_ptr<UeSecurityInfo> secInfo);
     void handleNgapPduSessionUpdate(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> sessionList);
     ASN_RRC_RadioBearerConfig_t* createRadioBearerConfig(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> &sessionList);
+    void handleUeContextRelease(int64_t ueId, NgapCause cause);
+
 
 
     void receiveUplinkInformationTransfer(int64_t ueId, const ASN_RRC_ULInformationTransfer &msg);
@@ -161,6 +162,8 @@ class GnbRrcTask : public NtsTask
     RrcUeContext *createUe(int64_t ueId, int crnti);
     RrcUeContext *tryFindUeByCrnti(int crnti);
     RrcUeContext *tryFindUeByUeId(int64_t ueId);
+    void ueContextRelease(int64_t ueId);
+
 
     /* Connection Control - connection.cpp */
 

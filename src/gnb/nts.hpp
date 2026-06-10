@@ -210,9 +210,8 @@ struct NmGnbNgapToRrc : NtsMessage
         RADIO_POWER_ON,
         NAS_DELIVERY,
         NAS_ACCEPT,
-        AN_RELEASE,
+        UE_CONTEXT_RELEASE_RECEIVED,
         PAGING,
-        UE_CONTEXT_RELEASE,
         HANDOVER_REQUEST_RECEIVED,
         HANDOVER_COMMAND_RECEIVED,
         HANDOVER_PREPARATION_FAILURE_RECEIVED,
@@ -231,9 +230,12 @@ struct NmGnbNgapToRrc : NtsMessage
     bool isCho{};
 
     // NAS_DELIVERY
-    // AN_RELEASE
+    // UE_CONTEXT_RELEASE_RECEIVED
     int64_t ueId{};
     int cRnti{};
+
+    // UE_CONTEXT_RELEASE_RECEIVED
+    NgapCause cause{NgapCause::RadioNetwork_unspecified};
 
     // NAS_ACCEPT
     std::unique_ptr<std::vector<PduSessionResource>> sessionList{};
@@ -265,7 +267,7 @@ struct NmGnbRrcToNgap : NtsMessage
         UPLINK_NAS_DELIVERY,
         RADIO_LINK_FAILURE,
         HANDOVER_REQUEST_ACK_SEND,
-        HANDOVER_NOTIFY,
+        HANDOVER_NOTIFY_SEND,
         HANDOVER_REQUIRED,
         PATH_SWITCH_REQUEST,
     } present;
@@ -275,7 +277,7 @@ struct NmGnbRrcToNgap : NtsMessage
     // HANDOVER_REQUIRED
     int64_t hoTargetNci{};
     NgapCause hoCause{};
-    bool hoForChoPreparation{};
+    std::unique_ptr<GnbCondHandoverRequest> choParams{nullptr};
     int retries=0;
     std::unique_ptr<OctetString> rrcContainer{};
     std::unique_ptr<std::vector<PduSessionResource>> admittedSessions{};
@@ -305,7 +307,7 @@ struct NmGnbNgapToGtp : NtsMessage
     enum PR
     {
         UE_CONTEXT_UPDATE,
-        UE_CONTEXT_RELEASE,
+        UE_CONTEXT_RELEASE_RECEIVED,
         SESSION_CREATE,
         SESSION_RELEASE,
     } present;
@@ -316,11 +318,13 @@ struct NmGnbNgapToGtp : NtsMessage
     // SESSION_CREATE
     PduSessionResource *resource{};
 
-    // UE_CONTEXT_RELEASE
+    // UE_CONTEXT_RELEASE_RECEIVED
     // SESSION_RELEASE
     int64_t ueId{};
     int cRnti{};
 
+    // UE_CONTEXT_RELEASE_RECEIVED
+    NgapCause cause{NgapCause::RadioNetwork_unspecified};
 
     // SESSION_RELEASE
     int psi{};
@@ -347,7 +351,7 @@ struct NmGnbRrcToXn : NtsMessage
     int xnTxId{};
     int64_t ueId{};
     int64_t targetNci{};
-    bool isCho{};
+    std::unique_ptr<GnbCondHandoverRequest> choParams{nullptr};
     ASN_XNAP_Cause_PR reason{};
     int retries=0;
     std::unique_ptr<OctetString> rrcContainer{};

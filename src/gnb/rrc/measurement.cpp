@@ -997,7 +997,7 @@ void GnbRrcTask::receiveRrcReconfigurationComplete(int64_t ueId, int cRnti,
         sendMeasConfig(resolvedUeId, true);
 
         // Notify NGAP of handover completion.
-        auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_NOTIFY);
+        auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_NOTIFY_SEND);
         w->ueId = resolvedUeId;
         m_base->ngapTask->push(std::move(w));
 

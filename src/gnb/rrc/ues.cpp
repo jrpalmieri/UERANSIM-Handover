@@ -46,7 +46,7 @@ RrcUeContext *GnbRrcTask::tryFindUeByUeId(int64_t ueId)
     auto *ctx = it->second;
     if (ctx->ueId != ueId)
     {
-        m_logger->warn("UE[%ld] RRC context key mismatch: keyUeId=%d ctxUeId=%d cRnti=%d",
+        m_logger->warn("UE[%ld]: tryFindUeByUeId - RRC context key mismatch: keyUeId=%d ctxUeId=%d cRnti=%d",
                        ueId, ueId, ctx->ueId, ctx->cRnti);
         return nullptr;
     }
@@ -63,6 +63,27 @@ bool GnbRrcTask::getUeContext(int64_t ueId, std::optional<RrcUeContext> &out)
         return false;
     out.emplace(*ctx);
     return true;
+}
+
+
+/**
+ * @brief Deletes the UE's RRC context.
+ *
+ * @param ueId
+ */
+void GnbRrcTask::ueContextRelease(int64_t ueId)
+{
+    auto *ctx = findCtxByUeId(ueId);
+    if (ctx)
+    {
+        releaseCrnti(ctx->cRnti);
+        delete ctx;
+        m_ueCtx.erase(ueId);
+        m_logger->info("UE[%ld]: ueContextRelease - RRC context released", ueId);
+        return;
+    }
+
+    m_logger->warn("UE[%ld]: ueContextRelease - context not found", ueId);
 }
 
 } // namespace nr::gnb

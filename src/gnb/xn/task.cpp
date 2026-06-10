@@ -49,13 +49,13 @@ void XnTask::onLoop()
                 deferred->targetNci = w.targetNci;
                 deferred->reason = w.reason;
                 deferred->rrcContainer = std::move(w.rrcContainer);
-                deferred->isCho = w.isCho;
+                deferred->choParams = std::move(w.choParams);
                 deferred->retries = w.retries;
                 enqueueDeferred(std::move(deferred));
                 break;
             }
 
-            sendHandoverRequest(w.ueId, w.targetNci, w.isCho, std::move(contexts));
+            sendHandoverRequest(w.ueId, w.targetNci, std::move(contexts), std::move(w.rrcContainer), std::move(w.choParams));
             break;
         }
         case NmGnbRrcToXn::HANDOVER_REQUEST_ACK_SEND:
@@ -65,19 +65,19 @@ void XnTask::onLoop()
             sendHandoverPreparationFailure(w.xnTxId, w.reason);
             break;
          case NmGnbRrcToXn::HANDOVER_CANCEL_SEND:
-            xnHandoverCancelSource(w.ueId, w.targetNci, w.isCho);
+            xnHandoverCancelSource(w.ueId, w.targetNci, w.choParams != nullptr);
             break;
        case NmGnbRrcToXn::UE_CONTEXT_RELEASE_SEND:
             sendUeContextRelease(w.ueId, w.targetNci);
             break;
         case NmGnbRrcToXn::SN_STATUS_TRANSFER_SEND:
-            sendSnStatusTransfer(w.ueId, w.targetNci, w.isCho);
+            sendSnStatusTransfer(w.ueId, w.targetNci, w.choParams != nullptr);
             break;
         case NmGnbRrcToXn::HANDOVER_SUCCESS_SEND:
             sendHandoverSuccess(w.ueId, w.targetNci);
             break;
         case NmGnbRrcToXn::CONDITION_HANDOVER_CANCEL_SEND:
-            xnHandoverCancelSource(w.ueId, w.targetNci, w.isCho);
+            xnHandoverCancelSource(w.ueId, w.targetNci, w.choParams != nullptr);
             break;
         }
         break;
@@ -238,7 +238,7 @@ void XnTask::processDeferredQueue()
         auto contexts = std::make_unique<GnbHandoverUeContexts>();
         if (GetUeContexts(msg->ueId, *contexts))
         {
-            sendHandoverRequest(msg->ueId, msg->targetNci, msg->isCho, std::move(contexts));
+            sendHandoverRequest(msg->ueId, msg->targetNci, std::move(contexts), std::move(msg->rrcContainer), std::move(msg->choParams));
         }
         // if still not ready after the retry threshold, drop the request
         else if (msg->retries >= DEFERRED_MAX_RETRIES)

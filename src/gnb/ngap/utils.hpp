@@ -18,6 +18,7 @@
 #include <asn/ngap/ASN_NGAP_GUAMI.h>
 #include <asn/ngap/ASN_NGAP_PagingDRX.h>
 #include <asn/ngap/ASN_NGAP_ProtocolIE-Field.h>
+#include <asn/ngap/ASN_NGAP_S-NSSAI.h>
 #include <asn/ngap/ASN_NGAP_SliceSupportItem.h>
 #include <asn/ngap/ASN_NGAP_UE-NGAP-ID-pair.h>
 
@@ -32,9 +33,11 @@ PduSessionType PduSessionTypeFromAsn(const ASN_NGAP_PDUSessionType_t &source);
 void PlmnFromAsn_Ref(const ASN_NGAP_PLMNIdentity_t &source, Plmn &target);
 void GuamiFromAsn_Ref(const ASN_NGAP_GUAMI_t &guami, Guami &target);
 void ToCauseAsn_Ref(NgapCause source, ASN_NGAP_Cause_t &target);
+NgapCause FromCauseAsn(const ASN_NGAP_Cause_t &source);
 void ToPlmnAsn_Ref(const Plmn &source, ASN_NGAP_PLMNIdentity_t &target);
 
 SingleSlice SliceSupportFromAsn(ASN_NGAP_SliceSupportItem &supportItem);
+SingleSlice SnssaiFromAsn(const ASN_NGAP_S_NSSAI_t &snssai);
 
 NgapIdPair FindNgapIdPairFromAsnNgapIds(const ASN_NGAP_UE_NGAP_IDs &ngapIDs);
 
