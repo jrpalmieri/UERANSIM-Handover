@@ -31,7 +31,6 @@
 #include <utils/octet_string.hpp>
 #include <utils/constants.hpp>
 
-#include <asn/ngap/ASN_NGAP_QosFlowSetupRequestList.h>
 #include <asn/rrc/ASN_RRC_InitialUE-Identity.h>
 
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
@@ -570,30 +569,34 @@ struct GtpTunnel
     GtpTunnel(const GtpTunnel &o) : teid(o.teid), address(o.address.copy()) {}
 };
 
+// Protocol-neutral QoS flow descriptor — populated from either NGAP or XnAP.
+struct QosFlowInfo
+{
+    int  qfi{};
+    long fiveQi{9};
+    long arpPriorityLevel{1};
+    long arpPreemptCapability{0};
+    long arpPreemptVulnerability{0};
+};
+
 struct PduSessionResource
 {
     int64_t ueId;
     int psi;
-    
+
     SingleSlice sNssai{};
     AggregateMaximumBitRate sessionAmbr{};
     bool dataForwardingNotPossible{};
     PduSessionType sessionType = PduSessionType::UNSTRUCTURED;
     GtpTunnel upTunnel{};
     GtpTunnel downTunnel{};
-    asn::Unique<ASN_NGAP_QosFlowSetupRequestList> qosFlows{};
+    std::vector<QosFlowInfo> qosFlows{};
 
     PduSessionResource(const int64_t ueId, const int psi) : ueId(ueId), psi(psi) {}
 
     PduSessionResource(PduSessionResource &&) = default;
     PduSessionResource &operator=(PduSessionResource &&) = default;
-    PduSessionResource(const PduSessionResource &o)
-        : ueId(o.ueId), psi(o.psi), sNssai(o.sNssai), sessionAmbr(o.sessionAmbr),
-          dataForwardingNotPossible(o.dataForwardingNotPossible), sessionType(o.sessionType),
-          upTunnel(o.upTunnel), downTunnel(o.downTunnel),
-          qosFlows(o.qosFlows ? asn::UniqueCopy(*o.qosFlows, asn_DEF_ASN_NGAP_QosFlowSetupRequestList) : nullptr)
-    {
-    }
+    PduSessionResource(const PduSessionResource &o) = default;
 };
 
 struct PduSessionSdapUpdate

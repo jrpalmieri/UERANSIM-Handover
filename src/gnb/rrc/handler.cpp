@@ -97,20 +97,17 @@ ASN_RRC_RadioBearerConfig_t* GnbRrcTask::createRadioBearerConfig(int64_t ueId, s
         bearer.bearerId = 0x40 | (drbs_used); // DRB IDs encoded using bit 6
         rbUpdate->upsertBearers.emplace_back(bearer);
 
-        auto list = session.qosFlows->list;
-        for (int i = 0; i < list.count; ++i)
+        for (const auto &flow : session.qosFlows)
         {
             SdapMapping mapping;
             mapping.psi = session.psi;
-
-            const auto &flow = list.array[i];
-            mapping.qfi = flow->qosFlowIdentifier;
-            mapping.radioBearer = bearer.bearerId; // The DRB that was just created
+            mapping.qfi = flow.qfi;
+            mapping.radioBearer = bearer.bearerId;
             sdapUpdate->upsertSdapMappings.emplace_back(mapping);
         }
 
-        m_logger->debug("UE[%ld]: adding SDAP mapping for PSI=%d, QFI=%d to DRBearer=%d",
-            ueId, session.psi, session.qosFlows->list.count, drbs_used);
+        m_logger->debug("UE[%ld]: adding SDAP mapping for PSI=%d, QFI count=%zu to DRBearer=%d",
+            ueId, session.psi, session.qosFlows.size(), drbs_used);
     }
 
     m_logger->debug("UE[%ld]: creating %d DRBs and %d SDAP mappings", ueId, drbs_used, sdapUpdate->upsertSdapMappings.size());

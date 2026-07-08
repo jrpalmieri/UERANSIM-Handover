@@ -310,6 +310,7 @@ struct NmGnbNgapToGtp : NtsMessage
         UE_CONTEXT_RELEASE_RECEIVED,
         SESSION_CREATE,
         SESSION_RELEASE,
+        FORWARDING_TUNNEL_SETUP,
     } present;
 
     // UE_CONTEXT_UPDATE
@@ -328,6 +329,9 @@ struct NmGnbNgapToGtp : NtsMessage
 
     // SESSION_RELEASE
     int psi{};
+
+    // FORWARDING_TUNNEL_SETUP
+    GtpTunnel forwardingTunnel{};
 
     explicit NmGnbNgapToGtp(PR present) : NtsMessage(NtsMessageType::GNB_NGAP_TO_GTP), present(present)
     {
@@ -384,12 +388,35 @@ struct NmGnbXnToRrc : NtsMessage
     std::unique_ptr<OctetString> rrcContainer{};
     std::unique_ptr<std::vector<PduSessionResource>> sessionList{};
     int reason{};
+    // HANDOVER_REQUEST_RECEIVED extras
+    int64_t amfUeNgapId{};
+    Guami guami{};
+    UeSecurityInfo ueSecInfo{};
+    uint64_t dlAmbr{};
+    uint64_t ulAmbr{};
+    std::string ngapSourceIpAddr{};
 
     explicit NmGnbXnToRrc(PR present) : NtsMessage(NtsMessageType::GNB_XN_TO_RRC), present(present)
     {
     }
 };
 
+struct NmGnbXnToGtp : NtsMessage
+{
+    enum PR
+    {
+        FORWARDING_TUNNEL_SETUP,
+    } present;
+
+    // FORWARDING_TUNNEL_SETUP
+    int64_t ueId{};
+    int psi{};
+    GtpTunnel forwardingTunnel{};
+
+    explicit NmGnbXnToGtp(PR present) : NtsMessage(NtsMessageType::GNB_XN_TO_GTP), present(present)
+    {
+    }
+};
 
 struct NmGnbSctp : NtsMessage
 {

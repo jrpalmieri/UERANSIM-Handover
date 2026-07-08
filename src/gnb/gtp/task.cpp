@@ -15,6 +15,70 @@
 
 #include <asn/ngap/ASN_NGAP_QosFlowSetupRequestItem.h>
 
+namespace
+{
+
+std::unique_ptr<gtp::GtpExtHeader> cloneExtHeader(const gtp::GtpExtHeader &src)
+{
+    switch (src.type)
+    {
+    case gtp::ExtHeaderType::PduSessionContainerExtHeader: {
+        auto &s = static_cast<const gtp::PduSessionContainerExtHeader &>(src);
+        auto dst = std::make_unique<gtp::PduSessionContainerExtHeader>();
+        if (s.pduSessionInformation->pduType == gtp::PduSessionInformation::PDU_TYPE_DL)
+        {
+            auto &dl = static_cast<const gtp::DlPduSessionInformation &>(*s.pduSessionInformation);
+            auto copy = std::make_unique<gtp::DlPduSessionInformation>();
+            copy->qmp        = dl.qmp;
+            copy->qfi        = dl.qfi;
+            copy->rqi        = dl.rqi;
+            copy->ppi        = dl.ppi;
+            copy->dlSendingTs = dl.dlSendingTs;
+            copy->dlQfiSeq   = dl.dlQfiSeq;
+            dst->pduSessionInformation = std::move(copy);
+        }
+        else
+        {
+            auto &ul = static_cast<const gtp::UlPduSessionInformation &>(*s.pduSessionInformation);
+            auto copy = std::make_unique<gtp::UlPduSessionInformation>();
+            copy->qmp                 = ul.qmp;
+            copy->qfi                 = ul.qfi;
+            copy->dlSendingTsRepeated = ul.dlSendingTsRepeated;
+            copy->dlReceivedTs        = ul.dlReceivedTs;
+            copy->ulSendingTs         = ul.ulSendingTs;
+            copy->dlDelayResult       = ul.dlDelayResult;
+            copy->ulDelayResult       = ul.ulDelayResult;
+            copy->ulQfiSeq            = ul.ulQfiSeq;
+            dst->pduSessionInformation = std::move(copy);
+        }
+        return dst;
+    }
+    case gtp::ExtHeaderType::LongPdcpPduNumberExtHeader: {
+        auto &s = static_cast<const gtp::LongPdcpPduNumberExtHeader &>(src);
+        auto copy = std::make_unique<gtp::LongPdcpPduNumberExtHeader>();
+        copy->pdcpPduNumber = s.pdcpPduNumber;
+        return copy;
+    }
+    case gtp::ExtHeaderType::PdcpPduNumberExtHeader: {
+        auto &s = static_cast<const gtp::PdcpPduNumberExtHeader &>(src);
+        auto copy = std::make_unique<gtp::PdcpPduNumberExtHeader>();
+        copy->pdcpPduNumber = s.pdcpPduNumber;
+        return copy;
+    }
+    case gtp::ExtHeaderType::UdpPortExtHeader: {
+        auto &s = static_cast<const gtp::UdpPortExtHeader &>(src);
+        auto copy = std::make_unique<gtp::UdpPortExtHeader>();
+        copy->port = s.port;
+        return copy;
+    }
+    case gtp::ExtHeaderType::NrRanContainerExtHeader:
+        return std::make_unique<gtp::NrRanContainerExtHeader>();
+    }
+    return nullptr;
+}
+
+} // namespace
+
 namespace nr::gnb
 {
 
@@ -73,6 +137,21 @@ void GtpTask::onLoop()
         }
         case NmGnbNgapToGtp::SESSION_RELEASE: {
             handleSessionRelease(w.ueId, w.psi);
+            break;
+        }
+        case NmGnbNgapToGtp::FORWARDING_TUNNEL_SETUP: {
+            handleForwardingTunnelSetup(w.ueId, w.psi, std::move(w.forwardingTunnel));
+            break;
+        }
+        }
+        break;
+    }
+    case NtsMessageType::GNB_XN_TO_GTP: {
+        auto &w = dynamic_cast<NmGnbXnToGtp &>(*msg);
+        switch (w.present)
+        {
+        case NmGnbXnToGtp::FORWARDING_TUNNEL_SETUP: {
+            handleForwardingTunnelSetup(w.ueId, w.psi, std::move(w.forwardingTunnel));
             break;
         }
         }
@@ -159,6 +238,20 @@ void GtpTask::handleSessionRelease(int64_t ueId, int psi)
 
 }
 
+void GtpTask::handleForwardingTunnelSetup(int64_t ueId, int psi, GtpTunnel &&tunnel)
+{
+    PduSessionResource *session;
+    if (m_sessionTree.getSession(ueId, psi, session) != 0)
+    {
+        m_logger->warn("UE[%ld]: forwarding tunnel setup for unknown PSI[%d], ignoring", ueId, psi);
+        return;
+    }
+
+    uint32_t teid = tunnel.teid;
+    m_forwardingTunnels[UeSessionId{ueId, psi}] = std::move(tunnel);
+    m_logger->info("UE[%ld]: PSI[%d] DL forwarding enabled → teid=0x%08x", ueId, psi, teid);
+}
+
 void GtpTask::handleUeContextDelete(int64_t ueId)
 {
     // Find PDU sessions of the UE
@@ -171,6 +264,9 @@ void GtpTask::handleUeContextDelete(int64_t ueId)
         // Remove all session information from rate limiter
         m_rateLimiter->updateSessionUplinkLimit(session.ueId, session.psi, 0);
         m_rateLimiter->updateSessionDownlinkLimit(session.ueId, session.psi, 0);
+
+        // Remove any active DL forwarding tunnel for this session
+        m_forwardingTunnels.erase(UeSessionId{session.ueId, session.psi});
 
         count++;
     }
@@ -225,7 +321,7 @@ void GtpTask::handleUplinkData(int64_t ueId, int psi, int qfi, OctetString &&pdu
 
         auto ul = std::make_unique<gtp::UlPduSessionInformation>();
         // TODO: currently using first QSI
-        ul->qfi = static_cast<int>(pduSession->qosFlows->list.array[0]->qosFlowIdentifier);
+        ul->qfi = !pduSession->qosFlows.empty() ? pduSession->qosFlows[0].qfi : 1;
 
         auto cont = std::make_unique<gtp::PduSessionContainerExtHeader>();
         cont->pduSessionInformation = std::move(ul);
@@ -286,8 +382,32 @@ void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
 
         m_logger->debug("UE[%ld]: Downlink GTP data received for PSI=%d. TEID=[%u], payload_size=[%zu] seq=%d  QFI=%d", ueSessionId->ueId, ueSessionId->psi, gtp->teid, gtp->payload.length(), seq, qfi);
 
-        // check if this session is part of a handover.  If so, forward to the GTP-U tunnel set up to the target gNB instead of sending to RLS
-        // TODO: add handover logic
+        // If session is in DL forwarding mode, relay the packet to the target gNB tunnel and skip RLS delivery
+        UeSessionId fwdKey{ueSessionId->ueId, ueSessionId->psi};
+        auto fwdIt = m_forwardingTunnels.find(fwdKey);
+        if (fwdIt != m_forwardingTunnels.end())
+        {
+            gtp::GtpMessage fwd{};
+            fwd.msgType = gtp::GtpMessage::MT_G_PDU;
+            fwd.teid    = fwdIt->second.teid;
+            fwd.payload = std::move(gtp->payload);
+            for (auto &ext : gtp->extHeaders)
+            {
+                auto clone = cloneExtHeader(*ext);
+                if (clone)
+                    fwd.extHeaders.push_back(std::move(clone));
+            }
+
+            OctetString fwdPdu;
+            if (gtp::EncodeGtpMessage(fwd, fwdPdu))
+            {
+                m_udpServer->send(InetAddress(fwdIt->second.address, cons::GtpPort), fwdPdu);
+                m_logger->debug("UE[%ld]: PSI=%d packet forwarded to target teid=0x%08x", ueSessionId->ueId, ueSessionId->psi, fwd.teid);
+            }
+            else
+                m_logger->err("UE[%ld]: DL forwarding encode failed for PSI=%d", ueSessionId->ueId, ueSessionId->psi);
+            return;
+        }
 
         // apply the brute-force rate limiter - drops packets if the session or UE has exceeded the AMBR
         if (!m_rateLimiter->allowDownlinkPacket(ueSessionId->ueId, ueSessionId->psi, gtp->payload.length()))
@@ -321,8 +441,35 @@ void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
     case gtp::GtpMessage::MT_END_MARKER: {
         m_logger->debug("Received GTP-U End Marker for TEID %u", gtp->teid);
 
-        // TODO: handover logic
+        auto *endSession = m_sessionTree.findByDownTeid(gtp->teid);
+        if (!endSession)
+        {
+            m_logger->warn("End Marker received for unknown TEID %u", gtp->teid);
+            return;
+        }
 
+        UeSessionId key{endSession->ueId, endSession->psi};
+        auto it = m_forwardingTunnels.find(key);
+        if (it == m_forwardingTunnels.end())
+        {
+            m_logger->debug("UE[%ld]: End Marker for PSI=%d, no forwarding tunnel active — ignoring",
+                            endSession->ueId, endSession->psi);
+            return;
+        }
+
+        gtp::GtpMessage em{};
+        em.msgType = gtp::GtpMessage::MT_END_MARKER;
+        em.teid    = it->second.teid;
+
+        OctetString emPdu;
+        if (gtp::EncodeGtpMessage(em, emPdu))
+            m_udpServer->send(InetAddress(it->second.address, cons::GtpPort), emPdu);
+        else
+            m_logger->err("UE[%ld]: End Marker encode failed for PSI=%d", endSession->ueId, endSession->psi);
+
+        m_forwardingTunnels.erase(it);
+        m_logger->info("UE[%ld]: PSI=%d End Marker forwarded to target, DL forwarding complete",
+                       endSession->ueId, endSession->psi);
         return;
     }
     default: {

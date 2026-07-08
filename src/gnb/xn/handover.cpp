@@ -464,7 +464,7 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
         // requires a NonDynamic5QIDescriptor for the non-dynamic path.
 
 
-        if (!res->qosFlows || res->qosFlows->list.count <= 0)
+        if (res->qosFlows.empty())
         {
             m_logger->err("sendHandoverRequest: PSI=%d has no QoS flows; aborting", res->psi);
             asn::Free(asn_DEF_ASN_XNAP_PDUSessionResourcesToBeSetup_Item, pduItem);
@@ -475,61 +475,30 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
         // qosFlowsToBeForwarded is an embedded list — add directly, no separate allocation needed.
         auto *dfInfo = asn::New<ASN_XNAP_DataforwardingandOffloadingInfofromSource>();
 
-        bool anyFlow = false;
-        auto &qosList = res->qosFlows->list;
-        for (int iFlow = 0; iFlow < qosList.count; iFlow++)
+        for (const auto &flow : res->qosFlows)
         {
-            auto *ngapFlow = qosList.array[iFlow];
-            if (!ngapFlow)
-                continue;
-
-            const auto &ngapQosChars =
-                ngapFlow->qosFlowLevelQosParameters.qosCharacteristics;
-            const auto &ngapArp =
-                ngapFlow->qosFlowLevelQosParameters.allocationAndRetentionPriority;
-
             auto *xnNonDyn = asn::New<ASN_XNAP_NonDynamic5QIDescriptor_t>();
-            if (ngapQosChars.present == ASN_NGAP_QosCharacteristics_PR_nonDynamic5QI
-                && ngapQosChars.choice.nonDynamic5QI)
-                xnNonDyn->fiveQI = ngapQosChars.choice.nonDynamic5QI->fiveQI;
-            else
-                xnNonDyn->fiveQI = 9; // dynamic / unknown — use eMBB default
+            xnNonDyn->fiveQI = flow.fiveQi;
 
-            // Populate qosFlowItem directly — avoids alloc+value-copy+free on
-            // intermediate qosChars, arp, qosParams structs that contain owned pointers.
             auto *qosFlowItem = asn::New<ASN_XNAP_QoSFlowsToBeSetup_Item_t>();
-            qosFlowItem->qfi = static_cast<long>(ngapFlow->qosFlowIdentifier);
+            qosFlowItem->qfi = static_cast<long>(flow.qfi);
             qosFlowItem->qosFlowLevelQoSParameters.qos_characteristics.present
                 = ASN_XNAP_QoSCharacteristics_PR_non_dynamic;
             qosFlowItem->qosFlowLevelQoSParameters.qos_characteristics.choice.non_dynamic
-                = xnNonDyn; // ownership transferred into qosFlowItem
+                = xnNonDyn;
             qosFlowItem->qosFlowLevelQoSParameters.allocationAndRetentionPrio.priorityLevel
-                = ngapArp.priorityLevelARP;
+                = flow.arpPriorityLevel;
             qosFlowItem->qosFlowLevelQoSParameters.allocationAndRetentionPrio.pre_emption_capability
-                = ngapArp.pre_emptionCapability;
+                = flow.arpPreemptCapability;
             qosFlowItem->qosFlowLevelQoSParameters.allocationAndRetentionPrio.pre_emption_vulnerability
-                = ngapArp.pre_emptionVulnerability;
+                = flow.arpPreemptVulnerability;
 
             asn::SequenceAdd(pduItem->qosFlowsToBeSetup_List, qosFlowItem);
-            anyFlow = true;
 
-            // add to Data Forwarding QoS list as well
             auto *dfQosItem = asn::New<ASN_XNAP_QoSFLowsToBeForwarded_Item_t>();
             dfQosItem->qosFlowIdentifier = qosFlowItem->qfi;
             dfQosItem->dl_dataforwarding = ASN_XNAP_DLForwarding_dl_forwarding_proposed;
-            //dfQosItem->ul_dataforwarding = ASN_XNAP_ULForwarding_ul_forwarding_proposed;  // no uplink forwarding used
-
             asn::SequenceAdd(dfInfo->qosFlowsToBeForwarded, dfQosItem);
-        }
-
-        if (!anyFlow)
-        {
-            // All list entries were null — violates SIZE(1..maxnoofQoSFlows).
-            // dfInfo has no heap children yet (no SequenceAdd ran on its embedded list).
-            m_logger->err("sendHandoverRequest: PSI=%d: all QoS flow entries are null; aborting", res->psi);
-            free(dfInfo);
-            asn::Free(asn_DEF_ASN_XNAP_PDUSessionResourcesToBeSetup_Item, pduItem);
-            return;
         }
 
         // add the Data Forwarding Info IE
@@ -932,25 +901,128 @@ void XnTask::receiveHandoverRequest(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
             }
 
             // extract ng-c-UE-reference: AMF-UE-NGAP-ID into amfId
-
+            amfId = asn::GetSigned64(ueCtxInfo->ng_c_UE_reference);
 
             // extract cp-TNL-info-source: control-plane transport layer address into ngapSourceIpAddr string
-
-
+            if (ueCtxInfo->cp_TNL_info_source.present ==
+                ASN_XNAP_CPTransportLayerInformation_PR_endpointIPAddress)
+            {
+                const auto &bs = ueCtxInfo->cp_TNL_info_source.choice.endpointIPAddress;
+                if (bs.buf && bs.size >= 4)
+                {
+                    char ipBuf[20]{};
+                    snprintf(ipBuf, sizeof(ipBuf), "%u.%u.%u.%u",
+                             bs.buf[0], bs.buf[1], bs.buf[2], bs.buf[3]);
+                    ngapSourceIpAddr = ipBuf;
+                }
+            }
 
             // extract ueSecurityCapabilities into ueSecInfo
-
+            {
+                const auto &sc = ueCtxInfo->ueSecurityCapabilities;
+                ueSecInfo.nRencryptionAlgorithmsBitmap =
+                    asn::GetBitStringInt<16>(sc.nr_EncyptionAlgorithms);
+                ueSecInfo.nRintegrityProtectionAlgorithmsBitmap =
+                    asn::GetBitStringInt<16>(sc.nr_IntegrityProtectionAlgorithms);
+                ueSecInfo.eUTRAencryptionAlgorithmsBitmap =
+                    asn::GetBitStringInt<16>(sc.e_utra_EncyptionAlgorithms);
+                ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap =
+                    asn::GetBitStringInt<16>(sc.e_utra_IntegrityProtectionAlgorithms);
+            }
 
             // extract securityInformation into ueSecInfo
-
+            {
+                const auto &si = ueCtxInfo->securityInformation;
+                if (si.key_NG_RAN_Star.buf && si.key_NG_RAN_Star.size >= 32)
+                    std::memcpy(ueSecInfo.k_gnb.data(), si.key_NG_RAN_Star.buf, 32);
+            }
 
             // extract ueAMBR into dlAmbr and ulAmbr
-
-
+            dlAmbr = static_cast<uint64_t>(ueCtxInfo->ue_AMBR.dl_UE_AMBR);
+            ulAmbr = static_cast<uint64_t>(ueCtxInfo->ue_AMBR.ul_UE_AMBR);
 
             // extract pduSessionResourcesToBeSetup-List into pduSessions vector
+            {
+                auto &list = ueCtxInfo->pduSessionResourcesToBeSetup_List.list;
+                for (int iPdu = 0; iPdu < list.count; iPdu++)
+                {
+                    auto *item = list.array[iPdu];
+                    if (!item)
+                        continue;
 
+                    PduSessionResource res(sourceUeXnApId, static_cast<int>(item->pduSessionId));
 
+                    // S-NSSAI
+                    if (item->s_NSSAI.sst.buf && item->s_NSSAI.sst.size > 0)
+                        res.sNssai.sst = item->s_NSSAI.sst.buf[0];
+                    if (item->s_NSSAI.sd && item->s_NSSAI.sd->buf && item->s_NSSAI.sd->size >= 3)
+                        res.sNssai.sd = asn::GetOctet3(*item->s_NSSAI.sd);
+
+                    // session AMBR (optional)
+                    if (item->pduSessionAMBR)
+                    {
+                        res.sessionAmbr.dlAmbr =
+                            static_cast<uint64_t>(item->pduSessionAMBR->downlink_session_AMBR);
+                        res.sessionAmbr.ulAmbr =
+                            static_cast<uint64_t>(item->pduSessionAMBR->uplink_session_AMBR);
+                    }
+
+                    // UL GTP tunnel at UPF
+                    if (item->uL_NG_U_TNLatUPF.present ==
+                        ASN_XNAP_UPTransportLayerInformation_PR_gtpTunnel &&
+                        item->uL_NG_U_TNLatUPF.choice.gtpTunnel)
+                    {
+                        auto *t = item->uL_NG_U_TNLatUPF.choice.gtpTunnel;
+                        res.upTunnel.address = asn::GetOctetString(t->tnl_address);
+                        res.upTunnel.teid    = static_cast<uint32_t>(asn::GetOctet4(t->gtp_teid));
+                    }
+
+                    // source DL GTP tunnel (optional)
+                    if (item->source_DL_NG_U_TNL_Information &&
+                        item->source_DL_NG_U_TNL_Information->present ==
+                            ASN_XNAP_UPTransportLayerInformation_PR_gtpTunnel &&
+                        item->source_DL_NG_U_TNL_Information->choice.gtpTunnel)
+                    {
+                        auto *t = item->source_DL_NG_U_TNL_Information->choice.gtpTunnel;
+                        res.downTunnel.address = asn::GetOctetString(t->tnl_address);
+                        res.downTunnel.teid    = static_cast<uint32_t>(asn::GetOctet4(t->gtp_teid));
+                    }
+
+                    // PDU session type
+                    switch (item->pduSessionType)
+                    {
+                    case 1: res.sessionType = PduSessionType::IPv4;     break;
+                    case 2: res.sessionType = PduSessionType::IPv6;     break;
+                    case 3: res.sessionType = PduSessionType::IPv4v6;   break;
+                    case 4: res.sessionType = PduSessionType::ETHERNET; break;
+                    default: res.sessionType = PduSessionType::UNSTRUCTURED; break;
+                    }
+
+                    // QoS flows
+                    auto &qosList = item->qosFlowsToBeSetup_List.list;
+                    for (int iFlow = 0; iFlow < qosList.count; iFlow++)
+                    {
+                        auto *xnFlow = qosList.array[iFlow];
+                        if (!xnFlow)
+                            continue;
+                        QosFlowInfo flow{};
+                        flow.qfi = static_cast<int>(xnFlow->qfi);
+                        const auto &qosChars = xnFlow->qosFlowLevelQoSParameters.qos_characteristics;
+                        if (qosChars.present == ASN_XNAP_QoSCharacteristics_PR_non_dynamic &&
+                            qosChars.choice.non_dynamic)
+                            flow.fiveQi = qosChars.choice.non_dynamic->fiveQI;
+                        else
+                            flow.fiveQi = 9;
+                        const auto &arp = xnFlow->qosFlowLevelQoSParameters.allocationAndRetentionPrio;
+                        flow.arpPriorityLevel        = arp.priorityLevel;
+                        flow.arpPreemptCapability    = arp.pre_emption_capability;
+                        flow.arpPreemptVulnerability = arp.pre_emption_vulnerability;
+                        res.qosFlows.push_back(flow);
+                    }
+
+                    pduSessions.push_back(std::move(res));
+                }
+            }
 
             // extract rrc-Context into rrcContainer (as opaque byte array)
             if (ueCtxInfo->rrc_Context.buf && ueCtxInfo->rrc_Context.size > 0)
@@ -993,9 +1065,17 @@ void XnTask::receiveHandoverRequest(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 
     // Send XnToRrc msg to RRC task. xnTxId correlates when the response is returned.
     auto msg = std::make_unique<NmGnbXnToRrc>(NmGnbXnToRrc::HANDOVER_REQUEST_RECEIVED);
-    msg->xnTxId = xnTxId;
-    msg->sourceGnbId = gnbId;
-    msg->rrcContainer = std::move(rrcContainer);
+    msg->xnTxId          = xnTxId;
+    msg->sourceGnbId     = gnbId;
+    msg->rrcContainer    = std::move(rrcContainer);
+    msg->amfUeNgapId     = amfId;
+    msg->guami           = guami;
+    msg->ueSecInfo       = ueSecInfo;
+    msg->dlAmbr          = dlAmbr;
+    msg->ulAmbr          = ulAmbr;
+    msg->ngapSourceIpAddr = ngapSourceIpAddr;
+    if (!pduSessions.empty())
+        msg->sessionList = std::make_unique<std::vector<PduSessionResource>>(std::move(pduSessions));
     m_base->rrcTask->push(std::move(msg));
 }
 
@@ -1045,6 +1125,8 @@ void XnTask::sendHandoverRequestAck(uint32_t xnTxId, uint64_t ueId,
                       sourceGnbId, xnTxId);
         return;
     }
+
+
 
     const GnbConfig *cfg = m_base->config;
     std::string gtpIp = cfg->gtpAdvertiseIp.value_or(cfg->gtpIp);
@@ -1104,15 +1186,11 @@ void XnTask::sendHandoverRequestAck(uint32_t xnTxId, uint64_t ueId,
 
             auto *fwdInfo = asn::New<ASN_XNAP_DataForwardingInfoFromTargetNGRANnode_t>();
 
-            bool addedFlow = false;
-            if (resource.qosFlows && resource.qosFlows->list.count > 0)
+            if (!resource.qosFlows.empty())
             {
-                for (int iFlow = 0; iFlow < resource.qosFlows->list.count; iFlow++)
+                for (const auto &flow : resource.qosFlows)
                 {
-                    auto *ngapFlow = resource.qosFlows->list.array[iFlow];
-                    if (!ngapFlow) continue;
-
-                    long qfi = static_cast<long>(ngapFlow->qosFlowIdentifier);
+                    long qfi = static_cast<long>(flow.qfi);
 
                     auto *admittedItem = asn::New<ASN_XNAP_QoSFlowsAdmitted_Item_t>();
                     admittedItem->qfi = qfi;
@@ -1122,14 +1200,11 @@ void XnTask::sendHandoverRequestAck(uint32_t xnTxId, uint64_t ueId,
                     auto *fwdItem = asn::New<ASN_XNAP_QoSFLowsAcceptedToBeForwarded_Item_t>();
                     fwdItem->qosFlowIdentifier = qfi;
                     asn::SequenceAdd(fwdInfo->qosFlowsAcceptedForDataForwarding_List, fwdItem);
-
-                    addedFlow = true;
                 }
             }
-
-            if (!addedFlow)
+            else
             {
-                // Fallback: a single default QFI=1 flow when no NGAP flows are present.
+                // Fallback: a single default QFI=1 when no flows are present.
                 auto *admittedItem = asn::New<ASN_XNAP_QoSFlowsAdmitted_Item_t>();
                 admittedItem->qfi = 1;
                 asn::SequenceAdd(pduItem->pduSessionResourceAdmittedInfo.qosFlowsAdmitted_List,
@@ -1351,6 +1426,129 @@ void XnTask::receiveSnStatusTransfer(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 void XnTask::receiveHandoverRequestAck(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 {
     m_logger->debug("receiveHandoverRequestAck gnbId=%d", gnbId);
+
+    if (pdu->present != ASN_XNAP_XnAP_PDU_PR_successfulOutcome ||
+        !pdu->choice.successfulOutcome ||
+        !pdu->choice.successfulOutcome->value.buf)
+    {
+        m_logger->err("receiveHandoverRequestAck: malformed PDU from gnbId=%d", gnbId);
+        return;
+    }
+
+    auto *succMsg = pdu->choice.successfulOutcome;
+    auto *hoAck = xnap_encode::Decode<ASN_XNAP_HandoverRequestAcknowledge_t>(
+        asn_DEF_ASN_XNAP_HandoverRequestAcknowledge,
+        reinterpret_cast<const uint8_t *>(succMsg->value.buf),
+        static_cast<size_t>(succMsg->value.size));
+    if (!hoAck)
+    {
+        m_logger->err("receiveHandoverRequestAck: failed to decode HandoverRequestAcknowledge from gnbId=%d", gnbId);
+        return;
+    }
+
+    int64_t sourceUeId = -1;
+    std::unique_ptr<OctetString> rrcContainer;
+
+    for (int i = 0; i < hoAck->protocolIEs.list.count; ++i)
+    {
+        auto *ie = hoAck->protocolIEs.list.array[i];
+        if (!ie || !ie->value.buf)
+            continue;
+
+        if (ie->id == XNAP_IE_sourceNG_RAN_node_UE_XnAP_ID)
+        {
+            auto *srcId = xnap_encode::Decode<ASN_XNAP_NG_RANnodeUEXnAPID_t>(
+                asn_DEF_ASN_XNAP_NG_RANnodeUEXnAPID,
+                reinterpret_cast<const uint8_t *>(ie->value.buf),
+                static_cast<size_t>(ie->value.size));
+            if (srcId)
+            {
+                sourceUeId = static_cast<int64_t>(*srcId);
+                asn::Free(asn_DEF_ASN_XNAP_NG_RANnodeUEXnAPID, srcId);
+            }
+        }
+        else if (ie->id == XNAP_IE_PDUSessionResourcesAdmitted_List)
+        {
+            auto *admittedList = xnap_encode::Decode<ASN_XNAP_PDUSessionResourcesAdmitted_List_t>(
+                asn_DEF_ASN_XNAP_PDUSessionResourcesAdmitted_List,
+                reinterpret_cast<const uint8_t *>(ie->value.buf),
+                static_cast<size_t>(ie->value.size));
+            if (!admittedList)
+            {
+                m_logger->warn("receiveHandoverRequestAck: failed to decode admitted list from gnbId=%d", gnbId);
+                continue;
+            }
+
+            for (int j = 0; j < admittedList->list.count; ++j)
+            {
+                auto *item = admittedList->list.array[j];
+                if (!item || !item->pduSessionResourceAdmittedInfo.dataForwardingInfoFromTarget)
+                    continue;
+
+                auto *dlFwd = item->pduSessionResourceAdmittedInfo
+                                  .dataForwardingInfoFromTarget->pduSessionLevelDLDataForwardingInfo;
+                if (!dlFwd ||
+                    dlFwd->present != ASN_XNAP_UPTransportLayerInformation_PR_gtpTunnel ||
+                    !dlFwd->choice.gtpTunnel)
+                    continue;
+
+                auto *t = dlFwd->choice.gtpTunnel;
+                GtpTunnel fwdTunnel;
+                fwdTunnel.address = asn::GetOctetString(t->tnl_address);
+                fwdTunnel.teid    = static_cast<uint32_t>(asn::GetOctet4(t->gtp_teid));
+
+                m_logger->info("UE[%ld]: receiveHandoverRequestAck - PSI=%ld DL forwarding tunnel: addr=%s teid=0x%08x",
+                               sourceUeId, (long)item->pduSessionId,
+                               utils::OctetStringToIp(fwdTunnel.address).c_str(), fwdTunnel.teid);
+
+                if (sourceUeId >= 0)
+                {
+                    auto gm = std::make_unique<NmGnbXnToGtp>(NmGnbXnToGtp::FORWARDING_TUNNEL_SETUP);
+                    gm->ueId             = sourceUeId;
+                    gm->psi              = static_cast<int>(item->pduSessionId);
+                    gm->forwardingTunnel = std::move(fwdTunnel);
+                    m_base->gtpTask->push(std::move(gm));
+                }
+            }
+
+            asn::Free(asn_DEF_ASN_XNAP_PDUSessionResourcesAdmitted_List, admittedList);
+        }
+        else if (ie->id == XNAP_IE_Target2SourceTranspContainer)
+        {
+            auto *rrcOs = xnap_encode::Decode<OCTET_STRING_t>(
+                asn_DEF_OCTET_STRING,
+                reinterpret_cast<const uint8_t *>(ie->value.buf),
+                static_cast<size_t>(ie->value.size));
+            if (rrcOs)
+            {
+                rrcContainer = std::make_unique<OctetString>(asn::GetOctetString(*rrcOs));
+                asn::Free(asn_DEF_OCTET_STRING, rrcOs);
+            }
+        }
+    }
+
+    asn::Free(asn_DEF_ASN_XNAP_HandoverRequestAcknowledge, hoAck);
+
+    if (sourceUeId < 0)
+    {
+        m_logger->err("receiveHandoverRequestAck: missing sourceNG-RANnodeUEXnAPID from gnbId=%d", gnbId);
+        return;
+    }
+
+    if (!rrcContainer)
+    {
+        m_logger->warn("UE[%ld]: receiveHandoverRequestAck - no RRC container from gnbId=%d", sourceUeId, gnbId);
+        return;
+    }
+
+    auto msg = std::make_unique<NmGnbXnToRrc>(NmGnbXnToRrc::HANDOVER_REQUEST_ACK_RECEIVED);
+    msg->ueId         = sourceUeId;
+    msg->targetNci    = -1;  // not carried in ack; needs source-side outgoing HO tracking
+    msg->isCho        = false;
+    msg->rrcContainer = std::move(rrcContainer);
+    m_base->rrcTask->push(std::move(msg));
+
+    m_logger->info("UE[%ld]: HandoverRequestAck processed from gnbId=%d, forwarded to RRC", sourceUeId, gnbId);
 }
 
 void XnTask::receiveHandoverPreparationFailure(int gnbId, ASN_XNAP_XnAP_PDU *pdu)

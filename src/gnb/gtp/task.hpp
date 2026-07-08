@@ -34,6 +34,7 @@ class GtpTask : public NtsTask
     std::unique_ptr<IRateLimiter> m_rateLimiter;
     //std::unordered_map<uint64_t, std::unique_ptr<PduSessionResource>> m_pduSessions;
     PduSessionTree m_sessionTree;
+    std::unordered_map<UeSessionId, GtpTunnel, UeSessionIdHash> m_forwardingTunnels;
 
     friend class GnbCmdHandler;
 
@@ -57,6 +58,7 @@ class GtpTask : public NtsTask
     void handleSessionRelease(int64_t ueId, int psi);
     void handleUeContextDelete(int64_t ueId);
     void handleUplinkData(int64_t ueId, int psi, int qfi, OctetString &&data);
+    void handleForwardingTunnelSetup(int64_t ueId, int psi, GtpTunnel &&tunnel);
 
     void updateAmbrForUe(int64_t ueId);
     void updateAmbrForSession(int64_t ueId, int psi);

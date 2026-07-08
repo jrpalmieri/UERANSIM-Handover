@@ -27,6 +27,7 @@
 #include <asn/ngap/ASN_NGAP_GlobalRANNodeID.h>
 #include <asn/ngap/ASN_NGAP_GNB-ID.h>
 #include <asn/ngap/ASN_NGAP_HandoverCommand.h>
+#include <asn/ngap/ASN_NGAP_HandoverCommandTransfer.h>
 #include <asn/ngap/ASN_NGAP_HandoverFailure.h>
 #include <asn/ngap/ASN_NGAP_HandoverRequiredTransfer.h>
 #include <asn/ngap/ASN_NGAP_HandoverRequest.h>
@@ -42,10 +43,14 @@
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceAdmittedList.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceFailedToSetupItemHOAck.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceFailedToSetupListHOAck.h>
+#include <asn/ngap/ASN_NGAP_PDUSessionResourceHandoverItem.h>
+#include <asn/ngap/ASN_NGAP_PDUSessionResourceHandoverList.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceItemHORqd.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceListHORqd.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceSetupItemHOReq.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceSetupRequestTransfer.h>
+#include <asn/ngap/ASN_NGAP_PDUSessionResourceToReleaseItemHOCmd.h>
+#include <asn/ngap/ASN_NGAP_PDUSessionResourceToReleaseListHOCmd.h>
 #include <asn/ngap/ASN_NGAP_ProtocolIE-Field.h>
 #include <asn/ngap/ASN_NGAP_QosFlowItemWithDataForwarding.h>
 #include <asn/ngap/ASN_NGAP_QosFlowSetupRequestItem.h>
@@ -216,15 +221,11 @@ static OctetString MakeHoAcknowledgeTransfer(const PduSessionResource &resource)
     asn::SetBitString(upInfo.choice.gTPTunnel->transportLayerAddress, resource.downTunnel.address);
     asn::SetOctetString4(upInfo.choice.gTPTunnel->gTP_TEID, (octet4)resource.downTunnel.teid);
 
-    if (resource.qosFlows)
+    for (const auto &flow : resource.qosFlows)
     {
-        auto &qosList = resource.qosFlows->list;
-        for (int i = 0; i < qosList.count; i++)
-        {
-            auto *qosItem = asn::New<ASN_NGAP_QosFlowItemWithDataForwarding>();
-            qosItem->qosFlowIdentifier = qosList.array[i]->qosFlowIdentifier;
-            asn::SequenceAdd(tr->qosFlowSetupResponseList, qosItem);
-        }
+        auto *qosItem = asn::New<ASN_NGAP_QosFlowItemWithDataForwarding>();
+        qosItem->qosFlowIdentifier = flow.qfi;
+        asn::SequenceAdd(tr->qosFlowSetupResponseList, qosItem);
     }
 
     OctetString encoded = ngap_encode::EncodeS(asn_DEF_ASN_NGAP_HandoverRequestAcknowledgeTransfer, tr);
@@ -800,7 +801,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg, 
 
 /**
  * @brief Send a HandoverRequestAcknowledge message to the UE
- * Called when a HANDOVER_REQUEST_ACK msg is received from teh RRC task.
+ * Called when a HANDOVER_REQUEST_ACK msg is received from the RRC task.
  * The message includes the list of admitted and failed PDU session resources, as well as the target RRC container.
  * Maps the transactionID to a pending handover object in the handoversPending map.
  * 
@@ -1042,8 +1043,72 @@ void NgapTask::receiveHandoverCommand(int amfId, ASN_NGAP_HandoverCommand *msg)
 
     bool isCho = ue->handoverIsChoPreparation;
 
-    // TODO: need to Add Session information parsing to set up UP DL forwarding.  There should be a list of accepted 
-    // and rejected PDU sessions in the message, and tunnel IDs for the temporary UP links for forwarding.
+    // Parse accepted PDU sessions: extract DL forwarding tunnel per session from HandoverCommandTransfer
+    auto *ieHoList = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceHandoverList);
+    if (ieHoList)
+    {
+        auto &hoList = ieHoList->PDUSessionResourceHandoverList.list;
+        for (int i = 0; i < hoList.count; i++)
+        {
+            auto *item = hoList.array[i];
+            if (!item)
+                continue;
+
+            auto *transfer = ngap_encode::Decode<ASN_NGAP_HandoverCommandTransfer>(
+                asn_DEF_ASN_NGAP_HandoverCommandTransfer, item->handoverCommandTransfer);
+            if (!transfer)
+            {
+                m_logger->warn("UE[%ld]: receiveHandoverCommand - failed to decode HandoverCommandTransfer for PDU session %ld",
+                               ue->ctxId, (long)item->pDUSessionID);
+                continue;
+            }
+
+            if (transfer->dLForwardingUP_TNLInformation &&
+                transfer->dLForwardingUP_TNLInformation->present == ASN_NGAP_UPTransportLayerInformation_PR_gTPTunnel)
+            {
+                auto *gtpTunnel = transfer->dLForwardingUP_TNLInformation->choice.gTPTunnel;
+
+                GtpTunnel fwdTunnel;
+                fwdTunnel.teid    = (uint32_t)asn::GetOctet4(gtpTunnel->gTP_TEID);
+                fwdTunnel.address = asn::GetOctetString(gtpTunnel->transportLayerAddress);
+
+                m_logger->info("UE[%ld]: receiveHandoverCommand - PDU session %ld DL forwarding tunnel: addr=%s teid=0x%08x",
+                               ue->ctxId, (long)item->pDUSessionID,
+                               utils::OctetStringToIp(fwdTunnel.address).c_str(), fwdTunnel.teid);
+
+                auto gm = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::FORWARDING_TUNNEL_SETUP);
+                gm->ueId             = ue->ctxId;
+                gm->psi              = (int)item->pDUSessionID;
+                gm->forwardingTunnel = std::move(fwdTunnel);
+                m_base->gtpTask->push(std::move(gm));
+            }
+            else
+            {
+                m_logger->info("UE[%ld]: receiveHandoverCommand - PDU session %ld: no DL forwarding tunnel",
+                               ue->ctxId, (long)item->pDUSessionID);
+            }
+
+            asn::Free(asn_DEF_ASN_NGAP_HandoverCommandTransfer, transfer);
+        }
+    }
+    else
+    {
+        m_logger->info("UE[%ld]: receiveHandoverCommand - no PDUSessionResourceHandoverList in message", ue->ctxId);
+    }
+
+    // Parse PDU sessions the AMF wants released at the source
+    auto *ieRelList = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceToReleaseListHOCmd);
+    if (ieRelList)
+    {
+        auto &relList = ieRelList->PDUSessionResourceToReleaseListHOCmd.list;
+        for (int i = 0; i < relList.count; i++)
+        {
+            auto *item = relList.array[i];
+            if (item)
+                m_logger->info("UE[%ld]: receiveHandoverCommand - PDU session %ld flagged for release",
+                               ue->ctxId, (long)item->pDUSessionID);
+        }
+    }
 
     // Forward to RRC task
 

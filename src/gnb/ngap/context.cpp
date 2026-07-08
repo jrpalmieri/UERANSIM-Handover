@@ -43,6 +43,8 @@
 #include <asn/ngap/ASN_NGAP_ProtocolIE-Field.h>
 #include <asn/ngap/ASN_NGAP_QosFlowPerTNLInformationItem.h>
 #include <asn/ngap/ASN_NGAP_QosFlowPerTNLInformationList.h>
+#include <asn/ngap/ASN_NGAP_NonDynamic5QIDescriptor.h>
+#include <asn/ngap/ASN_NGAP_QosCharacteristics.h>
 #include <asn/ngap/ASN_NGAP_QosFlowSetupRequestItem.h>
 #include <asn/ngap/ASN_NGAP_QosFlowSetupRequestList.h>
 #include <asn/ngap/ASN_NGAP_SuccessfulOutcome.h>
@@ -102,34 +104,6 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
         m_base->gtpTask->push(std::move(w));
     }
 
-    // Extract Security Information (Capabilities, Key)
-    // {
-    //     auto *secIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_UESecurityCapabilities);
-    //     if (secIe)
-    //     {
-    //         // These are all 16-bit bit strings, convert them to uint16_t
-    //         ue->ueSecInfo.nRencryptionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.nRencryptionAlgorithms).get4UI(0));
-    //         ue->ueSecInfo.eUTRAencryptionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.eUTRAencryptionAlgorithms).get4UI(0));
-    //         ue->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.nRintegrityProtectionAlgorithms).get4UI(0));
-    //         ue->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap = static_cast<uint16_t>(asn::GetOctetString(secIe->UESecurityCapabilities.eUTRAintegrityProtectionAlgorithms).get4UI(0));
-
-    //         m_logger->debug("UE[%ld] Initial Context Setup: sending SECURITY_INFO to RRC - nRencryptionAlgorithms=0x%04x, eUTRAencryptionAlgorithms=0x%04x, nRintegrityProtectionAlgorithms=0x%04x, eUTRAintegrityProtectionAlgorithms=0x%04x",
-    //             ue->ctxId, ue->ueSecInfo.nRencryptionAlgorithmsBitmap, ue->ueSecInfo.eUTRAencryptionAlgorithmsBitmap,
-    //             ue->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap, ue->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap);
-    //     }
-    // }
-
-    // {
-    //     auto *secIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_SecurityKey);
-    //     if (secIe)
-    //     {
-    //         auto sk = asn::GetOctetString(secIe->SecurityKey);
-    //         std::copy(sk.data(), sk.data() + sk.length(), ue->ueSecInfo.k_gnb.begin());
-    //         m_logger->debug("UE[%ld] Initial Context Setup: Security Key received, length=%d bytes",
-    //             ue->ctxId, ue->ueSecInfo.k_gnb.size());
-    //     }
-    // }
-
     // Send security info to RRC now (so it can send Security Mode Command to UE)
 
     {
@@ -138,24 +112,6 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
         w->ueSecInfo = std::make_unique<UeSecurityInfo>(ue->ueSecInfo);
         m_base->rrcTask->push(std::move(w));
     }
-
-    // Extract Allowed NSSAIs
-    // auto *nssaiIe = asn::ngap::GetProtocolIe(msg, ASN_NGAP_ProtocolIE_ID_id_AllowedNSSAI);
-    // if (nssaiIe)    {
-    //     auto &list = nssaiIe->AllowedNSSAI.list;
-    //     for (int i = 0; i < list.count; i++)
-    //     {            auto &item = list.array[i];
-            
-    //         SingleSlice slice{};
-    //         slice.sst = item->s_NSSAI.sST.buf[0];
-    //         slice.sd = (item->s_NSSAI.sD && item->s_NSSAI.sD->size > 0) ? std::optional<octet3>{asn::GetOctet3(*item->s_NSSAI.sD)} : std::nullopt;
-    //         ue->allowedNssais.emplace_back(slice);
-
-    //         m_logger->debug("UE[%ld] Initial Context Setup: Allowed NSSAI received - SST=%d, SD=%s",
-    //             ue->ctxId, slice.sst, slice.sd ? std::to_string(static_cast<uint32_t>(*slice.sd)).c_str() : "None");
-    //     }
-    // }
-
 
 
     // Extract PDU Session Resource Setup List
@@ -221,11 +177,10 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
                 // Create the response transfer for the successful PDU session setup
                 auto *tr = asn::New<ASN_NGAP_PDUSessionResourceSetupResponseTransfer>();
 
-                auto &qosList = resource->qosFlows->list;
-                for (int iQos = 0; iQos < qosList.count; iQos++)
+                for (const auto &flow : resource->qosFlows)
                 {
                     auto *associatedQosFlowItem = asn::New<ASN_NGAP_AssociatedQosFlowItem>();
-                    associatedQosFlowItem->qosFlowIdentifier = qosList.array[iQos]->qosFlowIdentifier;
+                    associatedQosFlowItem->qosFlowIdentifier = flow.qfi;
                     asn::SequenceAdd(tr->dLQosFlowPerTNLInformation.associatedQosFlowList, associatedQosFlowItem);
                 }
 
@@ -514,9 +469,26 @@ void NgapTask::makeNgapPduSessionItems(PduSessionResource *resource,
     ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_QosFlowSetupRequestList);
     if (ie)
     {
-        auto *ptr = asn::New<ASN_NGAP_QosFlowSetupRequestList>();
-        asn::DeepCopy(asn_DEF_ASN_NGAP_QosFlowSetupRequestList, ie->QosFlowSetupRequestList, ptr);
-        resource->qosFlows = asn::WrapUnique(ptr, asn_DEF_ASN_NGAP_QosFlowSetupRequestList);
+        auto &list = ie->QosFlowSetupRequestList.list;
+        for (int i = 0; i < list.count; i++)
+        {
+            auto *ngapFlow = list.array[i];
+            if (!ngapFlow)
+                continue;
+            QosFlowInfo flow{};
+            flow.qfi = static_cast<int>(ngapFlow->qosFlowIdentifier);
+            const auto &qosChars = ngapFlow->qosFlowLevelQosParameters.qosCharacteristics;
+            if (qosChars.present == ASN_NGAP_QosCharacteristics_PR_nonDynamic5QI &&
+                qosChars.choice.nonDynamic5QI)
+                flow.fiveQi = qosChars.choice.nonDynamic5QI->fiveQI;
+            else
+                flow.fiveQi = 9;
+            const auto &arp = ngapFlow->qosFlowLevelQosParameters.allocationAndRetentionPriority;
+            flow.arpPriorityLevel      = arp.priorityLevelARP;
+            flow.arpPreemptCapability  = arp.pre_emptionCapability;
+            flow.arpPreemptVulnerability = arp.pre_emptionVulnerability;
+            resource->qosFlows.push_back(flow);
+        }
     }
 }
 

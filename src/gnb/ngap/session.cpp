@@ -125,11 +125,10 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
 
                 auto *tr = asn::New<ASN_NGAP_PDUSessionResourceSetupResponseTransfer>();
 
-                auto &qosList = resource->qosFlows->list;
-                for (int iQos = 0; iQos < qosList.count; iQos++)
+                for (const auto &flow : resource->qosFlows)
                 {
                     auto *associatedQosFlowItem = asn::New<ASN_NGAP_AssociatedQosFlowItem>();
-                    associatedQosFlowItem->qosFlowIdentifier = qosList.array[iQos]->qosFlowIdentifier;
+                    associatedQosFlowItem->qosFlowIdentifier = flow.qfi;
                     asn::SequenceAdd(tr->dLQosFlowPerTNLInformation.associatedQosFlowList, associatedQosFlowItem);
                 }
 
@@ -249,7 +248,7 @@ std::optional<NgapCause> NgapTask::setupPduSessionResource(NgapUeContext *ue, Pd
         return NgapCause::Protocol_transfer_syntax_error;
     }
 
-    if (resource->qosFlows == nullptr || resource->qosFlows->list.count == 0)
+    if (resource->qosFlows.empty())
     {
         m_logger->err("UE[%ld]: PDU session resource could not setup: QoS flow list is null or empty", ue->ctxId);
         return NgapCause::Protocol_semantic_error;
