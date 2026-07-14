@@ -2,7 +2,7 @@
 
 The Xn Layer is implemented using the XnTask class.  The XnTask uses the standard NTS message queue to handle messages between layers.
 
-The Xn control plane interface (Xn-C) is implemented using SCTP as transport and XNAP as its application layer protocol. XNAP is standardized to use SCTP port 38422.  All non-UE-Associated messages are sent using StreamID 0.  Ue-associated messages are assigned an available StreamId for the initial message in a procedure sequence.  Since messages can be identified from their application layer content, strict StreamID checking can be disabled.
+The Xn control plane interface (Xn-C) is implemented using SCTP as transport and XNAP as its application layer protocol. XNAP is standardized to use SCTP port 38422.  All non-UE-Associated messages are sent using StreamID 0.  UE-associated messages are assigned an available StreamId for the initial message in a procedure sequence.  Since messages can be identified from their application layer content, strict StreamID checking can be disabled.
 
 The Xn user plane interface (Xn-U) is implemented using UDP as transport and GTP-U as tunneling transport.
 

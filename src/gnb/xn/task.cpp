@@ -39,7 +39,8 @@ void XnTask::onLoop()
         case NmGnbRrcToXn::HANDOVER_REQUEST_SEND:
         {
             m_logger->info("UE[%ld] HandoverRequest received from RRC, targetNCI=%ld", w.ueId, w.targetNci);
-            // get contexts for handover request
+            // must first check that contexts are available for the UE
+            // if not, we move the request into the deferred queue for retry
             auto contexts = std::make_unique<GnbHandoverUeContexts>();
             if (!GetUeContexts(w.ueId, *contexts))
             {
@@ -54,23 +55,27 @@ void XnTask::onLoop()
                 enqueueDeferred(std::move(deferred));
                 break;
             }
-
+            // if contexts exist, we are good to send the HandoverRequest msg
             sendHandoverRequest(w.ueId, w.targetNci, std::move(contexts), std::move(w.rrcContainer), std::move(w.choParams));
             break;
         }
         case NmGnbRrcToXn::HANDOVER_REQUEST_ACK_SEND:
+            // sends the HandoverRequestAck msg back to the source gNB
             sendHandoverRequestAck(w.xnTxId, w.ueId, std::move(w.rrcContainer), std::move(w.admittedSessions), std::move(w.rejectedSessions));
             break;
         case NmGnbRrcToXn::HANDOVER_PREPARATION_FAILURE_SEND:
+            // sends the HandoverPreparationFailure msg back to the source gNB
             sendHandoverPreparationFailure(w.xnTxId, w.reason);
             break;
          case NmGnbRrcToXn::HANDOVER_CANCEL_SEND:
             xnHandoverCancelSource(w.ueId, w.targetNci, w.choParams != nullptr);
             break;
        case NmGnbRrcToXn::UE_CONTEXT_RELEASE_SEND:
+           // sends the UeContextRelease msg to the source gNB
             sendUeContextRelease(w.ueId, w.targetNci);
             break;
         case NmGnbRrcToXn::SN_STATUS_TRANSFER_SEND:
+            // sends the SnStatusTransfer msg to the source gNB
             sendSnStatusTransfer(w.ueId, w.targetNci, w.choParams != nullptr);
             break;
         case NmGnbRrcToXn::HANDOVER_SUCCESS_SEND:
