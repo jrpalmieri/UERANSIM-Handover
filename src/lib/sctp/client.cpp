@@ -39,9 +39,18 @@ sctp::SctpClient::SctpClient(PayloadProtocolId ppid, const std::string &address,
     }
 }
 
+sctp::SctpClient::SctpClient(PayloadProtocolId ppid, int connectedFd) : sd(connectedFd), ppid(ppid)
+{
+}
+
 sctp::SctpClient::~SctpClient()
 {
     CloseSocket(sd);
+}
+
+void sctp::SctpClient::queryStatus(int &assocId, int &inStreams, int &outStreams) const
+{
+    QueryStatus(sd, assocId, inStreams, outStreams);
 }
 
 void sctp::SctpClient::connect(const std::string &address, uint16_t port) const

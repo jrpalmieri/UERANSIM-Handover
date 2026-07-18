@@ -44,6 +44,8 @@ void NgapTask::onStart()
 
     setTimer(TIMER_DEFERRED_QUEUE, DEFERRED_QUEUE_INTERVAL_MS);
     setTimer(TIMER_STATUS_UPDATE, TIMER_STATUS_UPDATE_INTERVAL_MS);
+    // garbage-collect abandoned N2 target-side handover preparations
+    setTimer(TIMER_HO_PENDING_SWEEP, TIMER_HO_PENDING_SWEEP_INTERVAL_MS);
 }
 
 void NgapTask::onLoop()
@@ -70,10 +72,24 @@ void NgapTask::onLoop()
             handleRadioLinkFailure(w.ueId);
             break;
         }
+        // RRC (target gnb) notifies NGAP of completion of handover preparation.
+        //   NGAP can now send HandoverRequestAcknowledge to the AMF
+        case NmGnbRrcToNgap::HANDOVER_REQUEST_ACK_SEND: {
+            sendHandoverRequestAcknowledge(w.ngapTxId, w.ueId, std::move(w.admittedSessions),
+                std::move(w.rejectedSessions), std::move(w.rrcContainer));
+            break;
+        }
         // RRC (target gnb) notifies NGAP of handover completion. NGAP will notify AMF with NGAP HANDOVER NOTIFY.
         //      AMF will notify source gnb to delete UE context.
         case NmGnbRrcToNgap::HANDOVER_NOTIFY_SEND: {
             sendHandoverNotify(w.ueId);
+            break;
+        }
+        // RRC (target gnb) rejected a HandoverRequest (decode failure, C-RNTI exhaustion, ...).
+        //      NGAP sends HandoverFailure to the AMF — which converts it to a
+        //      HandoverPreparationFailure toward the source gNB.
+        case NmGnbRrcToNgap::HANDOVER_FAILURE_SEND: {
+            handleRrcHandoverFailure(w.ngapTxId, w.hoCause);
             break;
         }
         // RRC (source gnb) notifies NGAP of handover start. NGAP will notify AMF with HANDOVER_REQUIRED.
@@ -103,6 +119,18 @@ void NgapTask::onLoop()
             sendPathSwitchRequest(w.ueId);
             break;
         }
+        case NmGnbRrcToNgap::XN_HANDOVER_PREPARE: {
+            prepareXnHandover(w.ueId, std::move(w.xnCoreContext), std::move(w.admittedSessions));
+            break;
+        }
+        case NmGnbRrcToNgap::XN_SOURCE_CONTEXT_RELEASE: {
+            releaseXnSourceContext(w.ueId);
+            break;
+        }
+        case NmGnbRrcToNgap::XN_TARGET_PREPARATION_CANCEL: {
+            cancelXnTargetPreparation(w.ueId);
+            break;
+        }
         
         }
         break;
@@ -121,6 +149,10 @@ void NgapTask::onLoop()
         case NmGnbSctp::ASSOCIATION_SHUTDOWN:
             handleAssociationShutdown(w.clientId);
             break;
+        case NmGnbSctp::CONNECTION_FAILED:
+            // No retry policy for the AMF link yet — surface it clearly.
+            m_logger->err("SCTP connection to AMF failed (clientId=%d)", w.clientId);
+            break;
         default:
             m_logger->unhandledNts(*msg);
             break;
@@ -138,6 +170,11 @@ void NgapTask::onLoop()
         {
             sendGnbStatusUpdate();
             setTimer(TIMER_STATUS_UPDATE, TIMER_STATUS_UPDATE_INTERVAL_MS);
+        }
+        else if (w.timerId == TIMER_HO_PENDING_SWEEP)
+        {
+            sweepPendingHandovers();
+            setTimer(TIMER_HO_PENDING_SWEEP, TIMER_HO_PENDING_SWEEP_INTERVAL_MS);
         }
         break;
     }

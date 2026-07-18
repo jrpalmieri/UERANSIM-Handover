@@ -83,6 +83,7 @@ GNodeB::GNodeB(GnbConfig *config, app::INodeListener *nodeListener, NtsTask *cli
 
     base->appTask = new GnbAppTask(base);
     base->sctpTask = new SctpTask(base);
+    base->xnSctpTask = new SctpTask(base, "sctp-xn");
     base->ngapTask = new NgapTask(base);
     base->rrcTask = new GnbRrcTask(base);
     base->gtpTask = new GtpTask(base);
@@ -114,8 +115,9 @@ GNodeB::~GNodeB()
     taskBase->rrcTask->quit();
     taskBase->gtpTask->quit();
     taskBase->rlsTask->quit();
-    // if (taskBase->config->xn.enabled)
-    //     taskBase->xnTask->quit();
+    // quit() is safe on never-started tasks (xn.enabled == false)
+    taskBase->xnTask->quit();
+    taskBase->xnSctpTask->quit();
 
     delete taskBase->appTask;
     delete taskBase->sctpTask;
@@ -123,7 +125,8 @@ GNodeB::~GNodeB()
     delete taskBase->rrcTask;
     delete taskBase->gtpTask;
     delete taskBase->rlsTask;
-    // delete taskBase->xnTask;
+    delete taskBase->xnTask;
+    delete taskBase->xnSctpTask;
 
     sat_time::SetSatTimeSource(nullptr);
     delete taskBase->satTime;
@@ -146,8 +149,12 @@ void GNodeB::start()
     taskBase->rlsTask->start();
     taskBase->gtpTask->start();
 
-    // if (taskBase->config->xn.enabled)
-    //     taskBase->xnTask->start();
+    if (taskBase->config->xn.enabled)
+    {
+        // SCTP first: XnTask::onStart immediately issues connection requests
+        taskBase->xnSctpTask->start();
+        taskBase->xnTask->start();
+    }
 }
 
 void GNodeB::pushCommand(std::unique_ptr<app::GnbCliCommand> cmd, const InetAddress &address)

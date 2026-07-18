@@ -52,15 +52,15 @@ static constexpr uint8_t SIB19_PDU_EPH_TYPE_POS_VEL = 0;
 static constexpr uint8_t SIB19_PDU_EPH_TYPE_ORBITAL  = 1;
 static constexpr uint8_t SIB19_PDU_EPH_TYPE_TLE      = 2;
 static constexpr size_t SIB19_HEADER_SIZE = 8;
-static constexpr size_t SIB19_ENTRY_SIZE = 96;      // PosVel / Orbital entry size
-static constexpr size_t SIB19_TLE_ENTRY_SIZE = 216; // TLE entry size
+static constexpr size_t SIB19_ENTRY_SIZE = 100;     // PosVel / Orbital entry size
+static constexpr size_t SIB19_TLE_ENTRY_SIZE = 220; // TLE entry size
 static constexpr uint32_t SIB19_MAX_ENTRIES = 256;
 
 // Offset of the first common field within a standard (PosVel/Orbital) entry.
-static constexpr size_t SIB19_STD_COMMON_OFF = 52;
+static constexpr size_t SIB19_STD_COMMON_OFF = 56;
 // Offset of the first common field within a TLE entry.
-// Layout: 8 (NCI) + 25 (name) + 70 (line1) + 70 (line2) + 3 (pad) = 172
-static constexpr size_t SIB19_TLE_COMMON_OFF = 172;
+// Layout: 8 (NCI) + 25 (name) + 70 (line1) + 70 (line2) + 3 (pad) = 176
+static constexpr size_t SIB19_TLE_COMMON_OFF = 176;
 
 template <typename T>
 static void WriteLe(std::vector<uint8_t> &buffer, size_t offset, const T &value)
@@ -285,9 +285,9 @@ void GnbRrcTask::triggerSib19Broadcast()
     // -----------------------------------------------------------------------
     // Serialise payload: version=2, ephType from config.
     //
-    // PosVel / Orbital entry (96 bytes): 4 (NCI) + 48 (ephemeris) + 44 (common)
-    // TLE entry          (216 bytes): 4 (NCI) + 25 (name) + 70 (line1) +
-    //                                 70 (line2) + 3 (pad) + 44 (common)
+    // PosVel / Orbital entry (100 bytes): 8 (NCI) + 48 (ephemeris) + 44 (common)
+    // TLE entry           (220 bytes): 8 (NCI) + 25 (name) + 70 (line1) +
+    //                                  70 (line2) + 3 (pad) + 44 (common)
     // -----------------------------------------------------------------------
     const bool isTle = (ephType == ESib19EphemerisMode::Tle);
     const size_t entrySize = isTle ? SIB19_TLE_ENTRY_SIZE : SIB19_ENTRY_SIZE;
@@ -312,34 +312,34 @@ void GnbRrcTask::triggerSib19Broadcast()
         const auto &e = entries[i];
         const size_t base = SIB19_HEADER_SIZE + static_cast<size_t>(i) * entrySize;
 
-        WriteLe(payload, base, static_cast<int32_t>(e.nci));
+        WriteLe(payload, base, static_cast<int64_t>(e.nci));
 
         if (ephType == ESib19EphemerisMode::PosVel)
         {
-            WriteLe(payload, base + 4,  e.x);
-            WriteLe(payload, base + 12, e.y);
-            WriteLe(payload, base + 20, e.z);
-            WriteLe(payload, base + 28, e.vx);
-            WriteLe(payload, base + 36, e.vy);
-            WriteLe(payload, base + 44, e.vz);
+            WriteLe(payload, base + 8,  e.x);
+            WriteLe(payload, base + 16, e.y);
+            WriteLe(payload, base + 24, e.z);
+            WriteLe(payload, base + 32, e.vx);
+            WriteLe(payload, base + 40, e.vy);
+            WriteLe(payload, base + 48, e.vz);
         }
         else if (ephType == ESib19EphemerisMode::Orbital)
         {
-            WriteLe(payload, base + 4,  e.semiMajorAxis);
-            WriteLe(payload, base + 12, e.eccentricity);
-            WriteLe(payload, base + 16, e.periapsis);
-            WriteLe(payload, base + 20, e.longitude);
-            WriteLe(payload, base + 24, e.inclination);
-            WriteLe(payload, base + 28, e.meanAnomaly);
-            // base+32..base+51 reserved — zeroed by vector initialisation
+            WriteLe(payload, base + 8,  e.semiMajorAxis);
+            WriteLe(payload, base + 16, e.eccentricity);
+            WriteLe(payload, base + 20, e.periapsis);
+            WriteLe(payload, base + 24, e.longitude);
+            WriteLe(payload, base + 28, e.inclination);
+            WriteLe(payload, base + 32, e.meanAnomaly);
+            // base+36..base+55 reserved — zeroed by vector initialisation
         }
         else  // Tle
         {
-            // name at +4 (25 bytes), line1 at +29 (70 bytes), line2 at +99 (70 bytes)
-            // bytes 169..171 are padding — already zeroed by vector initialisation
-            std::memcpy(payload.data() + base + 4,  e.tleName,  sizeof(e.tleName));
-            std::memcpy(payload.data() + base + 29, e.tleLine1, sizeof(e.tleLine1));
-            std::memcpy(payload.data() + base + 99, e.tleLine2, sizeof(e.tleLine2));
+            // name at +8 (25 bytes), line1 at +33 (70 bytes), line2 at +103 (70 bytes)
+            // bytes 173..175 are padding — already zeroed by vector initialisation
+            std::memcpy(payload.data() + base + 8,   e.tleName,  sizeof(e.tleName));
+            std::memcpy(payload.data() + base + 33,  e.tleLine1, sizeof(e.tleLine1));
+            std::memcpy(payload.data() + base + 103, e.tleLine2, sizeof(e.tleLine2));
         }
 
         // Common fields at offset `commonOff` within each entry (layout is identical

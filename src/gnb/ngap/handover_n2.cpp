@@ -6,9 +6,6 @@
 //   - receiveHandoverCommand()         ← AMF → source gNB (SuccessfulOutcome)
 //   - receiveHandoverPreparationFailure() ← AMF → source gNB (UnsuccessfulOutcome)
 //   - sendHandoverNotify()             → target gNB → AMF
-//   - sendPathSwitchRequest()          → target gNB → AMF
-//   - receivePathSwitchRequestAcknowledge() ← AMF → target gNB
-//   - receivePathSwitchRequestFailure()     ← AMF → target gNB
 //   - handleHandoverNotifyFromRrc()    (orchestrator called from task.cpp)
 //
 
@@ -100,7 +97,11 @@ static constexpr uint32_t CUSTOM_T2S_MAGIC = 0x54325343; // "T2SC"
 static constexpr uint8_t CUSTOM_T2S_VERSION = 1;
 static constexpr uint32_t CUSTOM_T2S_DEFAULT_BLOB_SIZE = 0;
 static constexpr uint8_t CUSTOM_S2T_FLAG_CHO_INDICATION = 0x01;
-static constexpr int CHO_CANDIDATE_TIMEOUT_MS = 60000;
+// Must stay aligned with (or exceed) the RRC layer's COND_HANDOVER_TIMEOUT_MS
+// (rrc/handover.cpp, 100 s): both pending maps guard the same CHO preparation,
+// and NGAP expiring first would strand a still-valid RRC candidate — its
+// eventual HandoverNotify would find no NGAP context to promote.
+static constexpr int CHO_CANDIDATE_TIMEOUT_MS = 100000;
 
 
 // struct CustomS2tTransparentContainer
@@ -379,6 +380,111 @@ void NgapTask::sendHandoverFailure(NgapCause cause, int64_t ueId)
     sendNgapUeAssociated(ueId, failurePdu);
 
 };
+
+/**
+ * @brief Handles HANDOVER_FAILURE_SEND from RRC: the target-side RRC could not
+ * prepare the requested handover (container decode failure, C-RNTI exhaustion, ...).
+ * Sends an NGAP HandoverFailure to the AMF for this transaction and drops the
+ * pending target-side context, so the AMF can convert the failure into a
+ * HandoverPreparationFailure toward the source gNB instead of waiting for an
+ * acknowledge that will never come.
+ *
+ * Note: no established UE context exists at this point — the provisional context
+ * lives only in m_handoversPending (its ueId may not be resolved yet), so the
+ * mandatory AMF-UE-NGAP-ID IE is filled explicitly from the pending entry and the
+ * PDU is sent with sendNgapNonUe() rather than sendNgapUeAssociated().
+ *
+ * @param transactionId the NGAP transaction id assigned in receiveHandoverRequest()
+ * @param cause         failure cause reported by RRC
+ */
+void NgapTask::handleRrcHandoverFailure(uint32_t transactionId, NgapCause cause)
+{
+    auto it = m_handoversPending.find(transactionId);
+    if (it == m_handoversPending.end())
+    {
+        m_logger->err("handleRrcHandoverFailure: no pending handover found for transaction ID %u", transactionId);
+        return;
+    }
+    auto &pending = it->second;
+
+    m_logger->info("NGTxId[%u]: RRC rejected HandoverRequest (cause=%d), sending HandoverFailure to AMF[%d]",
+                   transactionId, static_cast<int>(cause), pending.amfId);
+
+    // AMF-UE-NGAP-ID is mandatory in HandoverFailure; take it from the provisional context.
+    auto *idIe = asn::New<ASN_NGAP_HandoverFailureIEs>();
+    idIe->id = ASN_NGAP_ProtocolIE_ID_id_AMF_UE_NGAP_ID;
+    idIe->criticality = ASN_NGAP_Criticality_ignore;
+    idIe->value.present = ASN_NGAP_HandoverFailureIEs__value_PR_AMF_UE_NGAP_ID;
+    asn::SetSigned64(pending.ctx ? pending.ctx->amfUeNgapId : 0, idIe->value.choice.AMF_UE_NGAP_ID);
+
+    auto *causeIe = asn::New<ASN_NGAP_HandoverFailureIEs>();
+    causeIe->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
+    causeIe->criticality = ASN_NGAP_Criticality_ignore;
+    causeIe->value.present = ASN_NGAP_HandoverFailureIEs__value_PR_Cause;
+    ngap_utils::ToCauseAsn_Ref(cause, causeIe->value.choice.Cause);
+
+    auto *failurePdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverFailure>({idIe, causeIe});
+    sendNgapNonUe(pending.amfId, failurePdu);
+
+    // Drop the pending target-side context (the unique_ptr ctx is freed by the erase).
+    m_handoversPending.erase(it);
+}
+
+/**
+ * @brief Periodic garbage collection of the N2 target-side pending-handover map
+ * (TIMER_HO_PENDING_SWEEP, every 1 s) — the NGAP counterpart of
+ * GnbRrcTask::sweepPendingHandovers().
+ *
+ * A pending entry whose UE never completed the handover (no HandoverNotify
+ * promotion) is dropped once its expireTime passes (5 s basic /
+ * CHO_CANDIDATE_TIMEOUT_MS for CHO, stamped in receiveHandoverRequest).
+ * If the preparation was already ACKed, the UE identity was adopted
+ * (pending.ueId > 0) and GTP holds a provisional UE context plus sessions —
+ * release them, unless an *active* NGAP context exists for that ueId (never
+ * destroy a live UE's user plane).  Pre-ACK entries still carry ueId 0 and
+ * have created no GTP state.
+ *
+ * Deliberately out of scope here:
+ *  - m_xnHandoversPending is not swept — RRC's own sweep cancels it via
+ *    XN_TARGET_PREPARATION_CANCEL (cancelXnTargetPreparation is idempotent).
+ *  - No message is sent to the AMF: the AMF already holds our
+ *    HandoverRequestAcknowledge (or HandoverFailure), and its own relocation
+ *    supervision timer covers a UE that never arrives.
+ */
+void NgapTask::sweepPendingHandovers()
+{
+    if (m_handoversPending.empty())
+        return;
+
+    const int64_t now = utils::CurrentTimeMillis();
+
+    for (auto it = m_handoversPending.begin(); it != m_handoversPending.end();)
+    {
+        auto &pending = it->second;
+        if (pending.expireTime > now)
+        {
+            ++it;
+            continue;
+        }
+
+        m_logger->warn("NGTxId[%u]: pending %s handover expired (ueId=%ld); discarding provisional NGAP context",
+                       it->first, pending.choCandidate ? "CHO" : "N2", pending.ueId);
+
+        // Roll back the provisional GTP state created at ACK time.  ueId == 0
+        // means the ACK never happened (identity not adopted), so GTP holds
+        // nothing for this preparation.
+        if (pending.ueId > 0 && m_ueCtx.count(pending.ueId) == 0)
+        {
+            auto gtp = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::UE_CONTEXT_RELEASE_RECEIVED);
+            gtp->ueId = pending.ueId;
+            gtp->cause = NgapCause::RadioNetwork_tngrelocoverall_expiry;
+            m_base->gtpTask->push(std::move(gtp));
+        }
+
+        // The provisional NgapUeContext (unique_ptr) is freed by the erase.
+        it = m_handoversPending.erase(it);
+    }
+}
 
 // TODO: failure mode without UE context
 // void NgapTask::sendHandoverFailure(int64_t amfUeNgapId, uint16_t stream, NgapCause cause) 
@@ -800,7 +906,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg, 
 
 
 /**
- * @brief Send a HandoverRequestAcknowledge message to the UE
+ * @brief Send a HandoverRequestAcknowledge message to the AMF
  * Called when a HANDOVER_REQUEST_ACK msg is received from the RRC task.
  * The message includes the list of admitted and failed PDU session resources, as well as the target RRC container.
  * Maps the transactionID to a pending handover object in the handoversPending map.
@@ -840,6 +946,15 @@ void NgapTask::sendHandoverRequestAcknowledge(uint32_t transactionId, int64_t ue
         return;
     }
 
+    // Adopt the UE identity resolved by RRC from the source's transparent container.
+    //  The provisional context was created in receiveHandoverRequest() with ctxId=0
+    //  (the identity is unknown until RRC decodes the container).  Everything below
+    //  keys off this value: the RAN-UE-NGAP-ID, the GTP UE context, the pending-map
+    //  ueId used by sendNgapUeAssociated()'s fallback lookup, and the
+    //  sendHandoverNotify() lookup that promotes the context on handover completion.
+    handover.ueId = ueId;
+    ue->ctxId = ueId;
+
     // assign RAN-UE-NGAP-ID
     ue->ranUeNgapId = ue->ctxId;
 
@@ -872,46 +987,60 @@ void NgapTask::sendHandoverRequestAcknowledge(uint32_t transactionId, int64_t ue
     if (rrcAdmittedSessions) {
         for (auto &resource : *rrcAdmittedSessions)
         {
+            // Heap-allocate the resource before GTP setup: setupPduSessionResource()
+            //  hands the raw pointer to the GTP task, which reads it asynchronously —
+            //  a pointer into the function-local rrcAdmittedSessions vector would be
+            //  dangling by then.  (Same heap-allocate convention as the normal
+            //  session-setup path in session.cpp.)
+            auto *res = new PduSessionResource(resource);
+
+            // Stamp the adopted UE identity: the resources were built in
+            //  receiveHandoverRequest() with the placeholder ueId=0, and GTP keys
+            //  its session tree (and UE-context check) by resource->ueId.
+            res->ueId = ueId;
+
             // send session to GTP to setup
-            auto setupError = setupPduSessionResource(ue, &resource);
+            auto setupError = setupPduSessionResource(ue, res);
 
             // check if the setup failed
             if (setupError.has_value())
             {
-                m_logger->warn("UE[%ld] handover PDU session[%d]: setup failed cause=%d", ue->ctxId, resource.psi,
+                m_logger->warn("UE[%ld] handover PDU session[%d]: setup failed cause=%d", ue->ctxId, res->psi,
                             (int)setupError.value());
 
                 OctetString encodedFail = MakeHoSetupUnsuccessfulTransfer(setupError.value());
 
                 auto *failed = asn::New<ASN_NGAP_PDUSessionResourceFailedToSetupItemHOAck>();
-                failed->pDUSessionID = resource.psi;
+                failed->pDUSessionID = res->psi;
                 asn::SetOctetString(failed->handoverResourceAllocationUnsuccessfulTransfer, encodedFail);
                 failedList.push_back(failed);
             }
             else
             {
-                OctetString encodedAck = MakeHoAcknowledgeTransfer(resource);
+                // note: the ack transfer must encode the heap copy — setupPduSessionResource()
+                //  wrote the downlink tunnel (address/TEID) into it, not into `resource`
+                OctetString encodedAck = MakeHoAcknowledgeTransfer(*res);
                 if (encodedAck.length() == 0)
                 {
                     m_logger->warn("UE[%ld] handover PDU session %d: failed to encode acknowledge transfer", ue->ctxId,
-                                resource.psi);
+                                res->psi);
 
                     OctetString encodedFail = MakeHoSetupUnsuccessfulTransfer(NgapCause::Protocol_semantic_error);
 
                     auto *failed = asn::New<ASN_NGAP_PDUSessionResourceFailedToSetupItemHOAck>();
-                    failed->pDUSessionID = resource.psi;
+                    failed->pDUSessionID = res->psi;
                     asn::SetOctetString(failed->handoverResourceAllocationUnsuccessfulTransfer, encodedFail);
                     failedList.push_back(failed);
                 }
                 else
                 {
                     auto *admitted = asn::New<ASN_NGAP_PDUSessionResourceAdmittedItem>();
-                    admitted->pDUSessionID = resource.psi;
+                    admitted->pDUSessionID = res->psi;
                     asn::SetOctetString(admitted->handoverRequestAcknowledgeTransfer, encodedAck);
                     admittedList.push_back(admitted);
 
-                    m_logger->debug("UE[%ld] handover PDU session[%d]: admitted teid=%u", ue->ctxId, resource.psi,
-                                    resource.downTunnel.teid);
+                    m_logger->debug("UE[%ld] handover PDU session[%d]: admitted teid=%u", ue->ctxId, res->psi,
+                                    res->downTunnel.teid);
                 }
             }
 

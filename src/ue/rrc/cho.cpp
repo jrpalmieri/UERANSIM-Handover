@@ -26,7 +26,6 @@
 //
 // Implements:
 //   - parseConditionalReconfiguration(): ASN.1 path.
-//   - handleChoConfiguration(): Binary DL_CHO test/fallback path.
 //   - evaluateChoCandidates(): Per-cycle condition group evaluation.
 //   - evaluateCondition(): Single atomic condition evaluation.
 //   - selectBestCandidate(): Priority + tie-breaking.

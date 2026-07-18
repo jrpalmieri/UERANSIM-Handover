@@ -108,9 +108,40 @@ class SctpHandler : public sctp::ISctpHandler
         client->receive(handler);
 }
 
-SctpTask::SctpTask(TaskBase *base) : m_base{base}, m_clients{}
+// Blocks in accept() on a listening endpoint; every accepted association is
+// handed to the SCTP task as a CONNECTION_ACCEPTED message.  The thread ends
+// via pthread_cancel from ScopedThread's destructor (accept and sleep are
+// cancellation points); an exception must never escape (std::terminate), so
+// accept failures back off and retry instead of throwing.
+[[noreturn]] static void AcceptThread(std::pair<sctp::SctpServer *, SctpTask *> *args)
 {
-    m_logger = base->logBase->makeUniqueLogger("sctp");
+    sctp::SctpServer *server = args->first;
+    SctpTask *task = args->second;
+
+    delete args;
+
+    while (true)
+    {
+        int fd;
+        try
+        {
+            fd = server->acceptClient();
+        }
+        catch (const sctp::SctpError &)
+        {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+        }
+
+        auto w = std::make_unique<NmGnbSctp>(NmGnbSctp::CONNECTION_ACCEPTED);
+        w->acceptedFd = fd;
+        task->push(std::move(w));
+    }
+}
+
+SctpTask::SctpTask(TaskBase *base, const char *loggerName) : m_base{base}, m_clients{}
+{
+    m_logger = base->logBase->makeUniqueLogger(loggerName);
 }
 
 void SctpTask::onStart()
@@ -133,6 +164,15 @@ void SctpTask::onLoop()
         case NmGnbSctp::CONNECTION_REQUEST: {
             receiveSctpConnectionSetupRequest(w.clientId, w.localAddress, w.localPort, w.remoteAddress,
                                               w.remotePort, w.ppid, w.associatedTask, w.maxTxStreams, w.maxRxStreams);
+            break;
+        }
+        case NmGnbSctp::LISTEN_REQUEST: {
+            receiveListenRequest(w.localAddress, w.localPort, w.ppid, w.associatedTask, w.maxTxStreams,
+                                 w.maxRxStreams);
+            break;
+        }
+        case NmGnbSctp::CONNECTION_ACCEPTED: {
+            receiveConnectionAccepted(w.acceptedFd);
             break;
         }
         case NmGnbSctp::CONNECTION_CLOSE: {
@@ -173,6 +213,15 @@ void SctpTask::onLoop()
 
 void SctpTask::onQuit()
 {
+    if (m_listener != nullptr)
+    {
+        // Cancel the accept thread before closing the listen socket it blocks on.
+        delete m_listener->acceptThread;
+        delete m_listener->server;
+        delete m_listener;
+        m_listener = nullptr;
+    }
+
     for (auto &client : m_clients)
     {
         ClientEntry *entry = client.second;
@@ -198,6 +247,17 @@ void SctpTask::receiveSctpConnectionSetupRequest(int clientId, const std::string
 
     auto *client = new sctp::SctpClient(ppid, localAddress, maxTxStreams, maxRxStreams);
 
+    // On bind/connect failure the requesting task is notified with
+    // CONNECTION_FAILED so it can apply its own retry policy (e.g. the Xn
+    // task retries failed neighbor connections on its periodic check).
+    auto notifyFailure = [this, clientId, associatedTask]() {
+        if (associatedTask == nullptr)
+            return;
+        auto msg = std::make_unique<NmGnbSctp>(NmGnbSctp::CONNECTION_FAILED);
+        msg->clientId = clientId;
+        associatedTask->push(std::move(msg));
+    };
+
     try
     {
         client->bind(localAddress, localPort);
@@ -206,6 +266,7 @@ void SctpTask::receiveSctpConnectionSetupRequest(int clientId, const std::string
     {
         m_logger->err("Binding to local address %s:%d failed. %s", localAddress.c_str(), localPort, exc.what());
         delete client;
+        notifyFailure();
         return;
     }
 
@@ -217,6 +278,7 @@ void SctpTask::receiveSctpConnectionSetupRequest(int clientId, const std::string
     {
         m_logger->err("Connecting to remote address %s:%d failed. %s", remoteAddress.c_str(), remotePort, exc.what());
         delete client;
+        notifyFailure();
         return;
     }
 
@@ -231,6 +293,93 @@ void SctpTask::receiveSctpConnectionSetupRequest(int clientId, const std::string
     entry->client = client;
     entry->handler = handler;
     entry->associatedTask = associatedTask;
+    entry->receiverThread = new ScopedThread(
+        [](void *arg) { ReceiverThread(reinterpret_cast<std::pair<sctp::SctpClient *, sctp::ISctpHandler *> *>(arg)); },
+        new std::pair<sctp::SctpClient *, sctp::ISctpHandler *>(client, handler));
+}
+
+void SctpTask::receiveListenRequest(const std::string &localAddress, uint16_t localPort, sctp::PayloadProtocolId ppid,
+                                    NtsTask *associatedTask, uint16_t maxTxStreams, uint16_t maxRxStreams)
+{
+    if (m_listener != nullptr)
+    {
+        m_logger->err("SCTP listener already active, ignoring LISTEN_REQUEST for %s:%d", localAddress.c_str(),
+                      static_cast<int>(localPort));
+        return;
+    }
+
+    sctp::SctpServer *server;
+    try
+    {
+        server = new sctp::SctpServer(localAddress, localPort, maxRxStreams, maxTxStreams);
+    }
+    catch (const sctp::SctpError &exc)
+    {
+        m_logger->err("SCTP listen on %s:%d failed. %s", localAddress.c_str(), static_cast<int>(localPort),
+                      exc.what());
+        return;
+    }
+
+    auto *entry = new ListenerEntry;
+    entry->server = server;
+    entry->ppid = ppid;
+    entry->associatedTask = associatedTask;
+    entry->acceptThread = new ScopedThread(
+        [](void *arg) { AcceptThread(reinterpret_cast<std::pair<sctp::SctpServer *, SctpTask *> *>(arg)); },
+        new std::pair<sctp::SctpServer *, SctpTask *>(server, this));
+    m_listener = entry;
+
+    m_logger->info("SCTP listening on %s:%d", localAddress.c_str(), static_cast<int>(localPort));
+}
+
+void SctpTask::receiveConnectionAccepted(int acceptedFd)
+{
+    if (m_listener == nullptr)
+    {
+        // Listener torn down while the message was in flight; close the stray
+        // fd via a throwaway wrapper (ppid is irrelevant for closing).
+        sctp::SctpClient stray{sctp::PayloadProtocolId::XNAP, acceptedFd};
+        return;
+    }
+
+    auto *client = new sctp::SctpClient(m_listener->ppid, acceptedFd);
+
+    // The association is already established, so no COMM_UP notification will
+    // be delivered; query its parameters and synthesize ASSOCIATION_SETUP.
+    int assocId, inStreams, outStreams;
+    try
+    {
+        client->queryStatus(assocId, inStreams, outStreams);
+    }
+    catch (const sctp::SctpError &exc)
+    {
+        m_logger->err("Accepted SCTP association unusable: %s", exc.what());
+        delete client;
+        return;
+    }
+
+    int clientId = m_nextInboundClientId--;
+
+    sctp::ISctpHandler *handler = new SctpHandler(this, clientId);
+
+    auto *entry = new ClientEntry;
+    m_clients[clientId] = entry;
+    entry->id = clientId;
+    entry->client = client;
+    entry->handler = handler;
+    entry->associatedTask = m_listener->associatedTask;
+
+    m_logger->info("SCTP association accepted (clientId=%d, streams in=%d out=%d)", clientId, inStreams, outStreams);
+
+    // Deliver ASSOCIATION_SETUP before starting the receiver thread so it is
+    // guaranteed to precede any RECEIVE_MESSAGE for this clientId.
+    auto msg = std::make_unique<NmGnbSctp>(NmGnbSctp::ASSOCIATION_SETUP);
+    msg->clientId = clientId;
+    msg->associationId = assocId;
+    msg->inStreams = inStreams;
+    msg->outStreams = outStreams;
+    entry->associatedTask->push(std::move(msg));
+
     entry->receiverThread = new ScopedThread(
         [](void *arg) { ReceiverThread(reinterpret_cast<std::pair<sctp::SctpClient *, sctp::ISctpHandler *> *>(arg)); },
         new std::pair<sctp::SctpClient *, sctp::ISctpHandler *>(client, handler));
@@ -309,6 +458,9 @@ void SctpTask::receiveConnectionClose(int clientId)
     }
 
     DeleteClientEntry(entry);
+    // Erase the map entry, otherwise it keeps a dangling pointer that a late
+    // receiver-thread message (or onQuit's cleanup loop) would dereference.
+    m_clients.erase(clientId);
 }
 
 void SctpTask::receiveSendMessage(int clientId, uint16_t stream, UniqueBuffer &&buffer)

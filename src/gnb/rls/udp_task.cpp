@@ -43,11 +43,10 @@ static int64_t getUeIdFromSti(uint64_t sti)
     return static_cast<int64_t>(sti >> 10);
 }
 
-RlsUdpTask::RlsUdpTask(TaskBase *base, uint64_t sti,
-                        Vector3 phyLocation)
+RlsUdpTask::RlsUdpTask(TaskBase *base, uint64_t sti)
     : m_base{base}, m_server{}, m_ctlTask{}, m_sti{sti},
       m_cellId{static_cast<uint32_t>(base->config->getCellId())},
-      m_phyLocation{phyLocation}, m_lastLoop{},
+      m_lastLoop{},
     m_stiToUe{}, m_ueMap{}, m_newIdCounter{},
 //                m_fixedRsrp{base->getFixedRsrp()},
         m_loopCounter{base->config->rls.loopCounter},
@@ -249,7 +248,7 @@ void RlsUdpTask::send(int64_t ueId, const rls::RlsMessage &msg)
         std::lock_guard<std::mutex> lock(m_ueMutex);
         if (!m_ueMap.count(ueId))
         {
-            // ignore the message
+            m_logger->warn("Unable to send RLS message to UE[%ld] because address is unknown", ueId);
             return;
         }
         peer = m_ueMap[ueId].address;

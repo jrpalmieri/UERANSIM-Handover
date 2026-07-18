@@ -9,6 +9,7 @@
 #pragma once
 
 #include <memory>
+#include <shared_mutex>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -42,6 +43,14 @@ class GnbRrcTask : public NtsTask
 
     // UE RRC Contexts, indexed by UE ID
     std::unordered_map<int64_t, RrcUeContext *> m_ueCtx;
+
+    // Guards m_ueCtx and the contexts it owns for cross-thread reads
+    // (same pattern as RlsControlTask::copyUeContext).  The RRC task thread
+    // holds a unique_lock for the duration of each message dispatch in
+    // onLoop(); getUeContext() (called from the Xn task thread) holds a
+    // shared_lock while copying.  Never call getUeContext() from the RRC
+    // task thread itself — it would deadlock against the dispatch lock.
+    mutable std::shared_mutex m_ueCtxMutex;
 
     // Pending Handover Contexts, indexed by UE ID
     std::unordered_map<int64_t, RRCHandoverPending> m_handoversPending;
@@ -77,18 +86,18 @@ class GnbRrcTask : public NtsTask
     explicit GnbRrcTask(TaskBase *base);
     ~GnbRrcTask() override = default;
 
-    std::vector<HandoverMeasurementIdentity> getHandoverMeasurementIdentities(int64_t ueId) const;
-    OctetString getHandoverMeasConfigRrcReconfiguration(int64_t ueId) const;
-    //int64_t buildHandoverCommandForTransfer(int64_t ueId, int64_t targetNci, int newCrnti, int t304Ms,
-    //                    OctetString &rrcContainer);
-    bool addPendingHandover(int64_t ueId, const HandoverPreparationInfo &handoverPrep,
-                OctetString &rrcContainer);
-    void setTrueGeoPosition(const GeoPosition &value);
+    // Dead declarations (no implementation — calling any of these would be a
+    // link error).  Commented out rather than deleted in case the planned
+    // functionality returns; see RRC_summary.md issue 14.
+    //std::vector<HandoverMeasurementIdentity> getHandoverMeasurementIdentities(int64_t ueId) const;
+    //OctetString getHandoverMeasConfigRrcReconfiguration(int64_t ueId) const;
+    //void setTrueGeoPosition(const GeoPosition &value);
+    //void setTruePositionVelocity(const PositionVelocity &value);
+    //PositionVelocity getTruePositionVelocity() const;
+    //void upsertSatTles(const std::vector<nr::sat::SatTleEntry> &entries);
+
     GeoPosition getTrueGeoPosition() const;
-    void setTruePositionVelocity(const PositionVelocity &value);
-    PositionVelocity getTruePositionVelocity() const;
     void upsertSatellitePositionVelocity(const SatellitePositionVelocityEntry &value);
-    void upsertSatTles(const std::vector<nr::sat::SatTleEntry> &entries);
     bool getUeContext(int64_t ueId, std::optional<RrcUeContext> &out);
 
   protected:
@@ -117,7 +126,20 @@ class GnbRrcTask : public NtsTask
                       const asn::Unique<ASN_NGAP_TAIListForPaging> &taiList);
     void handleNgapSecurityInfo(int64_t ueId, std::unique_ptr<UeSecurityInfo> secInfo);
     void handleNgapPduSessionUpdate(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> sessionList);
+    void handleNgapPduSessionRelease(int64_t ueId, const std::vector<int> &releasedPsis);
     ASN_RRC_RadioBearerConfig_t* createRadioBearerConfig(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> &sessionList);
+
+    // Assigns (or, for an already-mapped PSI, reuses) a DRB id in the range 1..32,
+    // using the UE's bearerMap as the authoritative pool.  Returns the RLS-encoded
+    // bearer id (bit 6 set), or 0 if the UE has no free DRB id left.
+    uint8_t allocateDrbId(RrcUeContext *ue, int psi);
+
+    // Assigns one DRB per session (reusing existing DRBs for known PSIs), records
+    // the result in ue->bearerMap, and appends the corresponding upsert entries to
+    // the RLS radio-bearer / SDAP update lists.  Shared by the normal setup path
+    // and the target-side handover pre-programming path.
+    void assignSessionBearers(RrcUeContext *ue, const std::vector<PduSessionResource> &sessions,
+                              RadioBearerUpdate &rbUpdate, SdapUpdate &sdapUpdate);
     void handleUeContextRelease(int64_t ueId, NgapCause cause);
 
 
@@ -160,8 +182,6 @@ class GnbRrcTask : public NtsTask
     /* UE Management - ues.cpp */
 
     RrcUeContext *createUe(int64_t ueId, int crnti);
-    RrcUeContext *tryFindUeByCrnti(int crnti);
-    RrcUeContext *tryFindUeByUeId(int64_t ueId);
     void ueContextRelease(int64_t ueId);
 
 
@@ -171,31 +191,48 @@ class GnbRrcTask : public NtsTask
     void receiveRrcSetupComplete(int64_t ueId, const ASN_RRC_RRCSetupComplete &msg);
     void receiveSecurityModeComplete(int64_t ueId, int cRnti, const ASN_RRC_SecurityModeComplete &msg);
 
-    /* Reconfiguration and Measurement - reconfiguration.cpp */
-    ASN_RRC_DL_DCCH_Message* makeRrcReconfiguration(int64_t ueId);
-    void receiveRrcReconfigurationComplete(int64_t ueId, int cRnti, const ASN_RRC_RRCReconfigurationComplete &msg);
+    /* Measurement - measurement.cpp */
     void receiveMeasurementReport(int64_t ueId, int cRnti, const ASN_RRC_MeasurementReport &msg);
     void sendMeasConfig(int64_t ueId, bool forceResend = false);
     std::vector<long> createMeasConfig(ASN_RRC_MeasConfig *&mc, RrcUeContext *ue,
                   std::vector<std::pair<nr::rrc::common::ReportConfigEvent, int>> taggedEvents
                   );
 
+    /* Reconfiguration - reconfiguration.cpp */
+    ASN_RRC_DL_DCCH_Message* makeRrcReconfiguration(int64_t ueId);
+    void receiveRrcReconfigurationComplete(int64_t ueId, int cRnti, const ASN_RRC_RRCReconfigurationComplete &msg);
+    
     /* Handover - handover.cpp */
     void evaluateHandoverDecision(int64_t ueId, int measId);
     void executeBasicHandover(RrcUeContext *ue, long bestNeighNci, int servingRsrp, int bestNeighRsrp);
     void handleHandoverRequest(int sourceGnbId, uint32_t transactionId, std::unique_ptr<OctetString> rrcContainer,
                     std::unique_ptr<std::vector<PduSessionResource>> sessionList,
-                    bool isCho, EReqestingTask requestingTask);
-    void handleHandoverAckOrCommand(int64_t ueId, std::unique_ptr<OctetString> rrcContainer, bool isCho, EReqestingTask requestingTask);
+                    bool isCho, ERequestingTask requestingTask,
+                    std::unique_ptr<XnHandoverCoreContext> xnCoreContext = nullptr,
+                    std::unique_ptr<XnChoRequest> xnChoRequest = nullptr);
+    // Frees a provisional (pending-handover) UE context and returns its C-RNTI
+    // to the pool.  Shared by the handleHandoverRequest failure paths, the
+    // Xn handover-cancel handler, and the pending-handover expiry sweep.
+    void discardHandoverUeContext(RrcUeContext *ue);
+    // Periodic (1 s) garbage collection of m_handoversPending entries whose
+    // expireTime has passed — i.e. the UE never completed the handover.
+    void sweepPendingHandovers();
+    // Cleans up any partially-built target-side state and answers the handover
+    // requester with a failure: XnAP HandoverPreparationFailure (Xn) or
+    // NGAP HandoverFailure via HANDOVER_FAILURE_SEND (NGAP).
+    void rejectHandoverRequest(ERequestingTask requestingTask, uint32_t transactionId,
+                    NgapCause ngapCause, ASN_XNAP_Cause_PR xnCauseGroup, RrcUeContext *ue);
+    void handleHandoverAckOrCommand(int64_t ueId, std::unique_ptr<OctetString> rrcContainer, bool isCho,
+                                    ERequestingTask requestingTask, int64_t targetNci = -1);
 
     void sendUeHandoverMessage(int64_t ueId, int64_t targetNci, int newCrnti, int t304Ms);
-    void handleHandoverComplete(int64_t ueId);
+    //void handleHandoverComplete(int64_t ueId);  // dead declaration — no implementation (see RRC_summary.md issue 14)
     void processConditionalHandover(int64_t ueId,
                     const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams,
                     int choProfileIdx);
     
-    void handleHandoverPreparationFailure(int64_t ueId, int64_t targetNci, bool fromChoPreparation, EReqestingTask requestingTask);
-    void handoverContextRelease(int64_t ueId);
+    void handleHandoverPreparationFailure(int64_t ueId, int64_t targetNci, bool fromChoPreparation, ERequestingTask requestingTask);
+    //void handoverContextRelease(int64_t ueId);  // dead declaration — no implementation (see RRC_summary.md issue 14)
     void completeConditionalHandover(RrcUeContext *ue, std::unique_ptr<OctetString> rrcContainer);
     std::vector<ScoredNeighbor> prioritizeNeighbors(const std::vector<GnbNeighborState> &neighborList, int64_t servingNci,
                     const nr::sat::EcefPosition &ueEcef,

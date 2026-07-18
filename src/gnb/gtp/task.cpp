@@ -143,6 +143,10 @@ void GtpTask::onLoop()
             handleForwardingTunnelSetup(w.ueId, w.psi, std::move(w.forwardingTunnel));
             break;
         }
+        case NmGnbNgapToGtp::SESSION_UL_TUNNEL_UPDATE: {
+            handleUlTunnelUpdate(w.ueId, w.psi, std::move(w.ulTunnel));
+            break;
+        }
         }
         break;
     }
@@ -152,6 +156,10 @@ void GtpTask::onLoop()
         {
         case NmGnbXnToGtp::FORWARDING_TUNNEL_SETUP: {
             handleForwardingTunnelSetup(w.ueId, w.psi, std::move(w.forwardingTunnel));
+            break;
+        }
+        case NmGnbXnToGtp::FORWARDING_TEID_REGISTER: {
+            handleForwardingTeidRegister(w.ueId, w.psi, w.teid);
             break;
         }
         }
@@ -231,11 +239,37 @@ void GtpTask::handleSessionRelease(int64_t ueId, int psi)
     m_rateLimiter->updateSessionUplinkLimit(ueId, psi, 0);
     m_rateLimiter->updateSessionDownlinkLimit(ueId, psi, 0);
 
+    // Drop any Xn-U forwarding TEID registered for this session
+    for (auto it = m_incomingForwardingTeids.begin(); it != m_incomingForwardingTeids.end();)
+    {
+        if (it->second == UeSessionId{ueId, psi})
+            it = m_incomingForwardingTeids.erase(it);
+        else
+            ++it;
+    }
+
     // And remove from PDU session tree
     m_sessionTree.removeSession(ueId, psi);
 
     m_logger->debug("UE[%ld] PDU session resource released. PSI[%d]", ueId, psi);
 
+}
+
+// Applies a UL NG-U endpoint re-allocated by the 5GC at path switch (from the
+// PathSwitchRequestAcknowledgeTransfer) — subsequent uplink data goes to the
+// new UPF tunnel.
+void GtpTask::handleUlTunnelUpdate(int64_t ueId, int psi, GtpTunnel &&tunnel)
+{
+    PduSessionResource *session;
+    if (m_sessionTree.getSession(ueId, psi, session) != 0)
+    {
+        m_logger->warn("UE[%ld]: UL tunnel update for unknown PSI[%d], ignoring", ueId, psi);
+        return;
+    }
+
+    m_logger->info("UE[%ld]: PSI[%d] UL NG-U tunnel updated by path switch: teid=0x%08x -> 0x%08x", ueId, psi,
+                   session->upTunnel.teid, tunnel.teid);
+    session->upTunnel = std::move(tunnel);
 }
 
 void GtpTask::handleForwardingTunnelSetup(int64_t ueId, int psi, GtpTunnel &&tunnel)
@@ -250,6 +284,24 @@ void GtpTask::handleForwardingTunnelSetup(int64_t ueId, int psi, GtpTunnel &&tun
     uint32_t teid = tunnel.teid;
     m_forwardingTunnels[UeSessionId{ueId, psi}] = std::move(tunnel);
     m_logger->info("UE[%ld]: PSI[%d] DL forwarding enabled → teid=0x%08x", ueId, psi, teid);
+}
+
+// Target side of Xn DL data forwarding: installs a TEID this gNB advertised in
+// a HandoverRequestAcknowledge, so packets relayed by the source gNB can be
+// matched to the UE's session.  The registration is not gated on the session
+// existing yet — the NGAP SESSION_CREATE from the provisional target context
+// and this message race benignly; the session is resolved per packet.
+void GtpTask::handleForwardingTeidRegister(int64_t ueId, int psi, uint32_t teid)
+{
+    auto existing = m_incomingForwardingTeids.find(teid);
+    if (existing != m_incomingForwardingTeids.end() && !(existing->second == UeSessionId{ueId, psi}))
+    {
+        m_logger->warn("UE[%ld]: forwarding TEID 0x%08x already registered to UE[%ld] PSI[%d], overwriting",
+                       ueId, teid, existing->second.ueId, existing->second.psi);
+    }
+
+    m_incomingForwardingTeids[teid] = UeSessionId{ueId, psi};
+    m_logger->info("UE[%ld]: PSI[%d] Xn-U DL forwarding TEID 0x%08x installed", ueId, psi, teid);
 }
 
 void GtpTask::handleUeContextDelete(int64_t ueId)
@@ -269,6 +321,17 @@ void GtpTask::handleUeContextDelete(int64_t ueId)
         m_forwardingTunnels.erase(UeSessionId{session.ueId, session.psi});
 
         count++;
+    }
+
+    // Drop any Xn-U forwarding TEIDs registered for this UE (this is also the
+    // teardown path for handover cancel/expiry — the provisional target context
+    // is released via UE_CONTEXT_RELEASE_RECEIVED)
+    for (auto it = m_incomingForwardingTeids.begin(); it != m_incomingForwardingTeids.end();)
+    {
+        if (it->second.ueId == ueId)
+            it = m_incomingForwardingTeids.erase(it);
+        else
+            ++it;
     }
 
     // Remove all sessions from PDU session tree
@@ -353,6 +416,36 @@ void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
     switch (gtp->msgType)
     {
     case gtp::GtpMessage::MT_G_PDU: {
+        // A packet on a registered Xn-U forwarding TEID is DL data relayed from
+        // the source gNB during handover; deliver it straight to the UE via RLS.
+        {
+            auto fwdIt = m_incomingForwardingTeids.find(gtp->teid);
+            if (fwdIt != m_incomingForwardingTeids.end())
+            {
+                int fwdQfi = -1;
+                for (auto &ext : gtp->extHeaders)
+                {
+                    if (ext->type == gtp::ExtHeaderType::PduSessionContainerExtHeader)
+                    {
+                        auto &pduCont = dynamic_cast<gtp::PduSessionContainerExtHeader &>(*ext);
+                        if (pduCont.pduSessionInformation->pduType == gtp::PduSessionInformation::PDU_TYPE_DL)
+                            fwdQfi = dynamic_cast<gtp::DlPduSessionInformation &>(*pduCont.pduSessionInformation).qfi;
+                    }
+                }
+
+                m_logger->debug("UE[%ld]: Forwarded DL data received for PSI=%d. TEID=[%u], payload_size=[%zu] QFI=%d",
+                                fwdIt->second.ueId, fwdIt->second.psi, gtp->teid, gtp->payload.length(), fwdQfi);
+
+                auto w = std::make_unique<NmGnbGtpToRls>(NmGnbGtpToRls::DATA_PDU_DELIVERY);
+                w->ueId = fwdIt->second.ueId;
+                w->psi = fwdIt->second.psi;
+                w->qfi = fwdQfi;
+                w->pdu = std::move(gtp->payload);
+                m_base->rlsTask->push(std::move(w));
+                return;
+            }
+        }
+
         // find the session Id using the TEID in the GTP header
         auto ueSessionId = m_sessionTree.findByDownTeid(gtp->teid);
         if (ueSessionId == nullptr)
@@ -440,6 +533,19 @@ void GtpTask::handleUdpReceive(const udp::NwUdpServerReceive &msg)
     }
     case gtp::GtpMessage::MT_END_MARKER: {
         m_logger->debug("Received GTP-U End Marker for TEID %u", gtp->teid);
+
+        // End Marker arriving at the target on a forwarding TEID marks the end
+        // of DL data relayed from the source gNB — deregister the tunnel.
+        {
+            auto fwdIt = m_incomingForwardingTeids.find(gtp->teid);
+            if (fwdIt != m_incomingForwardingTeids.end())
+            {
+                m_logger->info("UE[%ld]: PSI=%d End Marker received on Xn-U forwarding tunnel, DL forwarding complete",
+                               fwdIt->second.ueId, fwdIt->second.psi);
+                m_incomingForwardingTeids.erase(fwdIt);
+                return;
+            }
+        }
 
         auto *endSession = m_sessionTree.findByDownTeid(gtp->teid);
         if (!endSession)

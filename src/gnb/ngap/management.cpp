@@ -80,6 +80,15 @@ NgapAmfContext *NgapTask::getAmfContextForXn(int amfId)
     return findAmfContext(amfId);
 }
 
+NgapAmfContext *NgapTask::getConnectedAmfContextForXn()
+{
+    for (auto &entry : m_amfCtx)
+        if (entry.second != nullptr && entry.second->state == EAmfState::CONNECTED &&
+            !entry.second->servedGuamiList.empty())
+            return entry.second;
+    return nullptr;
+}
+
 NgapUeContext *NgapTask::findUeByRanId(int64_t ranUeNgapId)
 {
     if (ranUeNgapId <= 0)

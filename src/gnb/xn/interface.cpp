@@ -1,8 +1,10 @@
 #include "task.hpp"
 #include "encode.hpp"
 
+#include <gnb/neighbors.hpp>
 #include <gnb/ngap/utils.hpp>
 #include <lib/asn/utils.hpp>
+#include <utils/common.hpp>
 
 extern "C"
 {
@@ -89,11 +91,21 @@ static void setXnPlmn(ASN_XNAP_PLMN_Identity_t &dst, const Plmn &plmn)
 }
 
 
-// called when SCTP client has established a new association.
-// triggers XnSetup procedure by sending an XnSetupRequest on the new association
-void XnTask::handleAssociationSetup(int gnbId, int ascId, int inCount, int outCount)
+// called when an SCTP association comes up — either our outbound connection to
+// a neighbor (positive clientId == gnbId; we initiate the XnSetup procedure) or
+// an accepted inbound association (negative clientId; peer identity unknown
+// until its XnSetupRequest arrives, so it is parked in m_pendingInbound).
+void XnTask::handleAssociationSetup(int clientId, int ascId, int inCount, int outCount)
 {
-    auto *gnb = m_xnPeerTable.getPeerInfo(gnbId);
+    if (clientId < 0)
+    {
+        m_logger->info("Inbound Xn association up (clientId=%d), awaiting XnSetupRequest", clientId);
+        m_pendingInbound[clientId] =
+            PendingInboundAssoc{ascId, inCount, outCount, static_cast<uint64_t>(utils::CurrentTimeMillis())};
+        return;
+    }
+
+    auto *gnb = m_xnPeerTable.getPeerInfo(clientId);
 
     if (gnb != nullptr)
     {
@@ -104,32 +116,50 @@ void XnTask::handleAssociationSetup(int gnbId, int ascId, int inCount, int outCo
         assoc.outStreams = outCount;
         gnb->sctpAssoc = assoc;
 
-        // reset stream ID manager
-        gnb->streamIdManager.resetStreams(inCount, outCount);
+        // reset stream ID manager, partitioning the UE-associated stream space by
+        // gnbId (lower gnbId → EVEN, higher → ODD) so opposing handovers never
+        // collide on a stream ID.
+        const int myGnbId = static_cast<int>(m_base->config->getGnbId());
+        const StreamParity parity = (myGnbId < gnb->gnbId) ? StreamParity::Even : StreamParity::Odd;
+        gnb->streamIdManager.resetStreams(inCount, outCount, parity);
 
         // trigger XNAP setup procedure by sending an XnSetupRequest on the new association
-        xnSetupRequestSend(gnbId);
+        xnSetupRequestSend(clientId);
     }
     else
     {
-        m_logger->err("Failed to find XnPeerNode for gnbId=%d, SCTP setup failed", gnbId);
+        m_logger->err("Failed to find XnPeerNode for gnbId=%d, SCTP setup failed", clientId);
     }
 }
 
-void XnTask::handleAssociationShutdown(int gnbId)
+void XnTask::handleAssociationShutdown(int clientId)
 {
-    auto *gnb = m_xnPeerTable.getPeerInfo(gnbId);
+    // An inbound association that never completed Xn Setup just gets dropped.
+    if (m_pendingInbound.erase(clientId) > 0)
+    {
+        auto w = std::make_unique<NmGnbSctp>(NmGnbSctp::CONNECTION_CLOSE);
+        w->clientId = clientId;
+        m_base->xnSctpTask->push(std::move(w));
+        return;
+    }
+
+    auto *gnb = m_xnPeerTable.findByClientId(clientId);
     if (gnb == nullptr)
         return;
 
+    const int gnbId = gnb->gnbId;
+
     m_logger->info("Association terminated for gNB[%d]", gnbId);
+    // Resolve handovers before removing peer metadata; cleanup messages use
+    // only local task queues and remain safe after the SCTP association is gone.
+    handlePeerHandoverLoss(gnbId);
     m_logger->debug("Removing gNB[%d] from peer table", gnbId);
 
     m_xnPeerTable.removePeerInfo(gnbId);
 
     auto w = std::make_unique<NmGnbSctp>(NmGnbSctp::CONNECTION_CLOSE);
-    w->clientId = gnbId;
-    m_base->sctpTask->push(std::move(w));
+    w->clientId = clientId;
+    m_base->xnSctpTask->push(std::move(w));
 
 }
 
@@ -225,17 +255,25 @@ void XnTask::xnSetupRequestSend(int gnbId)
     // -----------------------------------------------------------------------
     // IE 3 — AMF-Region-Information  (mandatory, criticality=reject)
     //   Identifies the AMF region(s) reachable via this gNB.
-    //   Assumption: use PLMN from config and AMF region ID = 0.  A real
-    //   implementation should read the amfRegionId from the connected AMF's
-    //   GUAMI (available in NgapAmfContext via the app/NGAP task).  Setting
-    //   region 0 is harmless for setup — the peer uses it only for AMF
-    //   selection hints, not for authentication.
+    //   Uses the PLMN from config and the AMF region ID advertised by the
+    //   connected AMF in its served GUAMI list.
     // -----------------------------------------------------------------------
 
     auto *amfRegionEntry = asn::New<ASN_XNAP_GlobalAMF_Region_Information_t>();
     setXnPlmn(amfRegionEntry->plmn_ID, cfg->plmn);
+
     // amf_region_id is a BIT_STRING of exactly 8 bits (TS 38.413 clause 9.3.3.1).
-    asn::SetBitStringInt<8>(0, amfRegionEntry->amf_region_id); // Assumption: placeholder 0
+    auto *amf = m_base->ngapTask->getConnectedAmfContextForXn();
+    if (amf == nullptr)
+    {
+        m_logger->err("xnSetupRequestSend: no connected AMF with a served GUAMI");
+        asn::Free(asn_DEF_ASN_XNAP_GlobalAMF_Region_Information, amfRegionEntry);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieTaiList);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieGlobalId);
+        return;
+    }
+    asn::SetBitStringInt<8>(amf->servedGuamiList.front()->guami.amfRegionId,
+                            amfRegionEntry->amf_region_id);
 
     auto *amfRegionInfo = asn::New<ASN_XNAP_AMF_Region_Information_t>();
     asn::SequenceAdd(*amfRegionInfo, amfRegionEntry);
@@ -398,10 +436,10 @@ void XnTask::xnSetupRequestSend(int gnbId)
     }
 
     auto sctpMsg = std::make_unique<NmGnbSctp>(NmGnbSctp::SEND_MESSAGE);
-    sctpMsg->clientId = gnbId;  // clientId == target NCI, as set in updateXnConnections()
+    sctpMsg->clientId = gnbId;  // initiator-only path: outbound clientId == neighbor gnbId
     sctpMsg->stream   = NON_UE_ASSOCIATED_STREAM_ID;
     sctpMsg->buffer   = UniqueBuffer{buffer, static_cast<size_t>(encoded)};
-    m_base->sctpTask->push(std::move(sctpMsg));
+    m_base->xnSctpTask->push(std::move(sctpMsg));
 
     m_logger->info("XnSetupRequest sent to gnbId=%d", gnbId);
 
@@ -444,15 +482,15 @@ static void xnPlmnDecode(const ASN_XNAP_PLMN_Identity_t &src, Plmn &out)
     }
 }
 
-void XnTask::xnSetupRequestReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
+void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
 {
-    m_logger->debug("xnSetupRequestReceive gnbId=%d", gnbId);
+    m_logger->debug("xnSetupRequestReceive clientId=%d", clientId);
 
     auto *initMsg = pdu->choice.initiatingMessage;
     if (!initMsg || !initMsg->value.buf)
     {
-        m_logger->err("xnSetupRequestReceive: null initiatingMessage from gnbId=%d", gnbId);
-        xnSetupFailureSend(gnbId);
+        m_logger->err("xnSetupRequestReceive: null initiatingMessage (clientId=%d)", clientId);
+        xnSetupFailureSend(clientId);
         return;
     }
 
@@ -463,13 +501,16 @@ void XnTask::xnSetupRequestReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
         static_cast<size_t>(initMsg->value.size));
     if (!xnReq)
     {
-        m_logger->err("xnSetupRequestReceive: APER decode failed for gnbId=%d", gnbId);
-        xnSetupFailureSend(gnbId);
+        m_logger->err("xnSetupRequestReceive: APER decode failed (clientId=%d)", clientId);
+        xnSetupFailureSend(clientId);
         return;
     }
 
     XnPeerInfo peer;
-    peer.gnbId = gnbId;
+    // The peer's identity comes from the message (GlobalNG-RANNode-ID), not
+    // from the transport: inbound associations have provisional negative
+    // clientIds until this binding is made.
+    int decodedGnbId = -1;
 
     bool hasGlobalId = false;
     bool hasTaiList  = false;
@@ -498,7 +539,7 @@ void XnTask::xnSetupRequestReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
                 asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, vbuf, vsize);
             if (!nodeId)
             {
-                m_logger->warn("xnSetupRequestReceive: cannot decode GlobalNG-RANNode-ID from gnbId=%d", gnbId);
+                m_logger->warn("xnSetupRequestReceive: cannot decode GlobalNG-RANNode-ID (clientId=%d)", clientId);
                 break;
             }
 
@@ -512,6 +553,9 @@ void XnTask::xnSetupRequestReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
                 // Left-align within 36 bits so the value can serve as an NCI base
                 int64_t gnbIdVal = asn::GetBitStringLong<32>(bs); // read up to 32 bits (max gnbIdLength=32)
                 peer.nci = gnbIdVal << (36 - gnbIdLength);
+                // The bit-string value IS the gNB ID — same derivation as
+                // GnbConfig/GnbNeighborState::getGnbId() (nci >> (36 - idLength)).
+                decodedGnbId = static_cast<int>(gnbIdVal);
                 hasGlobalId = true;
             }
             asn::Free(asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, nodeId);
@@ -529,7 +573,7 @@ void XnTask::xnSetupRequestReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
                 asn_DEF_ASN_XNAP_TAISupport_List, vbuf, vsize);
             if (!taiList)
             {
-                m_logger->warn("xnSetupRequestReceive: cannot decode TAISupport-List from gnbId=%d", gnbId);
+                m_logger->warn("xnSetupRequestReceive: cannot decode TAISupport-List (clientId=%d)", clientId);
                 break;
             }
 
@@ -572,7 +616,7 @@ void XnTask::xnSetupRequestReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
                 asn_DEF_ASN_XNAP_AMF_Region_Information, vbuf, vsize);
             if (!amfInfo)
             {
-                m_logger->warn("xnSetupRequestReceive: cannot decode AMF-Region-Information from gnbId=%d", gnbId);
+                m_logger->warn("xnSetupRequestReceive: cannot decode AMF-Region-Information (clientId=%d)", clientId);
                 break;
             }
 
@@ -625,27 +669,120 @@ void XnTask::xnSetupRequestReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     if (!hasGlobalId || !hasTaiList || !hasAmfRegion)
     {
         m_logger->err("xnSetupRequestReceive: missing mandatory IE(s) "
-                      "(globalId=%d taiList=%d amfRegion=%d) from gnbId=%d",
-                      hasGlobalId, hasTaiList, hasAmfRegion, gnbId);
-        xnSetupFailureSend(gnbId);
+                      "(globalId=%d taiList=%d amfRegion=%d) clientId=%d",
+                      hasGlobalId, hasTaiList, hasAmfRegion, clientId);
+        xnSetupFailureSend(clientId);
         return;
     }
 
     // ------------------------------------------------------------------
-    // Store peer info and send success response.
+    // The neighbor store is authoritative in this simulator (it also drives
+    // the RRC handover decisions): a setup request from a gNB that is not a
+    // configured Xn neighbor is rejected and its association closed.
     // ------------------------------------------------------------------
-    m_xnPeerTable.addPeerInfo(peer);
+    const GnbNeighborState *neighbor = nullptr;
+    auto neighborList = m_base->neighbors->getAll();
+    for (const auto &n : neighborList)
+    {
+        if (static_cast<int>(n.getGnbId()) == decodedGnbId && n.handoverInterface == EHandoverInterface::Xn)
+        {
+            neighbor = &n;
+            break;
+        }
+    }
+    if (neighbor == nullptr)
+    {
+        m_logger->err("XnSetupRequest from unknown gNB %d (clientId=%d) rejected: not a configured Xn neighbor",
+                      decodedGnbId, clientId);
+        xnSetupFailureSend(clientId);
+        m_pendingInbound.erase(clientId);
+        auto close = std::make_unique<NmGnbSctp>(NmGnbSctp::CONNECTION_CLOSE);
+        close->clientId = clientId;
+        close->associatedTask = this;
+        m_base->xnSctpTask->push(std::move(close));
+        return;
+    }
 
-    m_logger->info("XnSetupRequest from gnbId=%d: nci=%ld pci=%d tacs=%zu plmns=%zu amfRegions=%zu",
-                   gnbId, peer.nci, peer.nrPCI,
+    peer.gnbId = decodedGnbId;
+
+    // ------------------------------------------------------------------
+    // Collision guard: if this gNB already holds an association to the same
+    // peer (e.g. our own outbound attempt, racing the peer's inbound one),
+    // keep an established interface and reject the newcomer; otherwise the
+    // newer association wins and the stale attempt is closed.
+    // ------------------------------------------------------------------
+    auto *existing = m_xnPeerTable.getPeerInfo(decodedGnbId);
+    if (existing != nullptr && existing->clientId != clientId)
+    {
+        if (existing->connectionState == EXnConnectionState::CONNECTED)
+        {
+            m_logger->warn("XnSetupRequest from gNB %d on clientId=%d rejected: interface already CONNECTED "
+                           "(clientId=%d)",
+                           decodedGnbId, clientId, existing->clientId);
+            xnSetupFailureSend(clientId);
+            m_pendingInbound.erase(clientId);
+            auto close = std::make_unique<NmGnbSctp>(NmGnbSctp::CONNECTION_CLOSE);
+            close->clientId = clientId;
+            close->associatedTask = this;
+            m_base->xnSctpTask->push(std::move(close));
+            return;
+        }
+
+        m_logger->warn("Replacing stale Xn association to gNB %d (old clientId=%d, new clientId=%d)",
+                       decodedGnbId, existing->clientId, clientId);
+        auto close = std::make_unique<NmGnbSctp>(NmGnbSctp::CONNECTION_CLOSE);
+        close->clientId = existing->clientId;
+        close->associatedTask = this;
+        m_base->xnSctpTask->push(std::move(close));
+    }
+
+    // ------------------------------------------------------------------
+    // Bind the association to the peer entry (creating it if needed — the
+    // responder side does not pre-create entries), apply the association
+    // parameters stashed at accept time, and send the success response.
+    // Per TS 38.423 the responder's Xn Setup completes when the
+    // XnSetupResponse is sent, so only then is the peer marked CONNECTED
+    // (gating every handover send path).
+    // ------------------------------------------------------------------
+    auto *stored = m_xnPeerTable.applySetupInfo(peer);
+    stored->clientId = clientId;
+    if (neighbor->xnAddress && neighbor->xnPort)
+        stored->addr = InetAddress(neighbor->xnAddress.value(), *neighbor->xnPort);
+
+    auto pending = m_pendingInbound.find(clientId);
+    if (pending != m_pendingInbound.end())
+    {
+        auto assoc = SctpAssociation();
+        assoc.associationId = pending->second.associationId;
+        assoc.inStreams = pending->second.inStreams;
+        assoc.outStreams = pending->second.outStreams;
+        stored->sctpAssoc = assoc;
+        // Partition the UE-associated stream space by gnbId (lower → EVEN, higher
+        // → ODD) so opposing handovers never collide on a stream ID.
+        const int myGnbId = static_cast<int>(m_base->config->getGnbId());
+        const StreamParity parity = (myGnbId < decodedGnbId) ? StreamParity::Even : StreamParity::Odd;
+        stored->streamIdManager.resetStreams(pending->second.inStreams, pending->second.outStreams, parity);
+        m_pendingInbound.erase(pending);
+    }
+
+    m_logger->info("XnSetupRequest from gNB %d (clientId=%d): nci=%ld pci=%d tacs=%zu plmns=%zu amfRegions=%zu",
+                   decodedGnbId, clientId, peer.nci, peer.nrPCI,
                    peer.tacList.size(), peer.plmnList.size(), peer.amfRegionList.size());
 
-    xnSetupResponseSend(gnbId);
+    if (xnSetupResponseSend(clientId))
+    {
+        auto *bound = m_xnPeerTable.getPeerInfo(decodedGnbId);
+        if (bound != nullptr)
+            bound->connectionState = EXnConnectionState::CONNECTED;
+    }
 }
 
-void XnTask::xnSetupResponseSend(int gnbId)
+// Returns true if the XnSetupResponse was handed to the SCTP task (the caller
+// then marks the peer CONNECTED); false if any mandatory IE or the PDU failed
+// to encode.
+bool XnTask::xnSetupResponseSend(int clientId)
 {
-    m_logger->debug("xnSetupResponseSend gnbId=%d", gnbId);
+    m_logger->debug("xnSetupResponseSend clientId=%d", clientId);
 
     const GnbConfig *cfg = m_base->config;
 
@@ -673,7 +810,7 @@ void XnTask::xnSetupResponseSend(int gnbId)
         m_logger->err("xnSetupResponseSend: failed to encode GlobalNG-RANNode-ID");
         asn::Free(asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, globalNodeId);
         asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieGlobalId);
-        return;
+        return false;
     }
     asn::Free(asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, globalNodeId);
 
@@ -716,7 +853,7 @@ void XnTask::xnSetupResponseSend(int gnbId)
         asn::Free(asn_DEF_ASN_XNAP_TAISupport_List, taiList);
         asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieTaiList);
         asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieGlobalId);
-        return;
+        return false;
     }
     asn::Free(asn_DEF_ASN_XNAP_TAISupport_List, taiList);
 
@@ -855,7 +992,7 @@ void XnTask::xnSetupResponseSend(int gnbId)
         m_logger->err("xnSetupResponseSend: failed to encode XnSetupResponse into SuccessfulOutcome");
         asn::Free(asn_DEF_ASN_XNAP_XnSetupResponse, xnSetupResp);
         asn::Free(asn_DEF_ASN_XNAP_SuccessfulOutcome, succMsg);
-        return;
+        return false;
     }
     asn::Free(asn_DEF_ASN_XNAP_XnSetupResponse, xnSetupResp);
 
@@ -864,27 +1001,28 @@ void XnTask::xnSetupResponseSend(int gnbId)
     outerPdu->choice.successfulOutcome  = succMsg;
 
     // -----------------------------------------------------------------------
-    // APER-encode and send via SCTP back to the requesting gNB (clientId = gnbId)
+    // APER-encode and send via SCTP back to the requesting gNB (clientId = clientId)
     // -----------------------------------------------------------------------
 
     ssize_t encoded;
     uint8_t *buffer;
     if (!xnap_encode::Encode(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu, encoded, buffer))
     {
-        m_logger->err("xnSetupResponseSend: APER encoding failed for gnbId=%d", gnbId);
+        m_logger->err("xnSetupResponseSend: APER encoding failed for clientId=%d", clientId);
         asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu);
-        return;
+        return false;
     }
 
     auto sctpMsg = std::make_unique<NmGnbSctp>(NmGnbSctp::SEND_MESSAGE);
-    sctpMsg->clientId = gnbId;
+    sctpMsg->clientId = clientId;
     sctpMsg->stream   = NON_UE_ASSOCIATED_STREAM_ID;
     sctpMsg->buffer   = UniqueBuffer{buffer, static_cast<size_t>(encoded)};
-    m_base->sctpTask->push(std::move(sctpMsg));
+    m_base->xnSctpTask->push(std::move(sctpMsg));
 
-    m_logger->info("XnSetupResponse sent to gnbId=%d", gnbId);
+    m_logger->info("XnSetupResponse sent to clientId=%d", clientId);
 
     asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu);
+    return true;
 }
 
 void XnTask::xnSetupResponseReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
@@ -1034,20 +1172,21 @@ void XnTask::xnSetupResponseReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
         return;
     }
 
-    if (!m_xnPeerTable.addPeerInfo(peer))
-    {
-        m_logger->err("xnSetupResponseReceive: failed to add peer info for gnbId=%d", gnbId);
-        return;
-    }
+    // Merge the learned info into the existing peer entry (created by
+    // updateXnConnections when this side initiated the connection).  Receiving
+    // the XnSetupResponse completes the initiator's Xn Setup, so the peer is
+    // now CONNECTED and eligible for handover signalling.
+    auto *stored = m_xnPeerTable.applySetupInfo(peer);
+    stored->connectionState = EXnConnectionState::CONNECTED;
 
     m_logger->info("XnSetupResponse from gnbId=%d: nci=%ld pci=%d tacs=%zu plmns=%zu amfRegions=%zu",
-                   gnbId, peer.nci, peer.nrPCI,
-                   peer.tacList.size(), peer.plmnList.size(), peer.amfRegionList.size());
+                   gnbId, stored->nci, stored->nrPCI,
+                   stored->tacList.size(), stored->plmnList.size(), stored->amfRegionList.size());
 }
 
-void XnTask::xnSetupFailureSend(int gnbId)
+void XnTask::xnSetupFailureSend(int clientId)
 {
-    m_logger->debug("xnSetupFailureSend gnbId=%d", gnbId);
+    m_logger->debug("xnSetupFailureSend clientId=%d", clientId);
 
     // Cause: mandatory IEs were absent — protocol / abstract_syntax_error_reject
     ASN_XNAP_Cause_t cause{};
@@ -1087,18 +1226,18 @@ void XnTask::xnSetupFailureSend(int gnbId)
     uint8_t *buffer;
     if (!xnap_encode::Encode(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu, encoded, buffer))
     {
-        m_logger->err("xnSetupFailureSend: APER encoding failed for gnbId=%d", gnbId);
+        m_logger->err("xnSetupFailureSend: APER encoding failed for clientId=%d", clientId);
         asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu);
         return;
     }
 
     auto sctpMsg = std::make_unique<NmGnbSctp>(NmGnbSctp::SEND_MESSAGE);
-    sctpMsg->clientId = gnbId;
+    sctpMsg->clientId = clientId;
     sctpMsg->stream   = NON_UE_ASSOCIATED_STREAM_ID;
     sctpMsg->buffer   = UniqueBuffer{buffer, static_cast<size_t>(encoded)};
-    m_base->sctpTask->push(std::move(sctpMsg));
+    m_base->xnSctpTask->push(std::move(sctpMsg));
 
-    m_logger->info("XnSetupFailure sent to gnbId=%d", gnbId);
+    m_logger->info("XnSetupFailure sent to clientId=%d", clientId);
 
     asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, outerPdu);
 }
@@ -1106,6 +1245,15 @@ void XnTask::xnSetupFailureSend(int gnbId)
 void XnTask::xnSetupFailureReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 {
     m_logger->debug("xnSetupFailureReceive gnbId=%d", gnbId);
+
+    // Any XnSetupFailure on this association means setup did not complete —
+    // mark the peer failed regardless of whether the Cause decodes below, so
+    // it can never be treated as handover-eligible.
+    {
+        auto *peer = m_xnPeerTable.getPeerInfo(gnbId);
+        if (peer != nullptr)
+            peer->connectionState = EXnConnectionState::CONNECTION_FAILED;
+    }
 
     auto *unsuccMsg = pdu->choice.unsuccessfulOutcome;
     if (!unsuccMsg || !unsuccMsg->value.buf)
@@ -1163,5 +1311,45 @@ void XnTask::xnSetupFailureReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     asn::Free(asn_DEF_ASN_XNAP_XnSetupFailure, xnFail);
 }
 
+
+void XnTask::handlePeerHandoverLoss(int gnbId)
+{
+    std::vector<std::pair<int64_t, int64_t>> sourceLost;
+    std::vector<std::pair<uint32_t, int64_t>> targetLost;
+
+    for (const auto &[ueId_gnb_pair, pending] : m_pendingHandoversSourceByUeId)
+    {
+        if (pending.targetGnbId == gnbId && !pending.executionSucceeded) 
+            sourceLost.push_back(ueId_gnb_pair);
+    }
+    for (const auto &[txId, pending] : m_pendingHandoversTargetByTxId)
+    {   
+        if (pending.sourceGnbId == gnbId && !pending.executionSucceeded) 
+            targetLost.emplace_back(txId, pending.ueId);
+    }
+
+    for (auto ueId_gnb_pair : sourceLost)
+    {
+        auto it = m_pendingHandoversSourceByUeId.find(ueId_gnb_pair); 
+        if (it == m_pendingHandoversSourceByUeId.end()) continue;
+
+        auto failure = std::make_unique<NmGnbXnToRrc>(NmGnbXnToRrc::HANDOVER_PREPARATION_FAILURE_RECEIVED);
+        failure->ueId = ueId_gnb_pair.first; 
+        failure->targetNci = it->second.targetNci; 
+        failure->isCho = it->second.isCho;
+        failure->reason = ASN_XNAP_Cause_PR_transport; 
+        m_base->rrcTask->push(std::move(failure));
+        
+        removeSourcePendingHandover(ueId_gnb_pair.first, gnbId);
+    }
+
+    for (auto [txId, ueId] : targetLost)
+    {
+        auto cleanup = std::make_unique<NmGnbXnToRrc>(NmGnbXnToRrc::HANDOVER_CANCEL_RECEIVED);
+        cleanup->ueId = ueId; 
+        m_base->rrcTask->push(std::move(cleanup));
+        removeTargetPendingHandover(txId);
+    }
+}
 
 } // namespace nr::gnb

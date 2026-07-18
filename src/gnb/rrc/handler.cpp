@@ -8,6 +8,8 @@
 
 #include "task.hpp"
 
+#include <algorithm>
+
 #include <gnb/rls/task.hpp>
 #include <gnb/ngap/task.hpp>
 #include <lib/rrc/encode.hpp>
@@ -48,6 +50,7 @@
 #include <asn/rrc/ASN_RRC_SRB-ToAddModList.h>
 #include <asn/rrc/ASN_RRC_DRB-ToAddModList.h>
 #include <asn/rrc/ASN_RRC_DRB-ToAddMod.h>
+#include <asn/rrc/ASN_RRC_DRB-ToReleaseList.h>
 #include <asn/rrc/ASN_RRC_SDAP-Config.h>
 #include <asn/rrc/ASN_RRC_SRB-ToAddMod.h>
 #include <asn/rrc/ASN_RRC_RadioBearerConfig.h>
@@ -58,6 +61,65 @@
 namespace nr::gnb
 {
 
+
+// Assigns (or reuses) a DRB id for a PSI, drawing from the UE's bearerMap as the
+// authoritative pool.  Re-setup of an already-mapped PSI returns its existing DRB
+// (idempotent modify); otherwise the lowest free id in the spec's 1..32 range is
+// chosen.  Returns the RLS-encoded bearer id (0x40 | id), or 0 if exhausted.
+uint8_t GnbRrcTask::allocateDrbId(RrcUeContext *ue, int psi)
+{
+    auto existing = ue->bearerMap.find(psi);
+    if (existing != ue->bearerMap.end())
+        return existing->second.drbId;
+
+    std::array<bool, 33> used{}; // index by plain DRB identity 1..32
+    for (const auto &[mappedPsi, info] : ue->bearerMap)
+    {
+        (void)mappedPsi;
+        int id = info.drbId & 0x3F;
+        if (id >= 1 && id <= 32)
+            used[id] = true;
+    }
+
+    for (int id = 1; id <= 32; ++id)
+        if (!used[id])
+            return static_cast<uint8_t>(0x40 | id);
+
+    m_logger->err("UE[%ld]: no free DRB id (1..32) to allocate for PSI=%d", ue->ueId, psi);
+    return 0;
+}
+
+// Assigns one DRB per session (reusing existing DRBs for known PSIs), records the
+// result in ue->bearerMap, and appends the upsert entries to the RLS update lists.
+void GnbRrcTask::assignSessionBearers(RrcUeContext *ue, const std::vector<PduSessionResource> &sessions,
+                                      RadioBearerUpdate &rbUpdate, SdapUpdate &sdapUpdate)
+{
+    for (const auto &session : sessions)
+    {
+        uint8_t bearerId = allocateDrbId(ue, session.psi);
+        if (bearerId == 0)
+        {
+            m_logger->warn("UE[%ld]: skipping bearer setup for PSI=%d (no free DRB id)", ue->ueId, session.psi);
+            continue;
+        }
+
+        rbUpdate.upsertBearers.emplace_back(RadioBearer{bearerId, 0, 0});
+
+        // Record/refresh the PSI→DRB mapping in RRC's authoritative bearer map so a
+        // later session release can find the DRB/QFIs to tear down.
+        RrcDrbInfo info;
+        info.drbId = bearerId;
+        for (const auto &flow : session.qosFlows)
+        {
+            info.qfis.push_back(flow.qfi);
+            sdapUpdate.upsertSdapMappings.emplace_back(SdapMapping{session.psi, flow.qfi, bearerId});
+        }
+        ue->bearerMap[session.psi] = std::move(info);
+
+        m_logger->debug("UE[%ld]: mapped PSI=%d (QFI count=%zu) onto DRB=%d", ue->ueId, session.psi,
+                        session.qosFlows.size(), bearerId & 0x3F);
+    }
+}
 
 ASN_RRC_RadioBearerConfig_t* GnbRrcTask::createRadioBearerConfig(int64_t ueId, std::unique_ptr<std::vector<PduSessionResource>> &sessionList)
 {
@@ -86,31 +148,11 @@ ASN_RRC_RadioBearerConfig_t* GnbRrcTask::createRadioBearerConfig(int64_t ueId, s
     auto rbUpdate = std::make_unique<RadioBearerUpdate>();
     auto sdapUpdate = std::make_unique<SdapUpdate>();
 
-    // do SDAP mappings (if sessionList is not empty)
-    int drbs_used = 0;
-    for (const auto &session : *sessionList)
-    {
-        ++drbs_used;
+    // Assign/reuse DRBs, populate the RRC bearer map, and fill the RLS update lists.
+    assignSessionBearers(ue, *sessionList, *rbUpdate, *sdapUpdate);
 
-        // add a DRB for this session
-        RadioBearer bearer;
-        bearer.bearerId = 0x40 | (drbs_used); // DRB IDs encoded using bit 6
-        rbUpdate->upsertBearers.emplace_back(bearer);
-
-        for (const auto &flow : session.qosFlows)
-        {
-            SdapMapping mapping;
-            mapping.psi = session.psi;
-            mapping.qfi = flow.qfi;
-            mapping.radioBearer = bearer.bearerId;
-            sdapUpdate->upsertSdapMappings.emplace_back(mapping);
-        }
-
-        m_logger->debug("UE[%ld]: adding SDAP mapping for PSI=%d, QFI count=%zu to DRBearer=%d",
-            ueId, session.psi, session.qosFlows.size(), drbs_used);
-    }
-
-    m_logger->debug("UE[%ld]: creating %d DRBs and %d SDAP mappings", ueId, drbs_used, sdapUpdate->upsertSdapMappings.size());
+    m_logger->debug("UE[%ld]: creating %zu DRBs and %zu SDAP mappings", ueId,
+                    rbUpdate->upsertBearers.size(), sdapUpdate->upsertSdapMappings.size());
 
     // copy bearer/SDAP data before moving into the RLS message
     auto bearers = rbUpdate->upsertBearers;
@@ -293,7 +335,106 @@ void GnbRrcTask::handleNgapPduSessionUpdate(int64_t ueId, std::unique_ptr<std::v
     else
     {
         m_logger->debug("UE[%ld]: No radio bearer config to add to the RRC Reconfiguration, aborting RRC Reconfiguration", ueId);
+        asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
     }
+}
+
+
+// Tears down the radio bearers serving a set of 5GC-released PDU sessions.
+// Driven from NGAP when the core drops sessions at path switch
+// (PDUSessionResourceReleasedListPSAck) or via a PDUSessionResourceReleaseCommand.
+// RRC is the source of truth for the PSI→QFI→DRB mapping, so it: (1) collects the
+// DRB(s) and SDAP mappings serving the released PSIs from its bearer map, (2) tells
+// RLS to delete them (RADIO_BEARER_UPDATE with delete lists), (3) tells the UE to
+// release the DRBs (RRCReconfiguration with a drb-ToReleaseList), and (4) prunes its
+// own bearer map.
+void GnbRrcTask::handleNgapPduSessionRelease(int64_t ueId, const std::vector<int> &releasedPsis)
+{
+    m_logger->debug("UE[%ld] PDU session release received.  PSI count=%zu", ueId, releasedPsis.size());
+
+    auto *ue = findCtxByUeId(ueId);
+    if (!ue) {
+        m_logger->err("UE[%ld]:handleNgapPduSessionRelease: UE not found", ueId);
+        return;
+    }
+
+    auto rbUpdate = std::make_unique<RadioBearerUpdate>();
+    auto sdapUpdate = std::make_unique<SdapUpdate>();
+    std::vector<uint8_t> releasedDrbIds; // RLS-encoded bearer ids (bit 6 set)
+
+    for (int psi : releasedPsis)
+    {
+        auto psiIt = ue->bearerMap.find(psi);
+        if (psiIt == ue->bearerMap.end())
+        {
+            m_logger->warn("UE[%ld]: PSI[%d] release requested but no bearer mapping is known; skipping", ueId, psi);
+            continue;
+        }
+
+        const uint8_t bearerId = psiIt->second.drbId;
+
+        // Never touch SRBs or a non-data bearer.
+        if ((bearerId & 0x40) != 0)
+        {
+            for (int qfi : psiIt->second.qfis)
+                sdapUpdate->deleteSdapMappings.emplace_back(SdapMapping{psi, qfi, bearerId});
+
+            releasedDrbIds.emplace_back(bearerId);
+            rbUpdate->deleteBearers.emplace_back(bearerId);
+        }
+
+        // Release the DRB id back into the pool.
+        ue->bearerMap.erase(psiIt);
+    }
+
+    if (releasedDrbIds.empty())
+    {
+        m_logger->debug("UE[%ld]: PDU session release found no DRBs to tear down", ueId);
+        return;
+    }
+
+    // (2) Tell RLS to delete the bearers and SDAP mappings.
+    {
+        auto m = std::make_unique<NmGnbRrcToRls>(NmGnbRrcToRls::RADIO_BEARER_UPDATE);
+        m->ueId = ueId;
+        m->rbUpdate = std::move(rbUpdate);
+        m->sdapUpdate = std::move(sdapUpdate);
+        m_base->rlsTask->push(std::move(m));
+        m_logger->debug("UE[%ld]: Sent radio bearer/SDAP delete to RLS (%zu DRBs)", ueId, releasedDrbIds.size());
+    }
+
+    // (3) Tell the UE to release the DRBs via RRCReconfiguration (drb-ToReleaseList).
+    auto *drbReleaseList = asn::New<ASN_RRC_DRB_ToReleaseList_t>();
+    for (uint8_t bearerId : releasedDrbIds)
+    {
+        auto *drbId = asn::New<ASN_RRC_DRB_Identity_t>();
+        *drbId = bearerId & 0x3F; // plain DRB identity (1..32)
+        asn_sequence_add(&drbReleaseList->list, drbId);
+    }
+
+    auto *radioBearerConfig = asn::New<ASN_RRC_RadioBearerConfig_t>();
+    radioBearerConfig->drb_ToReleaseList = drbReleaseList;
+
+    auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
+    pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
+    pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
+    pdu->message.choice.c1->present =
+        ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcReconfiguration;
+
+    auto &reconfig = pdu->message.choice.c1->choice.rrcReconfiguration =
+        asn::New<ASN_RRC_RRCReconfiguration>();
+
+    long txId = ue->getNextTid();
+    reconfig->rrc_TransactionIdentifier = txId;
+    reconfig->criticalExtensions.present =
+        ASN_RRC_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration;
+    auto &ies = reconfig->criticalExtensions.choice.rrcReconfiguration =
+        asn::New<ASN_RRC_RRCReconfiguration_IEs>();
+    ies->radioBearerConfig = radioBearerConfig;
+
+    sendRrcMessage(ueId, pdu);
+    asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
+    m_logger->debug("UE[%ld]: Sent RRC Reconfiguration releasing %zu DRBs.  TxId=%ld", ueId, releasedDrbIds.size(), txId);
 }
 
 

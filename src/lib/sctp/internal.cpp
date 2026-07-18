@@ -51,6 +51,13 @@ int CreateSocket(const std::string &address)
     return sd;
 }
 
+void SetReuseAddr(int sd)
+{
+    int on = 1;
+    if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) < 0)
+        ThrowError("SCTP SO_REUSEADDR failed: ", errno);
+}
+
 void BindSocket(int sd, const std::string &address, uint16_t port)
 {
     sockaddr addr = {};
@@ -129,6 +136,42 @@ void Accept(int sd)
     int clientSd = accept(sd, &saddr, &saddr_size);
     if (clientSd < 0)
         ThrowError("SCTP accept failure: ", errno);
+}
+
+int AcceptConnection(int sd)
+{
+    sockaddr_storage saddr{};
+    socklen_t saddrSize = sizeof(saddr);
+
+    int clientSd = accept(sd, reinterpret_cast<sockaddr *>(&saddr), &saddrSize);
+    if (clientSd < 0)
+        ThrowError("SCTP accept failure: ", errno);
+
+    // Subscribe to the same notifications the client path uses, so
+    // shutdown/COMM_LOST events flow through ReceiveMessage().
+    try
+    {
+        SetEventOptions(clientSd);
+    }
+    catch (const std::exception &)
+    {
+        CloseSocket(clientSd);
+        throw;
+    }
+
+    return clientSd;
+}
+
+void QueryStatus(int sd, int &assocId, int &inStreams, int &outStreams)
+{
+    sctp_status status{};
+    auto socklen = (socklen_t)sizeof(sctp_status);
+    if (getsockopt(sd, IPPROTO_SCTP, SCTP_STATUS, &status, &socklen) < 0)
+        ThrowError("SCTP_STATUS obtaining failed: ", errno);
+
+    assocId = status.sstat_assoc_id;
+    inStreams = status.sstat_instrms;
+    outStreams = status.sstat_outstrms;
 }
 
 void Connect(int sd, const std::string &address, uint16_t port)

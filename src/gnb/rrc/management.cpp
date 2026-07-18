@@ -58,9 +58,6 @@ RrcUeContext* GnbRrcTask::findCtxByUeId(int64_t ueId)
     }
 
     return ctx;
-
-    return nullptr;
-
 }
 
 } // namespace nr::gnb

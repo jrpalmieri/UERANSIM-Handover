@@ -70,7 +70,7 @@ Json ToJson(const ChoCandidate &v)
 
 
 /**
- * @brief Evaluate measurement events (A2, A3, A5) based on the current measurements 
+ * @brief Evaluate measurement events (e.g., A2, A3, A5) based on the current measurements 
  *  and configured thresholds.  Current measurement are stored in the global task context
  *  (m_base->cellDbMeas) and protected by a mutex. Configured thresholds are stored in the RRC task's
  *  measurement configuration (m_measConfig) which is updated by the RRC Reconfiguration procedure. 
@@ -125,6 +125,10 @@ void UeRrcTask::evaluateMeasurements(int64_t servingCellId, int servingCellRsrp,
 
         if (state.isReported)
             continue; // already reported for this config (one-shot)
+
+        // Rebuild the triggered-neighbor list fresh each cycle so the report
+        // reflects the current measurements (no accumulation across cycles).
+        state.triggeredNeighbors.clear();
 
         bool eventSatisfied = false;
 

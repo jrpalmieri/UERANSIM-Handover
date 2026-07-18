@@ -41,6 +41,7 @@ UeRlsTask::UeRlsTask(TaskBase *base) : m_base{base}
 {
     m_logger = m_base->logBase->makeUniqueLogger(m_base->config->getLoggerPrefix() + "rls");
 
+    // create a shared context for the RLS tasks
     m_shCtx = new RlsSharedContext();
 
     // create a unique STI for this UE based on its SUPI
@@ -57,6 +58,7 @@ UeRlsTask::UeRlsTask(TaskBase *base) : m_base{base}
 
     m_shCtx->cRnti = 0;
 
+    // create the UDP and control tasks for the RLS layer
     m_udpTask = new RlsUdpTask(base, m_shCtx, base->config->gnbSearchList);
     m_ctlTask = new RlsControlTask(base, m_shCtx);
 
@@ -66,18 +68,22 @@ UeRlsTask::UeRlsTask(TaskBase *base) : m_base{base}
 
 void UeRlsTask::onStart()
 {
+    // start the UDP and control tasks for the RLS layer
     m_udpTask->start();
     m_ctlTask->start();
 }
 
 void UeRlsTask::onLoop()
 {
+    // check for a message available in the NTS queue.
+    //   if no message is available, return and wait for the next loop iteration.
     auto msg = take();
     if (!msg)
         return;
 
     switch (msg->msgType)
     {
+    // messages between RLS tasks
     case NtsMessageType::UE_RLS_TO_RLS: {
         auto &w = dynamic_cast<NmUeRlsToRls &>(*msg);
         switch (w.present)
@@ -123,6 +129,7 @@ void UeRlsTask::onLoop()
         }
         break;
     }
+    // messages from RRC to RLS
     case NtsMessageType::UE_RRC_TO_RLS: {
         auto &w = dynamic_cast<NmUeRrcToRls &>(*msg);
         switch (w.present)
@@ -160,6 +167,7 @@ void UeRlsTask::onLoop()
         }
         break;
     }
+    // messages from NAS to RLS (user plane data for uplink to gNB)
     case NtsMessageType::UE_NAS_TO_RLS: {
         auto &w = dynamic_cast<NmUeNasToRls &>(*msg);
         switch (w.present)
@@ -189,6 +197,10 @@ void UeRlsTask::onQuit()
     delete m_ctlTask;
     delete m_shCtx;
 }
+
+// Public methods to allow other tasks to set/get the current C-RNTI for this UE.
+//   Use case would be the RRC layer receives a new C-RNTI on handover from the new gNB.
+//   Note: the cRnti is not used by the UE, so this trcaking is purely informational..
 
 void UeRlsTask::setCurrentCrnti(uint32_t cRnti)
 {

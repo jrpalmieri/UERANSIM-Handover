@@ -42,6 +42,7 @@ class GnbRlsTask : public NtsTask
   public:
     explicit GnbRlsTask(TaskBase *base);
     ~GnbRlsTask() override = default;
+    std::optional<RlsUeContext> copyUeContext(int64_t ueId) const;
 
   protected:
     void onStart() override;

@@ -1,13 +1,20 @@
 /*
-*  gNB Measurement functions
+*  gNB measurement configuration and reporting
 *
 * Implements:
-*   receiveMeasurementReport()           – receive UE MeasurementReport
-*   evaluateHandoverDecision()           – decide whether to initiate handover based on MeasurementReport
+*   receiveMeasurementReport()  – parse a UE MeasurementReport, update per-UE state,
+*                                 and kick evaluateHandoverDecision() (which lives in handover.cpp)
+*   sendMeasConfig()            – build and send the RRCReconfiguration carrying the MeasConfig
+*   createMeasConfig()          – construct the MeasConfig IE (basic + conditional events)
+*   plus static helpers: clearMeasConfig(), getNewReportConfigId(), getNewMeasId(),
+*                        getActiveChoProfileIndices()
+*
+* (RRCReconfigurationComplete handling lives in reconfiguration.cpp.)
 */
 
 
 #include "task.hpp"
+#include <gnb/xn/task.hpp>
 
 #include <gnb/neighbors.hpp>
 #include <gnb/ngap/task.hpp>
@@ -71,12 +78,7 @@
 #include <libsgp4/DateTime.h>
 
 const int MIN_RSRP = cons::MIN_RSRP; // minimum RSRP value (in dBm) to use when no measurement is available
-const int HANDOVER_TIMEOUT_MS = 5000; // time to wait for handover completion before considering it failed
 const long DUMMY_MEAS_OBJECT_ID = 1; // dummy MeasObjectId for handover measurement configuration
-
-static constexpr int NTN_DEFAULT_T_SERVICE_SEC = 300;
-static constexpr int MIN_COND_RECONFIG_ID = 1;
-static constexpr int MAX_COND_RECONFIG_ID = 8;
 
 
 namespace nr::gnb
@@ -85,19 +87,12 @@ namespace nr::gnb
 using HandoverEventType = nr::rrc::common::HandoverEventType;
 using nr::rrc::common::ReportConfigEvent;
 using nr::rrc::common::MeasObject;
-using nr::sat::SatEcefState;
-using nr::sat::EcefPosition;
-using nr::sat::ComputeNadir;
-using nr::rrc::common::EventReferenceLocation;
-using nr::sat::NeighborEndpoint;
 using nr::rrc::common::mtqFromASNValue;
 using nr::rrc::common::mtqToASNValue;
-using nr::rrc::common::hysteresisFromASNValue;
 using nr::rrc::common::hysteresisToASNValue;
 using nr::rrc::common::referenceLocationToAsnValue;
 using nr::rrc::common::tttMsToASNValue;
 using nr::rrc::common::distanceThresholdToASNValue;
-using nr::rrc::common::t304MsToEnum;
 using nr::rrc::common::IsMeasurementEvent;
 using nr::rrc::common::IsConditionalEvent;
 
@@ -171,13 +166,6 @@ static std::vector<int> getActiveChoProfileIndices(
 // clear all MeasConfig-related state from the UE context
 static void clearMeasConfig(RrcUeContext *ue)
 {
-    for (auto &sentMeasConfig : ue->sentMeasConfigs)
-    {
-        auto *measConfig = std::get<0>(sentMeasConfig);
-        if (measConfig)
-            asn::Free(asn_DEF_ASN_RRC_MeasConfig, measConfig);
-    }
-
     ue->measObjects.clear();
     ue->reportConfigEvents.clear();
     ue->measIdentities.clear();
@@ -187,8 +175,6 @@ static void clearMeasConfig(RrcUeContext *ue)
     ue->usedReportConfigIds.clear();
     //ue->usedMeasIdentities.clear();
 
-    // clears the MeasConfig pointers
-    ue->sentMeasConfigs.clear();
 }
 
 
@@ -201,25 +187,11 @@ void GnbRrcTask::receiveMeasurementReport(int64_t ueId, int cRnti,
 {
     int64_t resolvedUeId = ueId;
 
-    auto *ue = tryFindUeByUeId(resolvedUeId);
-    if (!ue && cRnti > 0)
-    {
-        ue = tryFindUeByCrnti(cRnti);
-        if (ue)
-        {
-            resolvedUeId = ue->ueId;
-            if (resolvedUeId != ueId)
-            {
-                m_logger->warn(
-                    "MeasurementReport UE remap: incomingUeId=%ld resolvedUeId=%ld cRnti=%d",
-                    ueId, resolvedUeId, cRnti);
-            }
-        }
-    }
+    auto *ue = findCtxByUeId(resolvedUeId);
 
     if (!ue)
     {
-        m_logger->warn("UE[%ld] MeasurementReport from unknown (cRnti=%d)", resolvedUeId, cRnti);
+        m_logger->warn("UE[%ld] MeasurementReport from unknown UE, discarding.", resolvedUeId);
         return;
     }
 
@@ -241,15 +213,21 @@ void GnbRrcTask::receiveMeasurementReport(int64_t ueId, int cRnti,
 
     int measId = static_cast<int>(results.measId);
 
-    if (ue->measIdentities.count(measId) == 0)
+    auto sentMeasIdentityPair = ue->measIdentities.find(measId);
+    if (sentMeasIdentityPair == ue->measIdentities.end())
     {
         m_logger->warn("UE[%ld] MeasurementReport unknown measId=%d", resolvedUeId, measId);
         return;
     }
-
-    
-    auto sentMeasIdentityPair = ue->measIdentities.find(measId);
     auto sentMeasIdentity = sentMeasIdentityPair->second;
+
+    auto sentReportConfigPair = ue->reportConfigEvents.find(sentMeasIdentity.reportConfigId);
+    if (sentReportConfigPair == ue->reportConfigEvents.end())
+    {
+        m_logger->warn("UE[%ld] MeasurementReport measId=%d references unknown reportConfigId=%ld, discarding.",
+                       resolvedUeId, measId, sentMeasIdentity.reportConfigId);
+        return;
+    }
 
     // Extract serving cell measurement
     int servingRsrp = MIN_RSRP;
@@ -264,7 +242,7 @@ void GnbRrcTask::receiveMeasurementReport(int64_t ueId, int cRnti,
         }
     }
 
-    auto event_str = nr::rrc::common::HandoverEventTypeToString(ue->reportConfigEvents.find(sentMeasIdentity.reportConfigId)->second.eventKind);
+    auto event_str = nr::rrc::common::HandoverEventTypeToString(sentReportConfigPair->second.eventKind);
     m_logger->info("UE[%ld] MeasurementReport measId=%d event=%s servingRSRP=%ddBm",
                    resolvedUeId, measId, event_str.c_str(), servingRsrp);
 
@@ -655,7 +633,7 @@ std::vector<long> GnbRrcTask::createMeasConfig(
  */
 void GnbRrcTask::sendMeasConfig(int64_t ueId, bool forceResend)
 {
-    auto *ue = tryFindUeByUeId(ueId);
+    auto *ue = findCtxByUeId(ueId);
     if (!ue)
         return;
 
@@ -845,22 +823,6 @@ void GnbRrcTask::sendMeasConfig(int64_t ueId, bool forceResend)
         return;
     }
 
-    // auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
-    // pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
-    // pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
-    // pdu->message.choice.c1->present =
-    //     ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcReconfiguration;
-
-    // auto &reconfig = pdu->message.choice.c1->choice.rrcReconfiguration =
-    //     asn::New<ASN_RRC_RRCReconfiguration>();
-
-    // long txId = ue->getNextTid();
-    // reconfig->rrc_TransactionIdentifier = txId;
-    // reconfig->criticalExtensions.present =
-    //     ASN_RRC_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration;
-    // auto &ies = reconfig->criticalExtensions.choice.rrcReconfiguration =
-    //     asn::New<ASN_RRC_RRCReconfiguration_IEs>();
-
     long txId = pdu->message.choice.c1->choice.rrcReconfiguration->rrc_TransactionIdentifier;
     auto *ies = pdu->message.choice.c1->choice.rrcReconfiguration->criticalExtensions.choice.rrcReconfiguration;
 
@@ -875,25 +837,11 @@ void GnbRrcTask::sendMeasConfig(int64_t ueId, bool forceResend)
 
     // Build MeasConfig
     ASN_RRC_MeasConfig *mc = nullptr;
-    auto *mc_saved = asn::New<ASN_RRC_MeasConfig>();
-
     auto usedMeasIds = createMeasConfig(mc, ue, taggedEvents);
     ies->measConfig = mc;
     
-    // if (!asn::DeepCopy(asn_DEF_ASN_RRC_MeasConfig, *mc, mc_saved))
-    // {
-    //     asn::Free(asn_DEF_ASN_RRC_MeasConfig, mc_saved);
-    //     mc_saved = nullptr;
-    //     m_logger->err("UE[%ld] Failed to deep-copy MeasConfig for local storage", ue->ueId);
-    // }
-
     // send the measConfig now, don't wait for CHO conditionals since they come from other GNBs
     sendRrcMessage(ue->ueId, pdu);
-
-    // store the sent MeasConfig in UE context for potential future reference (e.g. handovers)
-    // if (mc_saved)
-    //     ue->sentMeasConfigs.emplace_back(mc_saved, usedMeasIds);
-
 
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
 
@@ -908,118 +856,6 @@ void GnbRrcTask::sendMeasConfig(int64_t ueId, bool forceResend)
     }
 }
 
-/**
- * @brief Receives an RRCReconfigurationComplete message from a UE, which may indicate the 
- * completion of a handover.  If this is a handover completion, triggers post-handover 
- * processing such as NGAP notification. Otherwise, just logs the completion of a normal 
- * reconfiguration.
- * 
- * @param ueId 
- * @param msg 
- */
-void GnbRrcTask::receiveRrcReconfigurationComplete(int64_t ueId, int cRnti,
-    const ASN_RRC_RRCReconfigurationComplete &msg)
-{
-    int64_t txId = msg.rrc_TransactionIdentifier;
-
-    int64_t resolvedUeId = ueId;
-
-    // A UE can share txId values with other UEs (txId is tiny), so match by UE ID first,
-    // then verify txId for that UE's pending handover.
-    auto itPending = m_handoversPending.find(resolvedUeId);
-    bool matchedPending =
-        itPending != m_handoversPending.end() &&
-        itPending->second.ctx != nullptr &&
-        itPending->second.rrcReconfigurationTxId == txId &&
-        (cRnti <= 0 || itPending->second.ctx->cRnti == cRnti);
-
-    // if matchedPending is False, this either isn't associated with a pending handover, or its got a bad UEID
-    //   We check the cRNTI and txId against the pending handovers to see if we can find a match 
-    //   and resolve the correct UE ID
-    if (!matchedPending && cRnti > 0)
-    {
-        // If UE ID was mis-associated on UL delivery, remap using (txId, cRnti).
-        for (auto it = m_handoversPending.begin(); it != m_handoversPending.end(); ++it)
-        {
-            auto &pending = it->second;
-            if (!pending.ctx)
-                continue;
-
-            if (pending.rrcReconfigurationTxId == txId && pending.ctx->cRnti == cRnti)
-            {
-                resolvedUeId = it->first;
-                itPending = it;
-                matchedPending = true;
-
-                if (resolvedUeId != ueId)
-                {
-                    m_logger->warn(
-                        "RRCReconfigurationComplete UE remap: incomingUeId=%ld resolvedUeId=%ld txId=%ld cRnti=%d",
-                        ueId, resolvedUeId, txId, cRnti);
-                }
-                break;
-            }
-        }
-    }
-
-    m_logger->debug("UE[%ld]: RRCReconfigurationComplete received with txId=%ld cRnti=%d matchedPendingHandover=%s",
-                    ueId, txId, cRnti, matchedPending ? "true" : "false");
-
-    // matchedPending is True if there is pending handover, so complete it by moving the pending
-    // context to the main UE context map.
-    if (matchedPending)
-    {
-
-        /* move the ctx from pending handover to UE context */
-
-        // get ptr to rrc context in the pending handover map (indexed by UE ID)
-        auto *handoverCtx = itPending->second.ctx;
-
-        // check for old UE context with the same UE ID, if exists, remove it 
-        // (since after handover completion, the old UE context is no longer valid)
-        auto *ue = findCtxByUeId(resolvedUeId);
-        if (ue)
-        {
-            releaseCrnti(ue->cRnti);
-            delete ue;
-            m_ueCtx.erase(resolvedUeId);
-        }
-
-        // move the UE context from pending handover to UE context map and erase the pending handover
-        m_ueCtx[resolvedUeId] = handoverCtx;
-        m_handoversPending.erase(itPending);
-
-        // not sure if this is still needed, but clean it up anyway
-        handoverCtx->handoverInProgress = false;
-
-        // Send measurement config to UE to restart measurement reporting
-        // after handover.
-        sendMeasConfig(resolvedUeId, true);
-
-        // Notify NGAP of handover completion.
-        auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_NOTIFY_SEND);
-        w->ueId = resolvedUeId;
-        m_base->ngapTask->push(std::move(w));
-
-        m_logger->info("UE[%ld] Handover completed. NGAP layer notification sent.", resolvedUeId);
-        return;
-
-    }
-
-    // other RRCReconfigComplete msgs
-
-    auto *ue = tryFindUeByUeId(ueId);
-    if (!ue)
-    {
-        m_logger->warn("UE[%ld] RRCReconfigurationComplete received from unknown UE, ignoring", ueId);
-        return;
-    }
-
-    // no gnb action needed for non-handover RRCReconfigurationComplete, just log it
-
-    m_logger->info("UE[%ld] RRCReconfigurationComplete received txId=%ld", ueId, txId);
-
-}
 
 
 

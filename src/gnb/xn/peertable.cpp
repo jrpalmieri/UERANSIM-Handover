@@ -22,6 +22,35 @@ bool XnPeerTable::addPeerInfo(const XnPeerInfo& peerInfo)
     return true;
 }
 
+XnPeerInfo* XnPeerTable::findByClientId(int clientId)
+{
+    if (clientId == -1)
+        return nullptr;
+    for (auto& peer : m_xnPeerTable)
+    {
+        if (peer.clientId == clientId)
+            return &peer;
+    }
+    return nullptr;
+}
+
+XnPeerInfo* XnPeerTable::applySetupInfo(const XnPeerInfo& info)
+{
+    auto *existing = getPeerInfo(info.gnbId);
+    if (existing == nullptr)
+    {
+        m_xnPeerTable.push_back(info);
+        return &m_xnPeerTable.back();
+    }
+
+    existing->nci           = info.nci;   // authoritative NCI from ServedCells-NR
+    existing->nrPCI         = info.nrPCI;
+    existing->plmnList      = info.plmnList;
+    existing->tacList       = info.tacList;
+    existing->amfRegionList = info.amfRegionList;
+    return existing;
+}
+
 bool XnPeerTable::removePeerInfo(int gnbId)
 {
     for (auto it = m_xnPeerTable.begin(); it != m_xnPeerTable.end(); ++it)

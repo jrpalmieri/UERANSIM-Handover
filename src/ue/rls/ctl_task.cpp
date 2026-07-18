@@ -415,7 +415,9 @@ void RlsControlTask::sdapMapping(int pduSessionId, OctetString &data, uint8_t *r
         return;
     }
 
-    *pduId = rbIt->ulSn++;
+    *pduId = rbIt->ulSn;
+    // Allocate UINT32_MAX once, then roll the next simulated PDCP COUNT to zero.
+    rbIt->ulSn = NextPdcpCount(rbIt->ulSn);
 
     return;
 }
@@ -429,7 +431,9 @@ void RlsControlTask::selectSignalingRadioBearer(rrc::RrcChannel channel, uint8_t
     if (srb0It != radioBearers.end())
     {
         radioBearer = srb0It->bearerId;
-        pduId = srb0It->ulSn++;
+        pduId = srb0It->ulSn;
+        // Signalling uses the same explicit combined COUNT rollover as DRBs.
+        srb0It->ulSn = NextPdcpCount(srb0It->ulSn);
     }
     else
     {

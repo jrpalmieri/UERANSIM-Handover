@@ -90,6 +90,9 @@ struct RRCHandoverPending
     RrcUeContext* ctx{};
     uint64_t expireTime{};
     int64_t rrcReconfigurationTxId{};
+    // Completion differs by interface: N2 sends HandoverNotify, while Xn must
+    // activate its provisional NGAP context and initiate Path Switch.
+    bool isXn{};
 };
 
 struct HandoverMeasurementIdentity
@@ -287,6 +290,18 @@ struct AggregateMaximumBitRate
     uint64_t ulAmbr{};
 };
 
+// Core-network information transferred in an Xn HandoverRequest.  Keeping it
+// protocol-neutral lets Xn hand ownership to NGAP without exposing XnAP ASN.1
+// objects outside the Xn task.
+struct XnHandoverCoreContext
+{
+    int64_t amfUeNgapId{};
+    Guami guami{};
+    UeSecurityInfo ueSecInfo{};
+    AggregateMaximumBitRate ueAmbr{};
+    std::string ngapSourceIpAddr{};
+};
+
 enum UE_NGAP_CONNECTION_STATE {
     NGAP_NOT_CONNECTED = 0,
     NGAP_CONNECTION_PENDING,
@@ -296,7 +311,13 @@ enum UE_NGAP_CONNECTION_STATE {
 // The NGAP context for a UE
 struct NgapUeContext
 {
-    const int64_t ctxId{};
+    // UE context id (= the node-wide ueId).  Deliberately NOT const: a provisional
+    // context created for an incoming N2 handover starts life with ctxId=0 — the
+    // UE's identity is unknown until RRC decodes the source's transparent
+    // container — and adopts the real id in sendHandoverRequestAcknowledge().
+    // Outside that adoption point it must never change, and must always match the
+    // m_ueCtx map key once the context is promoted to the active map.
+    int64_t ctxId{};
 
     // State tracker for connection state
     UE_NGAP_CONNECTION_STATE connectionState{UE_NGAP_CONNECTION_STATE::NGAP_NOT_CONNECTED};
@@ -364,6 +385,15 @@ struct ChoPreparationState
     int distanceThreshold{};
 };
 
+// One data radio bearer's state in RRC's authoritative bearer map.  The simulator
+// maps all of a PDU session's QoS flows onto a single DRB, so this is stored
+// per-PSI (see RrcUeContext::bearerMap).
+struct RrcDrbInfo
+{
+    uint8_t drbId{};         // RLS-encoded bearer id: bit 6 set (data), id in bits 0-5
+    std::vector<int> qfis{}; // QoS flow ids mapped onto this DRB
+};
+
 struct RrcUeContext
 {
 
@@ -403,12 +433,19 @@ struct RrcUeContext
     int nextHopChainingCount{};
     std::array<uint8_t, 32> nextHopParameter{};
 
+    // Active radio-bearer state, owned by RRC as the single source of truth for
+    // what is programmed into RLS and the UE.  One DRB per PDU session (current
+    // invariant), keyed by PSI.  Populated wherever bearers are set up (setup and
+    // handover pre-programming both go through assignSessionBearers), consulted/
+    // pruned on session release (handleNgapPduSessionRelease), and used to derive
+    // the free DRB-id pool during allocation (allocateDrbId).
+    std::map<int, RrcDrbInfo> bearerMap{};
+
     /* Handover state */
 
     bool handoverInProgress{};
     int64_t handoverTargetNci{};
     int handoverNewCrnti{};
-    int observedRadioUeId{};
     long handoverTxId{};
 
     // Active Measurement Config IEs
@@ -431,9 +468,6 @@ struct RrcUeContext
 
     // list of reportConfigIds currently configured for this UE, to avoid conflicting reuse
     std::vector<long> usedReportConfigIds{};
-
-    // stores pointers to sent MeasConfig messages along with the measIds used in that config, for potential future reference (e.g. handovers)
-    std::vector<std::tuple<ASN_RRC_MeasConfig*, std::vector<long>>> sentMeasConfigs{};
 
     // Map of ReportConfigEvents by their reportConfigId, for easy reference during measurement evaluation and handover condition checking
     std::map<long, nr::rrc::common::ReportConfigEvent> reportConfigEvents{};
@@ -771,6 +805,17 @@ struct GnbCondHandoverRequest {
 
 };
 
+struct XnChoRequest
+{
+    int choTrigger{};
+    int64_t targetNGRANnodeUeXnapId{};
+    int choArrivalProbabilityPercent{};
+    bool tbiProvided{};
+    int64_t tbiWindowStart{};
+    int32_t tbiDuration{};
+    int maxNumCondReconfigsToPrepare{};
+};
+
 struct GnbXnConfig
 {
     bool enabled{false};
@@ -869,7 +914,6 @@ struct GnbConfig
     std::string name{};
     std::optional<std::string> nodeNameTemplatePreview{};
     EPagingDrx pagingDrx{};
-    Vector3 phyLocation{};
     GeoPosition geoLocation{};  // lat/lon/alt for the gNB
 
     [[nodiscard]] inline uint32_t getGnbId() const
@@ -929,7 +973,10 @@ struct TaskBase
     GtpTask *gtpTask{};
     NgapTask *ngapTask{};
     GnbRrcTask *rrcTask{};
-    SctpTask *sctpTask{};
+    SctpTask *sctpTask{};   // NGAP (gNB-AMF) SCTP connections
+    SctpTask *xnSctpTask{}; // Xn (gNB-gNB) SCTP connections — separate instance so
+                            // clientId spaces (AMF ctxIds vs neighbor gnbIds) cannot
+                            // collide and Xn connect stalls/churn cannot block NGAP
     GnbRlsTask *rlsTask{};
     XnTask *xnTask{};
 

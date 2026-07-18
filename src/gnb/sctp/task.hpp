@@ -34,15 +34,31 @@ class SctpTask : public NtsTask
         NtsTask *associatedTask;
     };
 
+    // A listening endpoint (LISTEN_REQUEST).  Accepted associations become
+    // ordinary ClientEntry records with negative, task-assigned clientIds.
+    struct ListenerEntry
+    {
+        sctp::SctpServer *server;
+        ScopedThread *acceptThread;
+        sctp::PayloadProtocolId ppid;
+        NtsTask *associatedTask;
+    };
+
   private:
     TaskBase *m_base;
     std::unique_ptr<Logger> m_logger;
     std::unordered_map<int, ClientEntry *> m_clients;
+    ListenerEntry *m_listener{nullptr};
+    // Inbound (accepted) associations get negative clientIds so they can never
+    // collide with requester-chosen ids.  -1 is reserved as "unset" by users.
+    int m_nextInboundClientId{-2};
 
     friend class GnbCmdHandler;
 
   public:
-    explicit SctpTask(TaskBase *base);
+    // loggerName distinguishes multiple instances (e.g. "sctp" for the
+    // NGAP/AMF connections, "sctp-xn" for the Xn instance).
+    explicit SctpTask(TaskBase *base, const char *loggerName = "sctp");
     ~SctpTask() override = default;
 
   protected:
@@ -57,6 +73,9 @@ class SctpTask : public NtsTask
     void receiveSctpConnectionSetupRequest(int clientId, const std::string &localAddress, uint16_t localPort,
                                            const std::string &remoteAddress, uint16_t remotePort,
                                            sctp::PayloadProtocolId ppid, NtsTask *associatedTask, uint16_t maxTxStreams, uint16_t maxRxStreams);
+    void receiveListenRequest(const std::string &localAddress, uint16_t localPort, sctp::PayloadProtocolId ppid,
+                              NtsTask *associatedTask, uint16_t maxTxStreams, uint16_t maxRxStreams);
+    void receiveConnectionAccepted(int acceptedFd);
     void receiveAssociationSetup(int clientId, int associationId, int inStreams, int outStreams);
     void receiveAssociationShutdown(int clientId);
     void receiveClientReceive(int clientId, uint16_t stream, UniqueBuffer &&buffer);

@@ -7,7 +7,6 @@
 //
 
 #include "task.hpp"
-//#include "meas_provider.hpp"
 
 #include <asn/rrc/ASN_RRC_RRCSetupRequest-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCSetupRequest.h>

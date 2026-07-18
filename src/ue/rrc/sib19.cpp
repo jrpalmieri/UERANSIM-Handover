@@ -68,14 +68,15 @@ static constexpr size_t SIB19_LEGACY_PDU_SIZE = 96;
 // Multi-entry payload version and layout constants.
 static constexpr uint8_t SIB19_MULTI_VERSION = 2;
 static constexpr size_t SIB19_MULTI_HEADER_SIZE = 8;
-static constexpr size_t SIB19_MULTI_ENTRY_SIZE = 96;   // PosVel / Orbital
-static constexpr size_t SIB19_TLE_ENTRY_SIZE   = 216;  // TLE
+static constexpr size_t SIB19_MULTI_ENTRY_SIZE = 100;  // PosVel / Orbital
+static constexpr size_t SIB19_TLE_ENTRY_SIZE   = 220;  // TLE
 
 // Common-field start offset within a standard (PosVel/Orbital) entry.
-static constexpr size_t COMMON_OFFSET     = 52;
+// Layout: 8 (NCI) + 48 (ephemeris) = 56
+static constexpr size_t COMMON_OFFSET     = 56;
 // Common-field start offset within a TLE entry.
-// Layout: 8 (NCI) + 25 (name) + 70 (line1) + 70 (line2) + 3 (pad) = 172
-static constexpr size_t TLE_COMMON_OFFSET = 172;
+// Layout: 8 (NCI) + 25 (name) + 70 (line1) + 70 (line2) + 3 (pad) = 176
+static constexpr size_t TLE_COMMON_OFFSET = 176;
 
 /* ================================================================== */
 /*  receiveSib19 — parse DL_SIB19 PDU and store in cell descriptor    */
@@ -203,42 +204,42 @@ void UeRrcTask::receiveSib19(int64_t cellId, const OctetString &pdu)
         if (ephType == 0)
         {
             entry.ntnConfig.ephemerisInfo.type = EEphemerisType::POSITION_VELOCITY;
-            entry.ntnConfig.ephemerisInfo.posVel.positionX  = readF64(base + 4);
-            entry.ntnConfig.ephemerisInfo.posVel.positionY  = readF64(base + 12);
-            entry.ntnConfig.ephemerisInfo.posVel.positionZ  = readF64(base + 20);
-            entry.ntnConfig.ephemerisInfo.posVel.velocityVX = readF64(base + 28);
-            entry.ntnConfig.ephemerisInfo.posVel.velocityVY = readF64(base + 36);
-            entry.ntnConfig.ephemerisInfo.posVel.velocityVZ = readF64(base + 44);
+            entry.ntnConfig.ephemerisInfo.posVel.positionX  = readF64(base + 8);
+            entry.ntnConfig.ephemerisInfo.posVel.positionY  = readF64(base + 16);
+            entry.ntnConfig.ephemerisInfo.posVel.positionZ  = readF64(base + 24);
+            entry.ntnConfig.ephemerisInfo.posVel.velocityVX = readF64(base + 32);
+            entry.ntnConfig.ephemerisInfo.posVel.velocityVY = readF64(base + 40);
+            entry.ntnConfig.ephemerisInfo.posVel.velocityVZ = readF64(base + 48);
         }
         else if (ephType == 1)
         {
             entry.ntnConfig.ephemerisInfo.type = EEphemerisType::ORBITAL_PARAMETERS;
-            entry.ntnConfig.ephemerisInfo.orbital.semiMajorAxis = readI64(base + 4);
-            entry.ntnConfig.ephemerisInfo.orbital.eccentricity  = readI32(base + 12);
-            entry.ntnConfig.ephemerisInfo.orbital.periapsis     = readI32(base + 16);
-            entry.ntnConfig.ephemerisInfo.orbital.longitude     = readI32(base + 20);
-            entry.ntnConfig.ephemerisInfo.orbital.inclination   = readI32(base + 24);
-            entry.ntnConfig.ephemerisInfo.orbital.meanAnomaly   = readI32(base + 28);
+            entry.ntnConfig.ephemerisInfo.orbital.semiMajorAxis = readI64(base + 8);
+            entry.ntnConfig.ephemerisInfo.orbital.eccentricity  = readI32(base + 16);
+            entry.ntnConfig.ephemerisInfo.orbital.periapsis     = readI32(base + 20);
+            entry.ntnConfig.ephemerisInfo.orbital.longitude     = readI32(base + 24);
+            entry.ntnConfig.ephemerisInfo.orbital.inclination   = readI32(base + 28);
+            entry.ntnConfig.ephemerisInfo.orbital.meanAnomaly   = readI32(base + 32);
         }
         else  // ephType == 2  (TLE)
         {
             // Wire layout within the entry (offsets from entry start):
-            //   +4   25 bytes  name  (null-padded, up to 24 chars)
-            //   +29  70 bytes  line1 (null-padded, 69-char TLE line 1)
-            //   +99  70 bytes  line2 (null-padded, 69-char TLE line 2)
+            //   +8    25 bytes  name  (null-padded, up to 24 chars)
+            //   +33   70 bytes  line1 (null-padded, 69-char TLE line 1)
+            //   +103  70 bytes  line2 (null-padded, 69-char TLE line 2)
             entry.ntnConfig.ephemerisInfo.type = EEphemerisType::TLE;
             auto &tle = entry.ntnConfig.ephemerisInfo.tle;
 
-            if (base + 4 + 25 <= len)
-                std::memcpy(tle.name, p + base + 4, 25);
+            if (base + 8 + 25 <= len)
+                std::memcpy(tle.name, p + base + 8, 25);
             tle.name[24] = '\0';
 
-            if (base + 29 + 70 <= len)
-                std::memcpy(tle.line1, p + base + 29, 70);
+            if (base + 33 + 70 <= len)
+                std::memcpy(tle.line1, p + base + 33, 70);
             tle.line1[69] = '\0';
 
-            if (base + 99 + 70 <= len)
-                std::memcpy(tle.line2, p + base + 99, 70);
+            if (base + 103 + 70 <= len)
+                std::memcpy(tle.line2, p + base + 103, 70);
             tle.line2[69] = '\0';
             
             foundTles.emplace_back(nr::sat::SatTleEntry{

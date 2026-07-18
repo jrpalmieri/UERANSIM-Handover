@@ -45,7 +45,7 @@ void GnbRrcTask::receiveRrcSetupRequest(int64_t ueId, const ASN_RRC_RRCSetupRequ
 {
     // see if UeID is already in the RRC UE context map
     // Why: - failed registration, failed handover
-    auto *ue = tryFindUeByUeId(ueId);
+    auto *ue = findCtxByUeId(ueId);
     if (ue)
     {
         // TODO: handle this more properly
@@ -59,23 +59,28 @@ void GnbRrcTask::receiveRrcSetupRequest(int64_t ueId, const ASN_RRC_RRCSetupRequ
         return;
     }
 
-    // Create UE RRC context keyed by UE ID while keeping C-RNTI in context payload.
+    // Create UE RRC context
+    
+    //  A new C-RNTI must be able to be assigned to the UE, so do this first
     int newCrnti = allocateCrnti();
     if (newCrnti == 0)
     {
         m_logger->err("UE[%ld] RRC SetupRequest received. Failed to allocate C-RNTI. Discarding.", ueId);
         return;
     }
-
+    // now create then new UE RRC context with the new C-RNTI
+    //   if this fails, we release the C-RNTI and handle the error
     ue = createUe(ueId, newCrnti);
     if (!ue)
     {
-        m_logger->err("UE[%ld] RRC SetupRequest received. Failed to create UE RRC context. Discarding.", ueId);
+        m_logger->err("UE[%ld] RRC SetupRequest received. Failed to create UE RRC context. Aborting.", ueId);
         releaseCrnti(newCrnti);
+
+        // TODO: send RRC Reject message to UE, if possible
+
         return;
     }
 
-    ue->ueId = ueId;
     ue->rrcState = UE_RRC_CONNECTION_STATE::RRC_CONNECTION_PENDING;
     m_logger->info("UE[%ld] RRC SetupRequest received. UE context created, cRNTI=%d", ueId, newCrnti);
 
@@ -116,13 +121,7 @@ void GnbRrcTask::receiveRrcSetupRequest(int64_t ueId, const ASN_RRC_RRCSetupRequ
 
 void GnbRrcTask::receiveRrcSetupComplete(int64_t ueId, const ASN_RRC_RRCSetupComplete &msg)
 {
-    auto *ue = tryFindUeByUeId(ueId);
-    if (!ue)
-    {
-        // Fallback for legacy behavior where ueId may still be equal to C-RNTI in some paths.
-        ue = tryFindUeByCrnti(ueId);
-    }
-
+    auto *ue = findCtxByUeId(ueId);
     if (!ue)
     {
         m_logger->err("UE[%ld] RRC Setup Complete received, but UE context not found. Aborting.", ueId);
@@ -191,16 +190,16 @@ void GnbRrcTask::receiveRrcSetupComplete(int64_t ueId, const ASN_RRC_RRCSetupCom
 //  Sent by the UE is response to a Security Mode Command from the gNB
 void GnbRrcTask::receiveSecurityModeComplete(int64_t ueId, int cRnti, const ASN_RRC_SecurityModeComplete &msg)
 {
-    auto *ue = tryFindUeByUeId(ueId);
+    auto *ue = findCtxByUeId(ueId);
     if (!ue)
     {
-        m_logger->err("UE[%ld] Security Mode Complete received. UE context not found.", ueId);
+        m_logger->err("UE[%ld]: Security Mode Complete received. UE context not found. Discarding.", ueId);
         return;
     }
 
     // In the simulation we don't use encryption, so we just log that this message was received.
 
-    m_logger->debug("UE[%ld] Security Mode Complete received, cRNTI=%d", ue->ueId, cRnti);
+    m_logger->debug("UE[%ld]: Security Mode Complete received.", ue->ueId);
 
 }
 

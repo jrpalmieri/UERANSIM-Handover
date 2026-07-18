@@ -166,7 +166,8 @@ class UeRrcTask : public NtsTask
     void refreshSecurityKeys();
 
     /* Conditional Handover (CHO) */
-    void handleChoConfiguration(const OctetString &pdu);
+    //void handleChoConfiguration(const OctetString &pdu);  // dead declaration — no implementation;
+    //  served the deprecated binary DL_CHO channel (see RRC_summary.md issue 14)
     void parseConditionalReconfiguration(const ASN_RRC_ConditionalReconfiguration *condReconfig);
     bool evaluateChoCandidates(int64_t servingCellId, const std::vector<std::pair<int64_t,int>> &allMeas);
     std::vector<nr::sat::SatPriorityScore> selectBestSatellite(

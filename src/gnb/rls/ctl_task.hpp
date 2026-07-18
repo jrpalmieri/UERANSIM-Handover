@@ -13,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <shared_mutex>
+#include <unordered_map>
 
 #include <gnb/nts.hpp>
 #include <gnb/types.hpp>
@@ -36,6 +37,9 @@ class RlsControlTask : public NtsTask
 
     // UE Contexts, keyed by UE ID
     std::map<int64_t, RlsUeContext> m_ueCtx;
+    // SN Status may race target bearer configuration.  Unknown DRBs are held
+    // here and retried after every RADIO_BEARER_UPDATE for the UE.
+    std::unordered_map<int64_t, std::vector<DrbSnStatus>> m_deferredSnStatus;
     // Handlers (RLS task thread) hold unique_lock; copyUeContext (caller thread) holds shared_lock.
     mutable std::shared_mutex m_ueCtxMutex;
 
@@ -71,6 +75,9 @@ class RlsControlTask : public NtsTask
     void handleDownlinkRrcDelivery(int64_t ueId, rrc::RrcChannel channel, OctetString &&data);
     void handleDownlinkDataDelivery(int64_t ueId, int psi, int qfi, OctetString &&data);
     void handleRadioBearerUpdate(int64_t ueId, std::unique_ptr<RadioBearerUpdate> rbUpdate, std::unique_ptr<SdapUpdate> sdapUpdate);
+    void handleApplyDrbSnStatus(int64_t ueId, const std::vector<DrbSnStatus> &status);
+    void handleRemoveUeContext(int64_t ueId);
+    void applyOrDeferDrbSnStatus(int64_t ueId, RlsUeContext &ctx, const std::vector<DrbSnStatus> &status);
     void onAckControlTimerExpired();
     void onAckSendTimerExpired();
 };

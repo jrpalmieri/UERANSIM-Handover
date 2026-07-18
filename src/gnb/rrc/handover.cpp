@@ -1,16 +1,23 @@
 //
-// gNB-side handover support additions.
+// gNB-side handover procedures (source and target roles), including
+// conditional handover (CHO) and the custom transparent containers.
 //
 // Implements:
-//   receiveRrcReconfigurationComplete()  – handle UE's RRCReconfigurationComplete on target gNB
-//   receiveMeasurementReport()           – receive UE MeasurementReport and determine whether to initiate handover
-//   sendUeHandoverMessage()                – build RRCReconfiguration with
-//                                          ReconfigurationWithSync and send to UE
-//   handleHandoverComplete()             – post-handover processing (logging, NGAP notify)
-//   sendMeasConfig()                     – send measurement configuration to UE in RRCReconfiguration message
-//   evaluateHandoverDecision()           – decide whether to initiate handover
-//   handleNgapHandoverCommand()          – receive notification of NGAP Handover Command, send 
-//                                          embedded RRCReconfiguration container to UE
+//   evaluateHandoverDecision()        – re-check a reported event and decide whether to hand over
+//   executeBasicHandover()            – build the source-to-target container, start Xn/N2 preparation
+//   handleHandoverRequest()           – target side: admit the UE, build pending context + command
+//   rejectHandoverRequest() / discardHandoverUeContext() – failure-path responses and cleanup
+//   handleHandoverAckOrCommand()      – source side: forward the target's RRCReconfiguration to the UE
+//   handleHandoverPreparationFailure() – clear source-side preparation state
+//   sendUeHandoverMessage()           – build a ReconfigurationWithSync RRCReconfiguration locally
+//   processConditionalHandover() / completeConditionalHandover() / clearChoPendingState() – CHO preparation
+//   prioritizeNeighbors()             – rank CHO target candidates (satellite-aware)
+//   makeTargetToSourceTransparentContainer() / makeSourceToTargetTransparentContainerSimulated()
+//   EncodeCustomRrcContext() / DecodeCustomRrcContext() – custom transparent-container payload
+//   createHandoverPreparationInformation() – standards-based HandoverPreparationInformation encode
+//
+// (MeasConfig construction and MeasurementReport reception live in measurement.cpp;
+//  RRCReconfigurationComplete handling lives in reconfiguration.cpp.)
 //
 
 #include "task.hpp"
@@ -18,6 +25,7 @@
 #include <gnb/neighbors.hpp>
 #include <gnb/ngap/task.hpp>
 #include <gnb/xn/task.hpp>
+#include <gnb/rls/task.hpp>
 #include <gnb/sat_time.hpp>
 
 #include <lib/sat/sat_calc.hpp>
@@ -85,12 +93,9 @@
 
 #include <libsgp4/DateTime.h>
 
-const int MIN_RSRP = cons::MIN_RSRP; // minimum RSRP value (in dBm) to use when no measurement is available
 const int HANDOVER_TIMEOUT_MS = 5000; // time to wait for handover completion before considering it failed
 const int COND_HANDOVER_TIMEOUT_MS = 100000; // time to wait for conditional handover completion before considering it failed
-const long DUMMY_MEAS_OBJECT_ID = 1; // dummy MeasObjectId for handover measurement configuration
 
-static constexpr int NTN_DEFAULT_T_SERVICE_SEC = 300;
 static constexpr int MIN_COND_RECONFIG_ID = 1;
 static constexpr int MAX_COND_RECONFIG_ID = 8;
 
@@ -101,23 +106,9 @@ namespace nr::gnb
 static RrcUeContext *DecodeCustomRrcContext(const OctetString &data);
 
 using HandoverEventType = nr::rrc::common::HandoverEventType;
-using nr::rrc::common::ReportConfigEvent;
-using nr::rrc::common::MeasObject;
-using nr::sat::SatEcefState;
 using nr::sat::EcefPosition;
-using nr::sat::ComputeNadir;
-using nr::rrc::common::EventReferenceLocation;
-using nr::sat::NeighborEndpoint;
-using nr::rrc::common::mtqFromASNValue;
-using nr::rrc::common::mtqToASNValue;
-using nr::rrc::common::hysteresisFromASNValue;
-using nr::rrc::common::hysteresisToASNValue;
-using nr::rrc::common::referenceLocationToAsnValue;
-using nr::rrc::common::tttMsToASNValue;
-using nr::rrc::common::distanceThresholdToASNValue;
 using nr::rrc::common::t304MsToEnum;
 using nr::rrc::common::IsMeasurementEvent;
-using nr::rrc::common::IsConditionalEvent;
 
 
 
@@ -319,7 +310,7 @@ static bool extractTargetNciFromNestedRrcReconfiguration(const OctetString &nest
  */
 void GnbRrcTask::evaluateHandoverDecision(int64_t ueId, int measId)
 {
-    auto *ue = tryFindUeByUeId(ueId);
+    auto *ue = findCtxByUeId(ueId);
     if (!ue)
         return;
 
@@ -331,8 +322,22 @@ void GnbRrcTask::evaluateHandoverDecision(int64_t ueId, int measId)
     int bestNeighRsrp = ue->lastMeasReportRsrp;
     int servingRsrp = ue->lastServingRsrp;
 
-    auto mi = ue->measIdentities.find(measId)->second;
-    auto rc = ue->reportConfigEvents.find(mi.reportConfigId)->second;
+    auto miIt = ue->measIdentities.find(measId);
+    if (miIt == ue->measIdentities.end())
+    {
+        m_logger->warn("UE[%ld] HandoverEval: unknown measId=%d, skipping", ue->ueId, measId);
+        return;
+    }
+    const auto &mi = miIt->second;
+
+    auto rcIt = ue->reportConfigEvents.find(mi.reportConfigId);
+    if (rcIt == ue->reportConfigEvents.end())
+    {
+        m_logger->warn("UE[%ld] HandoverEval: measId=%d references unknown reportConfigId=%ld, skipping",
+                       ue->ueId, measId, mi.reportConfigId);
+        return;
+    }
+    auto rc = rcIt->second;
 
     // only evaluate events that use measurement reports
     if (!IsMeasurementEvent(rc.eventKind))
@@ -392,7 +397,7 @@ void GnbRrcTask::evaluateHandoverDecision(int64_t ueId, int measId)
         
         m_logger->debug("UE[%ld] HandoverEval: event=D1 "
                         "distThresh1=%dm distThresh2=%dm hysteresis=%dm "
-                        "cond1=(%d > %d) cond2=(%d < %d) result=%s",
+                        "result=%s",
                         ue->ueId, rc.d1_distanceThreshFromReference1, rc.d1_distanceThreshFromReference2,
                         rc.d1_hysteresisLocation,
                         shouldHandover ? "true" : "false");
@@ -487,29 +492,214 @@ void GnbRrcTask::executeBasicHandover(RrcUeContext *ue, long targetNci, int serv
 }
 
 
+/**
+ * @brief Frees a provisional (pending-handover) RRC UE context: returns its
+ * C-RNTI (if one was allocated) to the pool and deletes the context object.
+ * Used by the handleHandoverRequest failure paths and the duplicate-request
+ * replacement; intended to be reused by the future pending-handover expiry sweep.
+ */
+void GnbRrcTask::discardHandoverUeContext(RrcUeContext *ue)
+{
+    if (ue == nullptr)
+        return;
+
+    if (ue->cRnti > 0)
+        releaseCrnti(ue->cRnti);
+
+    delete ue;
+}
+
+/**
+ * @brief Periodic garbage collection of m_handoversPending (driven by the
+ * TIMER_ID_HO_PENDING_SWEEP timer in the RRC task, every 1 s).
+ *
+ * A pending target-side preparation whose UE never sent
+ * RRCReconfigurationComplete is discarded once its expireTime passes
+ * (5 s basic / 100 s CHO, stamped in handleHandoverRequest).  Cleanup mirrors
+ * the Xn HANDOVER_CANCEL_RECEIVED rollback — every receiver is idempotent:
+ *  - the provisional RRC context and its C-RNTI are freed,
+ *  - Xn only: the provisional NGAP/GTP state made via XN_HANDOVER_PREPARE is
+ *    cancelled (N2's equivalent lives in NGAP's own pending map, keyed by the
+ *    NGAP transaction id which RRC does not hold — NGAP owns that expiry),
+ *  - the pre-programmed RLS bearer context is removed, unless this ueId also
+ *    has an *active* RRC context here (never destroy a live UE's radio state).
+ *
+ * No failure message is sent to anyone: the preparation was already ACKed
+ * toward the source, so expiry is purely local cleanup.  A completion that
+ * arrives after expiry is treated as coming from an unknown UE.  Note the
+ * expiry clock is CurrentTimeMillis(), matching the stamp in
+ * handleHandoverRequest (TODO there: switch both to SatTime in NTN mode).
+ */
+void GnbRrcTask::sweepPendingHandovers()
+{
+    if (m_handoversPending.empty())
+        return;
+
+    const uint64_t now = utils::CurrentTimeMillis();
+
+    for (auto it = m_handoversPending.begin(); it != m_handoversPending.end();)
+    {
+        auto &pending = it->second;
+        if (pending.expireTime > now)
+        {
+            ++it;
+            continue;
+        }
+
+        const int64_t ueId = it->first;
+        m_logger->warn("UE[%ld] pending %s handover expired (txId=%ld); discarding provisional context",
+                       ueId, pending.isXn ? "Xn" : "N2", pending.rrcReconfigurationTxId);
+
+        if (pending.isXn)
+        {
+            auto ngapCancel = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::XN_TARGET_PREPARATION_CANCEL);
+            ngapCancel->ueId = ueId;
+            m_base->ngapTask->push(std::move(ngapCancel));
+        }
+
+        if (findCtxByUeId(ueId) == nullptr)
+        {
+            auto rlsCancel = std::make_unique<NmGnbRrcToRls>(NmGnbRrcToRls::REMOVE_UE_CONTEXT);
+            rlsCancel->ueId = ueId;
+            m_base->rlsTask->push(std::move(rlsCancel));
+        }
+
+        discardHandoverUeContext(pending.ctx);
+        it = m_handoversPending.erase(it);
+    }
+}
+
+/**
+ * @brief Rejects an incoming Handover Request: frees any partially-built
+ * target-side state (via discardHandoverUeContext) and sends a failure
+ * response back to the requesting interface so the source side does not
+ * wait for an ACK that will never come.
+ *   - Xn:   HANDOVER_PREPARATION_FAILURE_SEND → XnAP HandoverPreparationFailure
+ *           to the source gNB (existing plumbing in the Xn task).
+ *   - NGAP: HANDOVER_FAILURE_SEND → NGAP HandoverFailure to the AMF, which
+ *           converts it to HandoverPreparationFailure toward the source.
+ *
+ * @param requestingTask which interface delivered the Handover Request
+ * @param transactionId  the requester's transaction id (xnTxId / ngapTxId)
+ * @param ngapCause      cause to report on the NGAP path
+ * @param xnCauseGroup   cause group (Cause CHOICE discriminant) for the Xn path
+ * @param ue             decoded provisional context to discard (may be nullptr)
+ */
+void GnbRrcTask::rejectHandoverRequest(ERequestingTask requestingTask, uint32_t transactionId,
+                                       NgapCause ngapCause, ASN_XNAP_Cause_PR xnCauseGroup,
+                                       RrcUeContext *ue)
+{
+    discardHandoverUeContext(ue);
+
+    if (requestingTask == ERequestingTask::XN)
+    {
+        auto w = std::make_unique<NmGnbRrcToXn>(NmGnbRrcToXn::HANDOVER_PREPARATION_FAILURE_SEND);
+        w->xnTxId = static_cast<int>(transactionId);
+        w->reason = xnCauseGroup;
+        m_base->xnTask->push(std::move(w));
+    }
+    else // ERequestingTask::NGAP
+    {
+        auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_FAILURE_SEND);
+        w->ngapTxId = transactionId;
+        w->hoCause = ngapCause;
+        m_base->ngapTask->push(std::move(w));
+    }
+}
+
 // Handles a Handover Request msg from XN or NGAP.
 // The rrcContainer is used by the Source-to-Target Transparent Container (NGAP) or rrc-Context (Xn).
 //  This function decodes the container, creates a provisional RRC UE context, stores it in the pending handover map,
 //  and creates a targetToSourceTransparentContainer containing the RRCReconfiguration message to send to the UE.
-// On completion is sends a message to the requester indicating success (HANDOVER_REQUEST_ACK) or failure (HANDOVER_PREPARATION_FAILURE).
-void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId, 
-        std::unique_ptr<OctetString> rrcContainer, 
-        std::unique_ptr<std::vector<PduSessionResource>> sessionList, 
-        bool isCho, EReqestingTask requestingTask)
+// On completion is sends a message to the requester indicating success (HANDOVER_REQUEST_ACK) or failure
+//  (XnAP HandoverPreparationFailure / NGAP HandoverFailure via rejectHandoverRequest()).
+void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
+        std::unique_ptr<OctetString> rrcContainer,
+        std::unique_ptr<std::vector<PduSessionResource>> sessionList,
+        bool isCho, ERequestingTask requestingTask,
+        std::unique_ptr<XnHandoverCoreContext> xnCoreContext,
+        std::unique_ptr<XnChoRequest> xnChoRequest)
 {
+    (void)xnChoRequest;
 
     // Decode the RRC Container to extract the UE context
     auto *ue = DecodeCustomRrcContext(*rrcContainer);
 
+    // GUARD 1: container decode failure → reject with a protocol/ASN-error cause
+    //  (previously returned silently, leaving the source waiting for an ACK)
     if (!ue)
     {
         m_logger->err("handleHandoverRequest: Failed to decode RRC Container for transactionId=%u", transactionId);
+        rejectHandoverRequest(requestingTask, transactionId,
+                              NgapCause::Protocol_abstract_syntax_error_falsely_constructed_message,
+                              ASN_XNAP_Cause_PR_protocol, nullptr);
         return;
+    }
+
+    // GUARD 2: the decoded ueId keys the pending-handover map and all later
+    //  context matching — a non-positive value would poison both, so reject it
+    if (ue->ueId <= 0)
+    {
+        m_logger->err("handleHandoverRequest: decoded RRC context has invalid ueId=%ld (transactionId=%u)",
+                      ue->ueId, transactionId);
+        rejectHandoverRequest(requestingTask, transactionId,
+                              NgapCause::Protocol_semantic_error,
+                              ASN_XNAP_Cause_PR_protocol, ue);
+        return;
+    }
+
+    // GUARD 3 (replace policy): a pending handover already exists for this UE —
+    //  e.g. a source retry after timeout, or a CHO re-preparation.  Latest wins:
+    //  free the stale entry's context and C-RNTI, then proceed with the new
+    //  request.  (Previously the map assignment silently overwrote the entry,
+    //  leaking the old context and its C-RNTI.)
+    auto itDup = m_handoversPending.find(ue->ueId);
+    if (itDup != m_handoversPending.end())
+    {
+        m_logger->warn("UE[%ld] handleHandoverRequest: replacing stale pending handover (oldTxId=%ld)",
+                       ue->ueId, itDup->second.rrcReconfigurationTxId);
+        discardHandoverUeContext(itDup->second.ctx);
+        m_handoversPending.erase(itDup);
     }
 
     // generate new cRNTI for the UE in the target cell
     int newCrnti = m_crntiMgr.allocate();
+
+    // GUARD 4: C-RNTI pool exhausted (allocate() returns 0) → reject with
+    //  no-radio-resources.  (Previously unchecked: the context proceeded with
+    //  cRnti=0, which normalizeCrntiForRrc() would later remap to 1, colliding
+    //  with a legitimately-assigned C-RNTI.)
+    if (newCrnti == 0)
+    {
+        m_logger->err("UE[%ld] handleHandoverRequest: C-RNTI pool exhausted, rejecting handover", ue->ueId);
+        rejectHandoverRequest(requestingTask, transactionId,
+                              NgapCause::RadioNetwork_no_radio_resources_available_in_target_cell,
+                              ASN_XNAP_Cause_PR_radioNetwork, ue);
+        return;
+    }
     ue->cRnti = newCrnti;
+
+    if (requestingTask == ERequestingTask::XN)
+    {
+        // NGAP/GTP preparation is asynchronous, so reject structurally invalid
+        // transferred core state here, before the Xn ACK can be queued.  These
+        // are the same invariants setupPduSessionResource() enforces.
+        bool invalidCore = !xnCoreContext;
+        if (sessionList)
+        {
+            invalidCore = invalidCore || std::any_of(sessionList->begin(), sessionList->end(), [](const auto &session) {
+                return session.sessionType != PduSessionType::IPv4 || session.upTunnel.address.length() == 0 ||
+                       session.qosFlows.empty();
+            });
+        }
+        if (invalidCore)
+        {
+            m_logger->err("UE[%ld] invalid Xn core/session context; rejecting handover before ACK", ue->ueId);
+            rejectHandoverRequest(requestingTask, transactionId, NgapCause::Protocol_semantic_error,
+                                  ASN_XNAP_Cause_PR_protocol, ue);
+            return;
+        }
+    }
 
     // calculate expiration time for handover completion
     // depends on whether this is a CHO or not
@@ -519,8 +709,11 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
     uint64_t expireTime = utils::CurrentTimeMillis() + timeoutMs;
 
     // Here we would do some checking for admission of the PDU sessions.
-    // For now, we just admit them all
-    
+    // For now, we just admit them all.
+    //  (When admission control is added: rejecting *all* sessions becomes a
+    //   rejectHandoverRequest() with an unable-to-admit cause; partial admission
+    //   populates the rejectedSessions field of the ACK messages below.)
+
     auto admittedSessions = std::make_unique<std::vector<PduSessionResource>>();
     if (sessionList)
     {
@@ -530,37 +723,73 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
         }
     }
 
-    // TODO: setup radio bearers for the admitted sessions
+    // Pre-program the target's RLS with the same one-DRB-per-session bearer/SDAP
+    // layout used by normal RRC bearer setup (createRadioBearerConfig).  This is
+    // interface-independent: user-plane traffic needs the DRB/SDAP mappings in
+    // place when the UE arrives regardless of whether Xn or N2 prepared the
+    // handover (previously Xn-only, leaving the N2 target with just the SRB0-only
+    // default context).  On Xn it additionally guarantees the transferred SN
+    // status has bearers to land on.
+    if (!admittedSessions->empty())
+    {
+        // Reuse the shared allocator so DRB ids stay unique across the UE's active
+        // bearers and RRC's bearerMap is populated on the handover path too (needed
+        // for any later session release at this gNB).
+        auto rb = std::make_unique<RadioBearerUpdate>();
+        auto sdap = std::make_unique<SdapUpdate>();
+        assignSessionBearers(ue, *admittedSessions, *rb, *sdap);
 
+        auto bearerSetup = std::make_unique<NmGnbRrcToRls>(NmGnbRrcToRls::RADIO_BEARER_UPDATE);
+        bearerSetup->ueId = ue->ueId;
+        bearerSetup->rbUpdate = std::move(rb);
+        bearerSetup->sdapUpdate = std::move(sdap);
+        m_base->rlsTask->push(std::move(bearerSetup));
 
+        m_logger->debug("UE[%ld] target RLS pre-programmed with DRB(s) for %zu admitted session(s)",
+                        ue->ueId, admittedSessions->size());
+    }
 
     // create the RRCReconfiguration message to send to the UE
-    
+
     long rrcTxId = ue->getNextTid();
     int t304Ms = 1000; // default T304 value to include in the RRCReconfiguration
     auto targetContainer = makeTargetToSourceTransparentContainer(ue->ueId, ue->cRnti, t304Ms, rrcTxId);
+
+    // GUARD 5: container build failure → reject.  (Previously returned silently,
+    //  leaking the decoded context and the freshly-allocated C-RNTI — the helper
+    //  releases both.)
     if (!targetContainer)
     {
         m_logger->err("handleHandoverRequest: Failed to create target-to-source RRC Container for UE[%ld]", ue->ueId);
+        rejectHandoverRequest(requestingTask, transactionId,
+                              NgapCause::RadioNetwork_unspecified,
+                              ASN_XNAP_Cause_PR_radioNetwork, ue);
         return;
     }
 
     // store in pending handover map keyed by ueId
-    
+
     m_handoversPending[ue->ueId] = RRCHandoverPending{
         ue->ueId,
         ue,
         expireTime,
-        rrcTxId
+        rrcTxId,
+        requestingTask == ERequestingTask::XN
     };
 
 
     // Send the HANDOVER_REQUEST_ACK back to the requester with the rrcContainer
-    if (requestingTask == EReqestingTask::XN)
+    if (requestingTask == ERequestingTask::XN)
     {
 
-        // Msg to NGAP to create pending handover CTX and reserve GTP tunnels
-        // TODO
+        // Prepare the target's core/user-plane state before advertising the
+        // RRC command to the source.  Copy the admitted list because Xn still
+        // owns the original list for construction of HandoverRequestAck.
+        auto core = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::XN_HANDOVER_PREPARE);
+        core->ueId = ue->ueId;
+        core->xnCoreContext = std::move(xnCoreContext);
+        core->admittedSessions = std::make_unique<std::vector<PduSessionResource>>(*admittedSessions);
+        m_base->ngapTask->push(std::move(core));
 
 
         // Msg to Xn to send Handover Request Ack to source gNB
@@ -573,7 +802,7 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
         w->rejectedSessions = nullptr;
         m_base->xnTask->push(std::move(w));
     }
-    else if (requestingTask == EReqestingTask::NGAP)
+    else if (requestingTask == ERequestingTask::NGAP)
     {
         // Msg to NGAP to send Handover Request Ack to AMF
         auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::HANDOVER_REQUEST_ACK_SEND);
@@ -657,23 +886,7 @@ void GnbRrcTask::sendUeHandoverMessage(int64_t ueId, int64_t targetNci, int newC
         return;
     }
 
-    // auto *pdu = asn::New<ASN_RRC_DL_DCCH_Message>();
-    // pdu->message.present = ASN_RRC_DL_DCCH_MessageType_PR_c1;
-    // pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
-    // pdu->message.choice.c1->present =
-    //     ASN_RRC_DL_DCCH_MessageType__c1_PR_rrcReconfiguration;
-
-    // auto &reconfig = pdu->message.choice.c1->choice.rrcReconfiguration =
-    //     asn::New<ASN_RRC_RRCReconfiguration>();
-
     long txId = pdu->message.choice.c1->choice.rrcReconfiguration->rrc_TransactionIdentifier;
-
-    // reconfig->rrc_TransactionIdentifier = txId;
-    // reconfig->criticalExtensions.present =
-    //     ASN_RRC_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration;
-
-    //auto &ies = reconfig->criticalExtensions.choice.rrcReconfiguration =
-    //    asn::New<ASN_RRC_RRCReconfiguration_IEs>();
 
     // Set nonCriticalExtension (v1530-IEs) with masterCellGroup
     auto ies = asn::New<ASN_RRC_RRCReconfiguration_v1530_IEs>();
@@ -712,7 +925,7 @@ void GnbRrcTask::sendUeHandoverMessage(int64_t ueId, int64_t targetNci, int newC
 void GnbRrcTask::processConditionalHandover(int64_t ueId, const nr::rrc::common::DynamicEventTriggerParams &dynTriggerParams, int choProfileIdx)
 {
     // ue RRC context
-    auto *ue = tryFindUeByUeId(ueId);
+    auto *ue = findCtxByUeId(ueId);
     if (!ue)
         return;
 
@@ -863,18 +1076,28 @@ void GnbRrcTask::processConditionalHandover(int64_t ueId, const nr::rrc::common:
 void GnbRrcTask::handleHandoverAckOrCommand(int64_t ueId,
                                            std::unique_ptr<OctetString> rrcContainer,
                                            bool isCho,
-                                           EReqestingTask requestingTask)
+                                           ERequestingTask requestingTask,
+                                           int64_t targetNci)
 {
+    auto cancelInvalidXnAck = [&]() {
+        if (requestingTask != ERequestingTask::XN)
+            return;
+        auto cancel = std::make_unique<NmGnbRrcToXn>(NmGnbRrcToXn::HANDOVER_CANCEL_SEND);
+        cancel->ueId = ueId;
+        cancel->targetNci = targetNci;
+        m_base->xnTask->push(std::move(cancel));
+    };
     auto *ue = findCtxByUeId(ueId);
     if (!ue)
     {
         m_logger->warn("UE[%ld]: handleHandoverAckOrCommand - cannot find UE ctx. Aborting.", ueId);
+        cancelInvalidXnAck();
         return;
     }
 
     m_logger->info("UE[%ld]: handleHandoverAckOrCommand - Received Handover Approval from %s (mode=%s)",
                    ueId,
-                   requestingTask == EReqestingTask::NGAP ? "NGAP" : "XN",
+                   requestingTask == ERequestingTask::NGAP ? "NGAP" : "XN",
                    isCho ? "cho-prepare" : "classic");
 
     // If this handover command is from a CHO preparation request, complete and send
@@ -889,6 +1112,7 @@ void GnbRrcTask::handleHandoverAckOrCommand(int64_t ueId,
     if (!pdu)
     {
         m_logger->err(" UE[%ld] Failed to decode handover RRC container as DL-DCCH message", ueId);
+        cancelInvalidXnAck();
         return;
     }
 
@@ -901,6 +1125,7 @@ void GnbRrcTask::handleHandoverAckOrCommand(int64_t ueId,
     {
         m_logger->err("UE[%ld] Decoded handover RRC container is not an RRCReconfiguration", ueId);
         asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
+        cancelInvalidXnAck();
         return;
     }
 
@@ -912,13 +1137,22 @@ void GnbRrcTask::handleHandoverAckOrCommand(int64_t ueId,
 
     m_logger->info("UE[%ld]: Target RRCReconfiguration sent to UE", ueId);
 
-    // Here we need to do User Plane adjustments to start downlink forwarding
+    if (requestingTask == ERequestingTask::XN)
+    {
+        // Status transfer is an execution-phase Xn procedure.  Queue it only
+        // after the handover command has been validated and delivered, never
+        // for a malformed ACK or for N2 handover.
+        auto status = std::make_unique<NmGnbRrcToXn>(NmGnbRrcToXn::SN_STATUS_TRANSFER_SEND);
+        status->ueId = ueId;
+        status->targetNci = targetNci;
+        m_base->xnTask->push(std::move(status));
+    }
 
 }
 
 
 
-void GnbRrcTask::handleHandoverPreparationFailure(int64_t ueId, int64_t targetNci, bool fromChoPreparation, EReqestingTask requestingTask)
+void GnbRrcTask::handleHandoverPreparationFailure(int64_t ueId, int64_t targetNci, bool fromChoPreparation, ERequestingTask requestingTask)
 {
     auto *ue = findCtxByUeId(ueId);
     if (!ue) {
@@ -962,6 +1196,7 @@ void GnbRrcTask::handleHandoverPreparationFailure(int64_t ueId, int64_t targetNc
 
     // Clear handover state in UE ctx
     ue->handoverInProgress = false;
+    ue->handoverDecisionPending = false;
     ue->handoverTargetNci = -1;
     ue->handoverNewCrnti = -1;
     ue->handoverTxId = -1;
@@ -1229,68 +1464,6 @@ std::unique_ptr<OctetString> GnbRrcTask::makeTargetToSourceTransparentContainer(
     return std::make_unique<OctetString>(std::move(encoded));
 }
 
-/**
- * @brief Adds a pending handover context transfer for the specified UE, to be completed when the UE connects
- * after handover. Handover preparation info includes the measurement
- * identities configured for this UE.
- * Also builds the RRCReconfiguration message to be included in the Target2Source
- * TransparentContainer, which source gNB sends to the UE.
- * 
- * @param ueId 
- * @param handoverPrep
- * @param rrcContainer output parameter for the RRCReconfiguration message to be sent to the UE 
- * @return true - success
- * @return false - failure
- */
-// bool GnbRrcTask::addPendingHandover(int64_t ueId, const HandoverPreparationInfo &handoverPrep,
-//                                     OctetString &rrcContainer)
-// {
-//     if (ueId <= 0)
-//         return false;
-
-//     // create the new UE RRC context
-//     auto *ctx = new RrcUeContext(ueId);
-//     ctx->ueId = ueId;
-//     ctx->handoverInProgress = true;
-//     ctx->handoverTargetNci = m_config->nci;
-//     ;
-//     ctx->cRnti = allocateCrnti();
-
-//     for (const auto &item : handoverPrep.measIdentities)
-//     {
-//         ctx->measIdentities[item.measId] = {item.measId, item.measObjectId, item.reportConfigId,
-//                                             item.eventKind, item.eventType, 0};
-//     }
-
-//     auto it = m_handoversPending.find(ueId);
-//     if (it != m_handoversPending.end() && it->second)
-//     {
-//         if (it->second->ctx)
-//             releaseCrnti(it->second->ctx->cRnti);
-//         delete it->second->ctx;
-//         delete it->second;
-//     }
-
-//     int64_t txId = buildHandoverCommandForTransfer(ueId, ctx->handoverTargetNci, ctx->cRnti, 1000, rrcContainer);
-//     // the command build fails, no handover context should be added
-//     if (txId < 0) {
-//         releaseCrnti(ctx->cRnti);
-//         delete ctx;
-//         return false;
-//     }
-
-//     // add pending handover context, to be completed when the UE connects after handover
-//     auto *pending = new RRCHandoverPending();
-//     pending->ueId = ueId;
-//     pending->ctx = ctx;
-//     pending->txId = txId;
-//     pending->expireTime = utils::CurrentTimeMillis() + HANDOVER_TIMEOUT_MS;
-//     m_handoversPending[ueId] = pending;
-
-//     m_logger->info("UE[%d] Added pending handover transfer with %zu measurement identities", ueId,
-//                    handoverPrep.measIdentities.size());
-//     return true;
-// }
 
 
 

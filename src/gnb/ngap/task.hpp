@@ -68,6 +68,15 @@ class NgapTask : public NtsTask
     // Pending handover context tracker, indexed by transactionId
     std::unordered_map<uint32_t, NGAPHandoverPending> m_handoversPending;
 
+    struct XnNgapHandoverPending
+    {
+        std::unique_ptr<NgapUeContext> ctx{};
+        std::vector<PduSessionResource> sessions{};
+    };
+    // Xn has no NGAP transaction ID, so provisional target contexts are keyed
+    // by the simulator-stable ueId until RRC confirms UE arrival.
+    std::unordered_map<int64_t, XnNgapHandoverPending> m_xnHandoversPending;
+
     // Transaction Id for correlating responses to requests from other tasks
     uint32_t m_transactionIdCounter;
 
@@ -82,6 +91,11 @@ class NgapTask : public NtsTask
     static constexpr int TIMER_STATUS_UPDATE = 1002;
     static constexpr int TIMER_STATUS_UPDATE_INTERVAL_MS = 500;
 
+    // Expiry sweep for the N2 target-side pending-handover map (m_handoversPending);
+    // NGAP counterpart of GnbRrcTask::sweepPendingHandovers().
+    static constexpr int TIMER_HO_PENDING_SWEEP = 1003;
+    static constexpr int TIMER_HO_PENDING_SWEEP_INTERVAL_MS = 1000;
+
     std::deque<std::unique_ptr<NmGnbRrcToNgap>> m_deferredQueue;
 
     void enqueueDeferred(std::unique_ptr<NmGnbRrcToNgap> msg);
@@ -95,6 +109,7 @@ class NgapTask : public NtsTask
 
     bool getUeContext(int64_t ueId, std::optional<NgapUeContext> &out);
     NgapAmfContext *getAmfContextForXn(int amfId);
+    NgapAmfContext *getConnectedAmfContextForXn();
 
   protected:
     void onStart() override;
@@ -150,6 +165,11 @@ class NgapTask : public NtsTask
     void receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSessionResourceSetupRequest *msg);
     void receiveSessionResourceReleaseCommand(int amfId, ASN_NGAP_PDUSessionResourceReleaseCommand *msg);
     std::optional<NgapCause> setupPduSessionResource(NgapUeContext *ue, PduSessionResource *resource);
+    void prepareXnHandover(int64_t ueId, std::unique_ptr<XnHandoverCoreContext> core,
+                           std::unique_ptr<std::vector<PduSessionResource>> sessions);
+    bool activateXnHandover(int64_t ueId);
+    void releaseXnSourceContext(int64_t ueId);
+    void cancelXnTargetPreparation(int64_t ueId);
 
     /* UE context management */
 
@@ -182,6 +202,12 @@ class NgapTask : public NtsTask
     void sendHandoverNotify(int64_t ueId);
     void handleHandoverNotifyFromRrc(int64_t ueId);
     void sendHandoverFailure(NgapCause cause, int64_t ueId);
+    // Target-side RRC rejected a HandoverRequest (HANDOVER_FAILURE_SEND):
+    // send NGAP HandoverFailure to the AMF and drop the pending entry.
+    void handleRrcHandoverFailure(uint32_t transactionId, NgapCause cause);
+    // Periodic (1 s) garbage collection of m_handoversPending entries whose
+    // expireTime has passed — i.e. the UE never completed the handover.
+    void sweepPendingHandovers();
 
     std::unique_ptr<OctetString> makeSourceTargetNgranTransparentContainer(int64_t targetNCI, const Plmn &targetPlmn, std::unique_ptr<OctetString> rrcContainer);
 

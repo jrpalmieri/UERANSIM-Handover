@@ -104,8 +104,6 @@ void UeRrcTask::receiveRrcSetup(int64_t cellId, const ASN_RRC_RRCSetup &msg)
         return;
     }
 
-    // extract cRnti from the RRC Setup message
-
     // Send RRCSetupComplete response, with the Initial NAS PDU and S-TMSI/GUAMI if available.
 
     auto *pdu = asn::New<ASN_RRC_UL_DCCH_Message>();

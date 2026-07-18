@@ -34,7 +34,7 @@ extern "C"
 namespace nr::gnb
 {
 
-enum class EReqestingTask
+enum class ERequestingTask
 {
     NGAP,
     RRC,
@@ -131,6 +131,8 @@ struct NmGnbRlsToRls : NtsMessage
         RADIO_LINK_FAILURE,
         TRANSMISSION_FAILURE,
         RADIO_BEARER_UPDATE,
+        APPLY_DRB_SN_STATUS,
+        REMOVE_UE_CONTEXT,
     } present;
 
     // SIGNAL_DETECTED
@@ -173,6 +175,7 @@ struct NmGnbRlsToRls : NtsMessage
     // RADIO_BEARER_UPDATE
     std::unique_ptr<RadioBearerUpdate> rbUpdate{};
     std::unique_ptr<SdapUpdate> sdapUpdate{};
+    std::vector<DrbSnStatus> drbSnStatus{};
 
 
     explicit NmGnbRlsToRls(PR present) : NtsMessage(NtsMessageType::GNB_RLS_TO_RLS), present(present)
@@ -186,6 +189,8 @@ struct NmGnbRrcToRls : NtsMessage
     {
         RRC_PDU_DELIVERY,
         RADIO_BEARER_UPDATE,
+        APPLY_DRB_SN_STATUS,
+        REMOVE_UE_CONTEXT,
     } present;
 
     // RRC_PDU_DELIVERY
@@ -197,6 +202,7 @@ struct NmGnbRrcToRls : NtsMessage
     // RADIO_BEARER_UPDATE
     std::unique_ptr<RadioBearerUpdate> rbUpdate{};
     std::unique_ptr<SdapUpdate> sdapUpdate{};
+    std::vector<DrbSnStatus> drbSnStatus{};
     
     explicit NmGnbRrcToRls(PR present) : NtsMessage(NtsMessageType::GNB_RRC_TO_RLS), present(present)
     {
@@ -254,6 +260,16 @@ struct NmGnbNgapToRrc : NtsMessage
     // PDU_SESSION_UPDATE
     std::unique_ptr<PduSessionSdapUpdate> sdapUpdate{};
 
+    // PDU_SESSION_UPDATE — PSIs the 5GC has released (path-switch ack or
+    // PDUSessionResourceReleaseCommand); RRC tears down their DRB/SDAP state.
+    std::vector<int> releasedPsis{};
+
+    // PATH_SWITCH_REQUEST_ACK — fresh {NCC, NH} pair from the AMF's mandatory
+    // SecurityContext IE, stored by RRC for the next handover's key derivation
+    bool hasSecurityContext{};
+    int nextHopChainingCount{};
+    std::array<uint8_t, 32> nextHopParameter{};
+
     explicit NmGnbNgapToRrc(PR present) : NtsMessage(NtsMessageType::GNB_NGAP_TO_RRC), present(present)
     {
     }
@@ -267,9 +283,14 @@ struct NmGnbRrcToNgap : NtsMessage
         UPLINK_NAS_DELIVERY,
         RADIO_LINK_FAILURE,
         HANDOVER_REQUEST_ACK_SEND,
+        HANDOVER_FAILURE_SEND,            // ngapTxId, hoCause — target RRC rejected a HandoverRequest;
+                                          // NGAP sends HandoverFailure to the AMF and drops its pending entry
         HANDOVER_NOTIFY_SEND,
         HANDOVER_REQUIRED,
         PATH_SWITCH_REQUEST,
+        XN_HANDOVER_PREPARE,              // target-side provisional NGAP/GTP setup
+        XN_SOURCE_CONTEXT_RELEASE,        // source cleanup after target path switch
+        XN_TARGET_PREPARATION_CANCEL,     // rollback provisional target NGAP/GTP state
     } present;
 
     uint32_t ngapTxId{};
@@ -288,6 +309,10 @@ struct NmGnbRrcToNgap : NtsMessage
     // RADIO_LINK_FAILURE
     int64_t ueId{};
     int cRnti{};
+
+    // XN_HANDOVER_PREPARE.  admittedSessions remains owned by this message;
+    // NGAP moves it into its pending record before queuing pointers to GTP.
+    std::unique_ptr<XnHandoverCoreContext> xnCoreContext{};
 
     // INITIAL_NAS_DELIVERY
     // UPLINK_NAS_DELIVERY
@@ -311,6 +336,7 @@ struct NmGnbNgapToGtp : NtsMessage
         SESSION_CREATE,
         SESSION_RELEASE,
         FORWARDING_TUNNEL_SETUP,
+        SESSION_UL_TUNNEL_UPDATE, // 5GC re-allocated the UL NG-U endpoint at path switch
     } present;
 
     // UE_CONTEXT_UPDATE
@@ -332,6 +358,9 @@ struct NmGnbNgapToGtp : NtsMessage
 
     // FORWARDING_TUNNEL_SETUP
     GtpTunnel forwardingTunnel{};
+
+    // SESSION_UL_TUNNEL_UPDATE
+    GtpTunnel ulTunnel{};
 
     explicit NmGnbNgapToGtp(PR present) : NtsMessage(NtsMessageType::GNB_NGAP_TO_GTP), present(present)
     {
@@ -378,6 +407,7 @@ struct NmGnbXnToRrc : NtsMessage
         UE_CONTEXT_RELEASE_RECEIVED,           // ueId, targetNci
         SN_STATUS_TRANSFER_RECEIVED,           // ueId, targetNci, isCho
         HANDOVER_SUCCESS_RECEIVED,             // ueId, targetNci
+        HANDOVER_ABORT,
     } present;
 
     uint32_t xnTxId{};
@@ -387,6 +417,9 @@ struct NmGnbXnToRrc : NtsMessage
     bool isCho{};
     std::unique_ptr<OctetString> rrcContainer{};
     std::unique_ptr<std::vector<PduSessionResource>> sessionList{};
+    std::unique_ptr<XnHandoverCoreContext> xnCoreContext{};
+    std::unique_ptr<XnChoRequest> xnChoRequest{};
+    std::vector<DrbSnStatus> drbSnStatus{};
     int reason{};
     // HANDOVER_REQUEST_RECEIVED extras
     int64_t amfUeNgapId{};
@@ -396,6 +429,16 @@ struct NmGnbXnToRrc : NtsMessage
     uint64_t ulAmbr{};
     std::string ngapSourceIpAddr{};
 
+    enum ABORT_REASON
+    {
+        ABORT_REASON_NONE,
+        ABORT_REASON_SOURCE_PREPARATION_TIMEOUT,
+        ABORT_REASON_SOURCE_OVERALL_TIMEOUT,
+        ABORT_REASON_TARGET_PREPARATION_TIMEOUT,
+        ABORT_REASON_TARGET_OVERALL_TIMEOUT,
+        ABORT_REASON_XN_FAILURE,
+    } abortReason{ABORT_REASON_NONE};
+    
     explicit NmGnbXnToRrc(PR present) : NtsMessage(NtsMessageType::GNB_XN_TO_RRC), present(present)
     {
     }
@@ -406,12 +449,19 @@ struct NmGnbXnToGtp : NtsMessage
     enum PR
     {
         FORWARDING_TUNNEL_SETUP,
+        FORWARDING_TEID_REGISTER,
     } present;
 
-    // FORWARDING_TUNNEL_SETUP
+    // FORWARDING_TUNNEL_SETUP / FORWARDING_TEID_REGISTER
     int64_t ueId{};
     int psi{};
+
+    // FORWARDING_TUNNEL_SETUP
     GtpTunnel forwardingTunnel{};
+
+    // FORWARDING_TEID_REGISTER (target side: DL Xn-U TEID advertised in the
+    // HandoverRequestAcknowledge, on which forwarded packets will arrive)
+    uint32_t teid{};
 
     explicit NmGnbXnToGtp(PR present) : NtsMessage(NtsMessageType::GNB_XN_TO_GTP), present(present)
     {
@@ -424,6 +474,9 @@ struct NmGnbSctp : NtsMessage
     {
         CONNECTION_REQUEST,
         CONNECTION_CLOSE,
+        CONNECTION_FAILED, // sent to the associatedTask when a CONNECTION_REQUEST's bind/connect fails
+        LISTEN_REQUEST,    // ask the SCTP task to accept inbound associations on localAddress:localPort
+        CONNECTION_ACCEPTED, // internal: accept thread -> SCTP task, carries the accepted fd
         ASSOCIATION_SETUP,
         ASSOCIATION_SHUTDOWN,
         RECEIVE_MESSAGE,
@@ -433,6 +486,7 @@ struct NmGnbSctp : NtsMessage
 
     // CONNECTION_REQUEST
     // CONNECTION_CLOSE
+    // CONNECTION_FAILED
     // ASSOCIATION_SETUP
     // ASSOCIATION_SHUTDOWN
     // RECEIVE_MESSAGE
@@ -441,6 +495,7 @@ struct NmGnbSctp : NtsMessage
     int clientId{};
 
     // CONNECTION_REQUEST
+    // LISTEN_REQUEST (localAddress/localPort/ppid/associatedTask/max*Streams)
     std::string localAddress{};
     uint16_t localPort{};
     std::string remoteAddress{};
@@ -449,6 +504,9 @@ struct NmGnbSctp : NtsMessage
     NtsTask *associatedTask{};
     uint16_t maxTxStreams{10};
     uint16_t maxRxStreams{10};
+
+    // CONNECTION_ACCEPTED
+    int acceptedFd{-1};
 
     // ASSOCIATION_SETUP
     int associationId{};

@@ -12,6 +12,7 @@
 #include "octet.hpp"
 
 #include <memory>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -179,6 +180,14 @@ struct RadioBearer {
     uint32_t ulSn{0};  // uplink data radio bearer sequence number.  Combines HLN and SN
 };
 
+// Advance the simulator's combined PDCP COUNT explicitly.  Although unsigned
+// arithmetic normally wraps, keeping the rollover here makes the UINT32_MAX to
+// zero transition intentional and avoids relying on an increment expression.
+inline uint32_t NextPdcpCount(uint32_t count)
+{
+    return count == std::numeric_limits<uint32_t>::max() ? 0 : count + 1;
+}
+
 struct SdapMapping
 {
     int psi{};   // Session ID
@@ -196,6 +205,15 @@ struct SdapUpdate
 {
     std::vector<SdapMapping> upsertSdapMappings{};
     std::vector<SdapMapping> deleteSdapMappings{};
+};
+
+// Protocol-neutral runtime state for one DRB during handover.  The values are
+// the next combined RLS PDU IDs, mapped to/from XnAP PDCP COUNT by the Xn task.
+struct DrbSnStatus
+{
+    uint8_t drbId{};       // plain DRB identity (1..32), without RLS bit 6
+    uint32_t nextUlCount{};
+    uint32_t nextDlCount{};
 };
 
 struct Vector3

@@ -314,6 +314,15 @@ void NgapTask::receiveSessionResourceReleaseCommand(int amfId, ASN_NGAP_PDUSessi
 
     }
 
+    // Have RRC tear down the radio bearers (RLS + UE) for the released sessions.
+    if (!psIds.empty())
+    {
+        auto rm = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::PDU_SESSION_UPDATE);
+        rm->ueId = ue->ctxId;
+        rm->releasedPsis.assign(psIds.begin(), psIds.end());
+        m_base->rrcTask->push(std::move(rm));
+    }
+
     for (auto &psi : psIds)
     {
         auto *tr = asn::New<ASN_NGAP_PDUSessionResourceReleaseResponseTransfer>();

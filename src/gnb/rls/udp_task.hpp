@@ -42,7 +42,6 @@ class RlsUdpTask : public NtsTask
     NtsTask *m_ctlTask;
     uint64_t m_sti;
     uint32_t m_cellId;
-    Vector3 m_phyLocation;
     int64_t m_lastLoop;
     std::mutex m_ueMutex;
     std::unordered_map<uint64_t, int64_t> m_stiToUe;
@@ -63,8 +62,7 @@ class RlsUdpTask : public NtsTask
     int m_heartbeatThreshold;
 
   public:
-    explicit RlsUdpTask(TaskBase *base, uint64_t sti,
-                        Vector3 phyLocation);
+    explicit RlsUdpTask(TaskBase *base, uint64_t sti);
     ~RlsUdpTask() override = default;
 
   protected:

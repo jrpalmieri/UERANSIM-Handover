@@ -333,11 +333,12 @@ bool UeRrcTask::lookForAcceptableCell(ActiveCellInfo &cellInfo, CellSelectionRep
         
         // signal strength threshold check
         int dbm = m_base->cellDbMeas.getMeasurement(item.first);
-        // cell not found        if (dbm < MIN_RSRP)
+        // cell not found - skip completely
+        if (dbm < cons::MIN_RSRP)
         {
             continue;
         }
-
+        // cell signal too weak - skip but log in report
         if (dbm < cons::RLF_RSRP)
         {
             report.weakSignalCells++;

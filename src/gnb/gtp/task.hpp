@@ -36,6 +36,11 @@ class GtpTask : public NtsTask
     PduSessionTree m_sessionTree;
     std::unordered_map<UeSessionId, GtpTunnel, UeSessionIdHash> m_forwardingTunnels;
 
+    // Target side of Xn DL data forwarding: TEIDs this gNB advertised in a
+    // HandoverRequestAcknowledge, mapped to the UE session the forwarded
+    // packets belong to.  Checked before the session tree on GTP-U receive.
+    std::unordered_map<uint32_t, UeSessionId> m_incomingForwardingTeids;
+
     friend class GnbCmdHandler;
 
   public:
@@ -59,6 +64,8 @@ class GtpTask : public NtsTask
     void handleUeContextDelete(int64_t ueId);
     void handleUplinkData(int64_t ueId, int psi, int qfi, OctetString &&data);
     void handleForwardingTunnelSetup(int64_t ueId, int psi, GtpTunnel &&tunnel);
+    void handleForwardingTeidRegister(int64_t ueId, int psi, uint32_t teid);
+    void handleUlTunnelUpdate(int64_t ueId, int psi, GtpTunnel &&tunnel);
 
     void updateAmbrForUe(int64_t ueId);
     void updateAmbrForSession(int64_t ueId, int psi);

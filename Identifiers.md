@@ -16,8 +16,6 @@ UE:
 
 IMEI = International Mobile Equipment Identity : unique id for a hardware device
 IMSI = International Mobile Subscriber Identity : unique id for a user account
-cRNTI
-
 
 SCTP
 

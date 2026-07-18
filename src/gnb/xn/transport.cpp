@@ -32,16 +32,23 @@ static inline long xnProcCode(const void *msg)
 // SCTP receive: decode outer XnAP-PDU and dispatch by procedure code
 // ---------------------------------------------------------------------------
 
-void XnTask::xnHandleSctpMessage(int gnbId, uint16_t stream, const UniqueBuffer &buffer)
+void XnTask::xnHandleSctpMessage(int clientId, uint16_t stream, const UniqueBuffer &buffer)
 {
     auto *pdu = xnap_encode::Decode<ASN_XNAP_XnAP_PDU_t>(
         asn_DEF_ASN_XNAP_XnAP_PDU, buffer.data(), buffer.size());
 
     if (pdu == nullptr)
     {
-        m_logger->err("XnAP APER decoding failed for SCTP message from gnbId=%d", gnbId);
+        m_logger->err("XnAP APER decoding failed for SCTP message (clientId=%d)", clientId);
         return;
     }
+
+    // Resolve the SCTP clientId to the peer's gnbId.  Outbound clientIds equal
+    // the neighbor gnbId; accepted inbound associations carry negative ids that
+    // are bound to a peer when their XnSetupRequest is processed.  Until that
+    // binding exists, only the XnSetup procedure itself may be dispatched.
+    auto *peer = m_xnPeerTable.findByClientId(clientId);
+    const int gnbId = peer != nullptr ? peer->gnbId : clientId;
 
     if (pdu->present == ASN_XNAP_XnAP_PDU_PR_initiatingMessage)
     {
@@ -52,32 +59,40 @@ void XnTask::xnHandleSctpMessage(int gnbId, uint16_t stream, const UniqueBuffer 
             return;
         }
 
-        switch (xnProcCode(pdu->choice.initiatingMessage))
+        const long proc = xnProcCode(pdu->choice.initiatingMessage);
+        if (clientId < 0 && peer == nullptr && proc != XN_PROC_XN_SETUP)
+        {
+            m_logger->warn("XnAP procedureCode=%ld on unbound inbound association (clientId=%d) dropped",
+                           proc, clientId);
+            asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, pdu);
+            return;
+        }
+
+        switch (proc)
         {
         case XN_PROC_HANDOVER_PREPARATION:
-            receiveHandoverRequest(gnbId, pdu);
+            receiveHandoverRequest(gnbId, stream, pdu);
             break;
         case XN_PROC_SN_STATUS_TRANSFER:
             receiveSnStatusTransfer(gnbId, pdu);
             break;
         case XN_PROC_HANDOVER_CANCEL:
-            xnHandoverCancelTarget(gnbId, pdu);
+            receiveHandoverCancel(gnbId, pdu);
             break;
         case XN_PROC_UE_CONTEXT_RELEASE:
             receiveUeContextRelease(gnbId, pdu);
             break;
         case XN_PROC_XN_SETUP:
-            xnSetupRequestReceive(gnbId, pdu);
+            xnSetupRequestReceive(clientId, pdu);
             break;
         case XN_PROC_HANDOVER_SUCCESS:
             receiveHandoverSuccess(gnbId, pdu);
             break;
         case XN_PROC_CONDITIONAL_HO_CANCEL:
-            xnHandoverCancelTarget(gnbId, pdu);
+            receiveHandoverCancel(gnbId, pdu);
             break;
         default:
-            m_logger->warn("Unhandled XnAP initiating procedureCode=%ld from gnbId=%d",
-                           xnProcCode(pdu->choice.initiatingMessage), gnbId);
+            m_logger->warn("Unhandled XnAP initiating procedureCode=%ld from gnbId=%d", proc, gnbId);
             break;
         }
     }
@@ -86,6 +101,13 @@ void XnTask::xnHandleSctpMessage(int gnbId, uint16_t stream, const UniqueBuffer 
         if (!pdu->choice.successfulOutcome)
         {
             m_logger->err("XnAP successfulOutcome is null from gnbId=%d", gnbId);
+            asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, pdu);
+            return;
+        }
+
+        if (clientId < 0 && peer == nullptr)
+        {
+            m_logger->warn("XnAP outcome on unbound inbound association (clientId=%d) dropped", clientId);
             asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, pdu);
             return;
         }
@@ -109,6 +131,13 @@ void XnTask::xnHandleSctpMessage(int gnbId, uint16_t stream, const UniqueBuffer 
         if (!pdu->choice.unsuccessfulOutcome)
         {
             m_logger->err("XnAP unsuccessfulOutcome is null from gnbId=%d", gnbId);
+            asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, pdu);
+            return;
+        }
+
+        if (clientId < 0 && peer == nullptr)
+        {
+            m_logger->warn("XnAP outcome on unbound inbound association (clientId=%d) dropped", clientId);
             asn::Free(asn_DEF_ASN_XNAP_XnAP_PDU, pdu);
             return;
         }

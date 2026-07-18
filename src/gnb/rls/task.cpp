@@ -16,6 +16,11 @@
 namespace nr::gnb
 {
 
+std::optional<RlsUeContext> GnbRlsTask::copyUeContext(int64_t ueId) const
+{
+    return m_ctlTask ? m_ctlTask->copyUeContext(ueId) : std::nullopt;
+}
+
 static uint64_t generateSti(int64_t nci)
 {
     // STI for gNB is created as NCI as high-order bits above bit 9,
@@ -30,8 +35,7 @@ GnbRlsTask::GnbRlsTask(TaskBase *base) : m_base{base}
     m_logger = m_base->logBase->makeUniqueLogger("rls");
     m_sti = generateSti(base->config->nci);
 
-    m_udpTask = new RlsUdpTask(base, m_sti,
-                                base->config->phyLocation);
+    m_udpTask = new RlsUdpTask(base, m_sti);
     m_ctlTask = new RlsControlTask(base, m_sti);
 
     m_udpTask->initialize(m_ctlTask);
@@ -117,6 +121,19 @@ void GnbRlsTask::onLoop()
             m->ueId = w.ueId;
             m->rbUpdate = std::move(w.rbUpdate);
             m->sdapUpdate = std::move(w.sdapUpdate);
+            m_ctlTask->push(std::move(m));
+            break;
+        }
+        case NmGnbRrcToRls::APPLY_DRB_SN_STATUS: {
+            auto m = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::APPLY_DRB_SN_STATUS);
+            m->ueId = w.ueId;
+            m->drbSnStatus = std::move(w.drbSnStatus);
+            m_ctlTask->push(std::move(m));
+            break;
+        }
+        case NmGnbRrcToRls::REMOVE_UE_CONTEXT: {
+            auto m = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::REMOVE_UE_CONTEXT);
+            m->ueId = w.ueId;
             m_ctlTask->push(std::move(m));
             break;
         }

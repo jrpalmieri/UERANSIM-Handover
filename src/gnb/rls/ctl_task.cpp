@@ -47,8 +47,11 @@ void RlsControlTask::createRlsUeContext(int64_t ueId)
     auto [it, inserted] = m_ueCtx.emplace(ueId, RlsUeContext(ueId));
     if (inserted)
     {
-        it->second.radioBearers.push_back(RadioBearer{0,    0, 0}); // SRB0
-        it->second.radioBearers.push_back(RadioBearer{0x41, 0, 0}); // DRB1
+        // Only SRB0 exists until a PDU session is established.  DRBs are created
+        // on demand by RRC (createRadioBearerConfig / assignSessionBearers) via
+        // RADIO_BEARER_UPDATE; RRC owns DRB-id allocation, so there is no default
+        // DRB to pre-seed here.
+        it->second.radioBearers.push_back(RadioBearer{0, 0, 0}); // SRB0
     }
 }
 
@@ -130,6 +133,12 @@ void RlsControlTask::onLoop()
         case NmGnbRlsToRls::RADIO_BEARER_UPDATE:
             handleRadioBearerUpdate(w.ueId, std::move(w.rbUpdate), std::move(w.sdapUpdate));
             break;
+        case NmGnbRlsToRls::APPLY_DRB_SN_STATUS:
+            handleApplyDrbSnStatus(w.ueId, w.drbSnStatus);
+            break;
+        case NmGnbRlsToRls::REMOVE_UE_CONTEXT:
+            handleRemoveUeContext(w.ueId);
+            break;
         default:
             m_logger->unhandledNts(*msg);
             break;
@@ -207,6 +216,21 @@ void RlsControlTask::handleRlsMessage(NmGnbRlsToRls &w)
 
         if (m.pduType == rls::EPduType::DATA)
         {
+            // On the source gNB this is the simulated PDCP UL receive COUNT.
+            // Keep the next expected value so Xn SN Status Transfer can align
+            // the target with the UE's continuing uplink sequence.
+            auto bearer = std::find_if(ctx->radioBearers.begin(), ctx->radioBearers.end(),
+                [&m](const RadioBearer &b) { return b.bearerId == (m.radioBearer & 0x7f); });
+            if (bearer != ctx->radioBearers.end())
+            {
+                const uint32_t nextCount = NextPdcpCount(m.pduId);
+                // UINT32_MAX is the final COUNT in the cycle; its successor is
+                // zero and must not be rejected by the normal monotonic check.
+                bearer->ulSn = nextCount == 0 ? 0 : std::max(bearer->ulSn, nextCount);
+            }
+            else
+                m_logger->warn("UE[%ld] uplink PDU received for unknown DRB %d", ueId, m.radioBearer & 0x3f);
+
             auto out = std::make_unique<NmGnbRlsToRls>(NmGnbRlsToRls::UPLINK_DATA);
             out->ueId = ueId;
             out->cRnti = ctx->cRnti;
@@ -266,7 +290,9 @@ void RlsControlTask::handleDownlinkRrcDelivery(int64_t ueId, rrc::RrcChannel cha
             m_logger->warn("UE[%ld]: No bearer %d for downlink RRC. Message dropped.", ueId, radioBearer);
             return;
         }
-        pduId = it->dlSn++;
+        pduId = it->dlSn;
+        // Allocate the current COUNT, then explicitly prepare the next one.
+        it->dlSn = NextPdcpCount(it->dlSn);
 
         if (ackPdu)
         {
@@ -329,7 +355,9 @@ void RlsControlTask::getBearerFromSdap(RlsUeContext &ctx, int psi, int qfi, uint
 
     if (bearerIt != ctx.radioBearers.end())
     {
-        *pduId = bearerIt->dlSn++;
+        *pduId = bearerIt->dlSn;
+        // The combined simulated PDCP COUNT restarts after UINT32_MAX.
+        bearerIt->dlSn = NextPdcpCount(bearerIt->dlSn);
     }
     else
     {
@@ -339,7 +367,9 @@ void RlsControlTask::getBearerFromSdap(RlsUeContext &ctx, int psi, int qfi, uint
             [](const RadioBearer &b) { return b.bearerId == 0x41; });
         if (defaultBearerIt != ctx.radioBearers.end())
         {
-            *pduId = defaultBearerIt->dlSn++;
+            *pduId = defaultBearerIt->dlSn;
+            // Apply the same rollover rule on the fallback DRB path.
+            defaultBearerIt->dlSn = NextPdcpCount(defaultBearerIt->dlSn);
         }
         else
         {
@@ -422,7 +452,13 @@ void RlsControlTask::handleRadioBearerUpdate(int64_t ueId, std::unique_ptr<Radio
     std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
     auto ctx = getRlsUeContext(ueId);
     if (!ctx)
-        return;
+    {
+        // Target bearer preparation normally precedes the UE's first heartbeat
+        // at this cell.  Create the RLS context now instead of dropping the
+        // configuration and leaving later SN Status permanently unresolved.
+        createRlsUeContext(ueId);
+        ctx = getRlsUeContext(ueId);
+    }
 
     if (rbUpdate)
     {
@@ -483,6 +519,63 @@ void RlsControlTask::handleRadioBearerUpdate(int64_t ueId, std::unique_ptr<Radio
             }
         }
     }
+
+    auto deferred = m_deferredSnStatus.find(ueId);
+    if (deferred != m_deferredSnStatus.end())
+    {
+        auto pending = std::move(deferred->second);
+        m_deferredSnStatus.erase(deferred);
+        applyOrDeferDrbSnStatus(ueId, *ctx, pending);
+    }
+}
+
+void RlsControlTask::applyOrDeferDrbSnStatus(int64_t ueId, RlsUeContext &ctx,
+                                             const std::vector<DrbSnStatus> &status)
+{
+    std::vector<DrbSnStatus> unresolved;
+    for (const auto &item : status)
+    {
+        const uint8_t encodedBearer = static_cast<uint8_t>(0x40 | item.drbId);
+        auto bearer = std::find_if(ctx.radioBearers.begin(), ctx.radioBearers.end(),
+            [encodedBearer](const RadioBearer &b) { return b.bearerId == encodedBearer; });
+        if (bearer == ctx.radioBearers.end())
+        {
+            unresolved.push_back(item);
+            continue;
+        }
+        // A late/retransmitted transfer must not move a counter backwards if
+        // target traffic has already advanced it.
+        bearer->ulSn = std::max(bearer->ulSn, item.nextUlCount);
+        bearer->dlSn = std::max(bearer->dlSn, item.nextDlCount);
+        m_logger->info("UE[%ld] applied Xn SN status DRB[%d] UL=%u DL=%u",
+                       ueId, item.drbId, item.nextUlCount, item.nextDlCount);
+    }
+    if (!unresolved.empty())
+    {
+        m_deferredSnStatus[ueId] = std::move(unresolved);
+        m_logger->debug("UE[%ld] deferred SN status for %zu not-yet-configured DRBs",
+                        ueId, m_deferredSnStatus[ueId].size());
+    }
+}
+
+void RlsControlTask::handleApplyDrbSnStatus(int64_t ueId, const std::vector<DrbSnStatus> &status)
+{
+    std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
+    auto *ctx = getRlsUeContext(ueId);
+    if (!ctx)
+    {
+        m_deferredSnStatus[ueId] = status;
+        return;
+    }
+    applyOrDeferDrbSnStatus(ueId, *ctx, status);
+}
+
+void RlsControlTask::handleRemoveUeContext(int64_t ueId)
+{
+    std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
+    deleteRlsUeContext(ueId);
+    m_deferredSnStatus.erase(ueId);
+    m_logger->info("UE[%ld] provisional target RLS context removed", ueId);
 }
 
 
@@ -567,6 +660,7 @@ std::optional<RlsUeContext> RlsControlTask::copyUeContext(int64_t ueId) const
     snap.cRnti        = src.cRnti;
     snap.radioBearers = src.radioBearers;   // RadioBearer is trivially copyable
     snap.m_pendingAck = src.m_pendingAck;   // vector<uint64_t> is copyable
+    snap.sdapMappings = src.sdapMappings;
     // m_pduMap omitted: rebuilding it would require OctetString::copy() per entry
     return snap;
 }

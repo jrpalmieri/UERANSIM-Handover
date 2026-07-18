@@ -22,43 +22,16 @@ RrcUeContext *GnbRrcTask::createUe(int64_t ueId, int crnti)
     return ctx;
 }
 
-RrcUeContext *GnbRrcTask::tryFindUeByCrnti(int crnti)
-{
-    for (const auto &entry : m_ueCtx)
-    {
-        auto *ctx = entry.second;
-        if (!ctx)
-            continue;
+// Context lookups live in management.cpp (findCtxByUeId / findCtxByCrnti);
+// the former tryFindUeByUeId / tryFindUeByCrnti duplicates were removed.
 
-        if (ctx->cRnti == crnti)
-            return ctx;
-    }
-
-    return nullptr;
-}
-
-RrcUeContext *GnbRrcTask::tryFindUeByUeId(int64_t ueId)
-{
-    auto it = m_ueCtx.find(ueId);
-    if (it == m_ueCtx.end() || it->second == nullptr)
-        return nullptr;
-
-    auto *ctx = it->second;
-    if (ctx->ueId != ueId)
-    {
-        m_logger->warn("UE[%ld]: tryFindUeByUeId - RRC context key mismatch: keyUeId=%d ctxUeId=%d cRnti=%d",
-                       ueId, ueId, ctx->ueId, ctx->cRnti);
-        return nullptr;
-    }
-
-    return ctx;
-
-    return nullptr;
-}
-
+// Thread-safe snapshot of a UE's RRC context, for callers on other task
+// threads (e.g. Xn context transfer).  See m_ueCtxMutex in task.hpp.
 bool GnbRrcTask::getUeContext(int64_t ueId, std::optional<RrcUeContext> &out)
 {
-    auto *ctx = tryFindUeByUeId(ueId);
+    std::shared_lock<std::shared_mutex> lock(m_ueCtxMutex);
+
+    auto *ctx = findCtxByUeId(ueId);
     if (ctx == nullptr)
         return false;
     out.emplace(*ctx);
