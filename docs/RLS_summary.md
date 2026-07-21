@@ -264,12 +264,6 @@ The Radio Network Temporary Identifiers (RNTIs) are not needed in the simulator 
 
 Prior development used the cRNTI in the RLS wire protocol to provide identification information.  These code paths can be removed.
 
-### Radio Bearers
-
-The use of radio bearer logic is newly added to handle QoS simulation and to simulate user plane handover (which requires sequence numbers from the SDAP layer).
-
-On handover, the radio bearer information needs to be provided to the target gNB as part of the UE context transfer.  The gNB control task copyUeContext() function is intended to provide a public method for extracting the bearer information.  This should be added to the handover process logic once completed.
-
 ### Failure modes
 
 The failure mode operations are only minimally specified.  Further development would add hardening and reporting for error conditions.  For example, the gNB currently does nothing when RLS produces a SIGNAL_LOST, TRANSMISSION_FAILURE or RADIO_LINK_FAILURE message for a UE.  There is also no mechanism for deleting a UE RLS context, which should occur at a minimum after a certain period of inactivity after a failure event.
