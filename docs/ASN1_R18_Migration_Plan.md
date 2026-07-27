@@ -1,9 +1,9 @@
 # ASN.1 Release-18 Migration Plan (RRC / NGAP / XnAP)
 
-Status: **stage 0 complete** (2026-07-27). Stages 1–4 not started.
+Status: **stage 0 complete**; **stage 1 attempted and backed out** (2026-07-27).
 Author: analysis of `UERANSIM-Handover` @ `xn` (a68a5fad) and `/home/joe/repos/asn1c-r18` @ e835ff87, 2026-07-27.
 
-Stage 0 results are recorded in [§6](#6-stage-0-as-built).
+Stage 0 results are in [§6](#6-stage-0-as-built); what the stage 1 attempt found is in [§7](#7-stage-1-what-the-attempt-found).
 
 ---
 
@@ -361,7 +361,87 @@ oracle; if the gNB suite is refreshed later it would make a good second one.
 
 ---
 
-## 7. Open items for you
+## 7. Stage 1: what the attempt found
+
+Attempted 2026-07-27. **Not landed** — the tree is back at the stage-0 state and
+builds clean. Two things were learned, one of them a compiler defect that had to
+be fixed before any tree can be regenerated.
+
+### 7.1 Fixed: recursion-safe names dropped the parameterization suffix
+
+`asn1c_type_name(..., TNF_RSAFE)` named the *template* rather than the
+*instance*, so every IE container expanded to
+`A_SEQUENCE_OF(struct ASN_XNAP_ProtocolIE_Field)` — a struct tag that is never
+defined, where the old 0.9.24 tree correctly said
+`struct ASN_XNAP_ProtocolIE_Field_14202P0`. The generated C still compiles (a
+pointer to an incomplete type is legal) but no application code can walk the
+list, so this blocked stages 1–3, not just XnAP.
+
+Fixed in `asn1c-r18` by resolving to the instantiated expression. Verified: XnAP
+Rel-18 1348/1348 TUs compile, RRC 15.6 766/766 still compile, `make check`
+clean. One recorded expectation (test 155) changed by two lines and was
+regenerated — where the element is a typedef alias rather than a struct, neither
+the old nor the new name is a real tag, so that case is unchanged in substance.
+
+### 7.2 The blocker: XnAP IE values change representation
+
+The 0.9.24 fork had no information-object-class support, so every
+`ProtocolIE-Field.value` was a plain `ANY_t` and the gNB packed IEs by
+serialising into it (`ANY_fromType_aper`). asn1c-r18 generates one **typed
+open-type union per object set** instead — the shape the NGAP tree already has:
+
+```c
+struct ASN_XNAP_ProtocolIE_Field_14202P81__value {
+    ASN_XNAP_ProtocolIE_Field_14202P81__value_PR present;
+    union { ASN_XNAP_Cause_t Cause; ASN_XNAP_GUAMI_t GUAMI; ... } choice;
+};
+```
+
+There is no flag to get the old shape back, and it is the better
+representation — but it means `src/gnb/xn` must be **rewritten, not adapted**:
+
+| Work | Count |
+| ---- | ----- |
+| `setIeValue` / `setHoIeValue` sites → `present` + `choice.X` | 31 |
+| `ANY_fromType_aper` on outer messages → `present` + `choice.Msg` | 14 |
+| `BitRate` now `INTEGER_t`, needs `asn_uint642INTEGER` | 4 |
+| `ASN_XNAP_ProtocolIE_Field_14202P0` references → per-message instance | 94 |
+
+Each message must use the container/field instance pair for *its* IE set:
+
+| Message | Container | Field |
+| ------- | --------- | ----- |
+| HandoverRequest | `..._Container_14197P0` | `..._Field_14202P81` |
+| HandoverRequestAcknowledge | `..._14197P1` | `..._14202P82` |
+| HandoverPreparationFailure | `..._14197P2` | `..._14202P83` |
+| SNStatusTransfer | `..._14197P3` | `..._14202P84` |
+| UEContextRelease | `..._14197P4` | `..._14202P85` |
+| HandoverCancel | `..._14197P5` | `..._14202P86` |
+| HandoverSuccess | `..._14197P6` | `..._14202P87` |
+| XnSetupRequest | `..._14197P37` | `..._14202P118` |
+| XnSetupResponse | `..._14197P38` | `..._14202P119` |
+
+Ownership changes with it: the union holds values, so an IE is built in place
+rather than serialised into an `ANY_t`, and the error paths that freed a
+half-built message on encode failure disappear (there is no encode step left to
+fail). Mechanically this matches the "shallow move, free the shell" idiom the
+file already uses everywhere.
+
+### 7.3 Why it was stopped rather than pushed through
+
+Nothing verifies this rewrite. XnAP has no golden vectors (the captures contain
+no Xn traffic), `tests/gnb` mostly skips, and by §1.3 the Xn path cannot have
+run end-to-end in its current form. A ~50-site ownership rewrite that is only
+known to *compile* would be a poor thing to declare complete, so the working
+tree was restored instead. Recommended order when resuming:
+
+1. give Xn a golden-vector corpus first — build one by encoding each message
+   the gNB produces and recording the bytes, so the rewrite has an oracle;
+2. convert one message end to end (HandoverRequest is the largest, XnSetup the
+   smallest) and confirm the bytes match;
+3. then the rest, message by message.
+
+## 8. Open items for you
 
 1. **Rel-15 fallback** — is there any reason to keep `src/asn/rrc_backup_r15`, or is deletion in Stage 3 fine?
 2. **RRC hand-edits** — do you want them reconstructed feature-for-feature on R18, or is the intent that
