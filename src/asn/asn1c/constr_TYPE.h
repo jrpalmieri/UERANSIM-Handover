@@ -141,19 +141,6 @@ typedef asn_type_selector_result_t(asn_type_selector_f)(
  * Generalized functions for dealing with the speciic type.
  * May be directly invoked by applications.
  */
-/*
- * MIGRATION SHIM -- remove when src/asn/xnap is regenerated (plan stage 1).
- * The XnAP tree is still 0.9.24-era and its headers declare prototypes using
- * type_compare_f, a typedef from an older Eurecom skeleton. Those functions
- * are never called from the application layer, so a forward declaration of the
- * return type is enough to let the gNB C++ sources include XnAP headers.
- */
-struct asn_comp_rval_s;
-typedef struct asn_comp_rval_s asn_comp_rval_t;
-typedef asn_comp_rval_t *(type_compare_f)(
-    struct asn_TYPE_descriptor_s *type_descriptor1, const void *struct_ptr1,
-    struct asn_TYPE_descriptor_s *type_descriptor2, const void *struct_ptr2);
-
 typedef struct asn_TYPE_operation_s {
     asn_struct_free_f *free_struct;     /* Free the structure */
     asn_struct_print_f *print_struct;   /* Human readable output */
