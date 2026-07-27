@@ -8,11 +8,6 @@
 
 extern "C"
 {
-// asn1c/ constr_TYPE.h (found first in the include path) doesn't pull in
-// compare.h, so type_compare_f is undefined by the time xnap sub-headers
-// that declare it are processed.  Include the xnap-specific helpers first.
-#include <asn_compare.h>   // defines asn_comp_rval_t
-#include <compare.h>       // defines type_compare_f
 #include <ANY.h>
 #include <ASN_XNAP_XnAP-PDU.h>
 #include <ASN_XNAP_InitiatingMessage.h>
@@ -76,13 +71,6 @@ static constexpr long XNAP_IE_AMF_Region_Information  = 4;    // id-AMF-Region-I
 static constexpr long XNAP_IE_List_of_served_cells_NR = 19;   // id-List-of-served-cells-NR
 static constexpr long XNAP_IE_Cause                   = 7;    // id-Cause
 
-// Pack a typed ASN.1 value into the ANY_t value field of a ProtocolIE-Field using APER.
-// Returns false on encoding failure (caller should abort and free).
-static bool setIeValue(ASN_XNAP_ProtocolIE_Field_14202P0_t *ie,
-                       asn_TYPE_descriptor_t *td, void *val)
-{
-    return ANY_fromType_aper(&ie->value, td, val) == 0;
-}
 
 // Build a 3-byte BCD-encoded PLMN octet string into dst (same layout as NGAP).
 static void setXnPlmn(ASN_XNAP_PLMN_Identity_t &dst, const Plmn &plmn)
@@ -190,17 +178,13 @@ void XnTask::xnSetupRequestSend(int gnbId)
     globalNodeId->present = ASN_XNAP_GlobalNG_RANNode_ID_PR_gNB;
     globalNodeId->choice.gNB = gnbGlobalId;
 
-    auto *ieGlobalId = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    auto *ieGlobalId = asn::New<ASN_XNAP_ProtocolIE_Field_14202P118_t>();
     ieGlobalId->id          = XNAP_IE_GlobalNG_RAN_Node_ID;
     ieGlobalId->criticality = ASN_XNAP_Criticality_reject;
-    if (!setIeValue(ieGlobalId, &asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, globalNodeId))
-    {
-        m_logger->err("xnSetupRequestSend: failed to encode GlobalNG-RANNode-ID");
-        asn::Free(asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, globalNodeId);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieGlobalId);
-        return;
-    }
-    asn::Free(asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, globalNodeId);
+    ieGlobalId->value.present = ASN_XNAP_ProtocolIE_Field_14202P118__value_PR_GlobalNG_RANNode_ID;
+    ieGlobalId->value.choice.GlobalNG_RANNode_ID = *globalNodeId;
+    free(globalNodeId);   // contents moved into the IE
+
 
     // -----------------------------------------------------------------------
     // IE 2 — TAISupport-List  (mandatory, criticality=reject)
@@ -239,18 +223,13 @@ void XnTask::xnSetupRequestSend(int gnbId)
     auto *taiList = asn::New<ASN_XNAP_TAISupport_List_t>();
     asn::SequenceAdd(*taiList, taiItem);
 
-    auto *ieTaiList = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    auto *ieTaiList = asn::New<ASN_XNAP_ProtocolIE_Field_14202P118_t>();
     ieTaiList->id          = XNAP_IE_TAISupport_List;
     ieTaiList->criticality = ASN_XNAP_Criticality_reject;
-    if (!setIeValue(ieTaiList, &asn_DEF_ASN_XNAP_TAISupport_List, taiList))
-    {
-        m_logger->err("xnSetupRequestSend: failed to encode TAISupport-List");
-        asn::Free(asn_DEF_ASN_XNAP_TAISupport_List, taiList);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieTaiList);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieGlobalId);
-        return;
-    }
-    asn::Free(asn_DEF_ASN_XNAP_TAISupport_List, taiList);
+    ieTaiList->value.present = ASN_XNAP_ProtocolIE_Field_14202P118__value_PR_TAISupport_List;
+    ieTaiList->value.choice.TAISupport_List = *taiList;
+    free(taiList);   // contents moved into the IE
+
 
     // -----------------------------------------------------------------------
     // IE 3 — AMF-Region-Information  (mandatory, criticality=reject)
@@ -268,8 +247,8 @@ void XnTask::xnSetupRequestSend(int gnbId)
     {
         m_logger->err("xnSetupRequestSend: no connected AMF with a served GUAMI");
         asn::Free(asn_DEF_ASN_XNAP_GlobalAMF_Region_Information, amfRegionEntry);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieTaiList);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieGlobalId);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P118, ieTaiList);
+        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P118, ieGlobalId);
         return;
     }
     asn::SetBitStringInt<8>(amf->servedGuamiList.front()->guami.amfRegionId,
@@ -278,19 +257,13 @@ void XnTask::xnSetupRequestSend(int gnbId)
     auto *amfRegionInfo = asn::New<ASN_XNAP_AMF_Region_Information_t>();
     asn::SequenceAdd(*amfRegionInfo, amfRegionEntry);
 
-    auto *ieAmfRegion = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    auto *ieAmfRegion = asn::New<ASN_XNAP_ProtocolIE_Field_14202P118_t>();
     ieAmfRegion->id          = XNAP_IE_AMF_Region_Information;
     ieAmfRegion->criticality = ASN_XNAP_Criticality_reject;
-    if (!setIeValue(ieAmfRegion, &asn_DEF_ASN_XNAP_AMF_Region_Information, amfRegionInfo))
-    {
-        m_logger->err("xnSetupRequestSend: failed to encode AMF-Region-Information");
-        asn::Free(asn_DEF_ASN_XNAP_AMF_Region_Information, amfRegionInfo);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieAmfRegion);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieTaiList);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieGlobalId);
-        return;
-    }
-    asn::Free(asn_DEF_ASN_XNAP_AMF_Region_Information, amfRegionInfo);
+    ieAmfRegion->value.present = ASN_XNAP_ProtocolIE_Field_14202P118__value_PR_AMF_Region_Information;
+    ieAmfRegion->value.choice.AMF_Region_Information = *amfRegionInfo;
+    free(amfRegionInfo);   // contents moved into the IE
+
 
     // -----------------------------------------------------------------------
     // IE 4 — List-of-served-cells-NR  (optional, criticality=reject)
@@ -377,20 +350,13 @@ void XnTask::xnSetupRequestSend(int gnbId)
     auto *servedCells = asn::New<ASN_XNAP_ServedCells_NR_t>();
     asn::SequenceAdd(*servedCells, servedCellItem);
 
-    auto *ieServedCells = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    auto *ieServedCells = asn::New<ASN_XNAP_ProtocolIE_Field_14202P118_t>();
     ieServedCells->id          = XNAP_IE_List_of_served_cells_NR;
     ieServedCells->criticality = ASN_XNAP_Criticality_reject;
-    if (!setIeValue(ieServedCells, &asn_DEF_ASN_XNAP_ServedCells_NR, servedCells))
-    {
-        m_logger->err("xnSetupRequestSend: failed to encode ServedCells-NR");
-        asn::Free(asn_DEF_ASN_XNAP_ServedCells_NR, servedCells);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieServedCells);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieAmfRegion);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieTaiList);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieGlobalId);
-        return;
-    }
-    asn::Free(asn_DEF_ASN_XNAP_ServedCells_NR, servedCells);
+    ieServedCells->value.present = ASN_XNAP_ProtocolIE_Field_14202P118__value_PR_ServedCells_NR;
+    ieServedCells->value.choice.ServedCells_NR = *servedCells;
+    free(servedCells);   // contents moved into the IE
+
 
     // -----------------------------------------------------------------------
     // Assemble XnSetupRequest ProtocolIE container
@@ -409,14 +375,10 @@ void XnTask::xnSetupRequestSend(int gnbId)
     auto *initMsg = asn::New<ASN_XNAP_InitiatingMessage_t>();
     initMsg->procedureCode = XN_PROC_XN_SETUP;
     initMsg->criticality   = ASN_XNAP_Criticality_reject;
-    if (ANY_fromType_aper(&initMsg->value, &asn_DEF_ASN_XNAP_XnSetupRequest, xnSetupReq) != 0)
-    {
-        m_logger->err("xnSetupRequestSend: failed to encode XnSetupRequest into InitiatingMessage");
-        asn::Free(asn_DEF_ASN_XNAP_XnSetupRequest, xnSetupReq);
-        asn::Free(asn_DEF_ASN_XNAP_InitiatingMessage, initMsg);
-        return;
-    }
-    asn::Free(asn_DEF_ASN_XNAP_XnSetupRequest, xnSetupReq);
+    initMsg->value.present = ASN_XNAP_InitiatingMessage__value_PR_XnSetupRequest;
+    initMsg->value.choice.XnSetupRequest = *xnSetupReq;
+    free(xnSetupReq);   // contents moved into the message
+
 
     auto *outerPdu = asn::New<ASN_XNAP_XnAP_PDU_t>();
     outerPdu->present                    = ASN_XNAP_XnAP_PDU_PR_initiatingMessage;
@@ -487,24 +449,17 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
     m_logger->debug("xnSetupRequestReceive clientId=%d", clientId);
 
     auto *initMsg = pdu->choice.initiatingMessage;
-    if (!initMsg || !initMsg->value.buf)
+    if (!initMsg || initMsg->value.present != ASN_XNAP_InitiatingMessage__value_PR_XnSetupRequest)
     {
-        m_logger->err("xnSetupRequestReceive: null initiatingMessage (clientId=%d)", clientId);
+        m_logger->err("xnSetupRequestReceive: not an XnSetupRequest (clientId=%d)", clientId);
         xnSetupFailureSend(clientId);
         return;
     }
 
-    // Decode the APER-encoded XnSetupRequest from the InitiatingMessage OPEN TYPE value.
-    auto *xnReq = xnap_encode::Decode<ASN_XNAP_XnSetupRequest_t>(
-        asn_DEF_ASN_XNAP_XnSetupRequest,
-        reinterpret_cast<const uint8_t *>(initMsg->value.buf),
-        static_cast<size_t>(initMsg->value.size));
-    if (!xnReq)
-    {
-        m_logger->err("xnSetupRequestReceive: APER decode failed (clientId=%d)", clientId);
-        xnSetupFailureSend(clientId);
-        return;
-    }
+    // The open type is decoded in place along with the enclosing PDU, so the
+    // value already is an XnSetupRequest -- no second decode. It belongs to the
+    // PDU, so it must not be freed here.
+    auto *xnReq = &initMsg->value.choice.XnSetupRequest;
 
     XnPeerInfo peer;
     // The peer's identity comes from the message (GlobalNG-RANNode-ID), not
@@ -519,11 +474,9 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
     for (int i = 0; i < xnReq->protocolIEs.list.count; ++i)
     {
         auto *ie = xnReq->protocolIEs.list.array[i];
-        if (!ie || !ie->value.buf)
+        if (!ie)
             continue;
 
-        const uint8_t *vbuf  = reinterpret_cast<const uint8_t *>(ie->value.buf);
-        const size_t   vsize = static_cast<size_t>(ie->value.size);
 
         switch (ie->id)
         {
@@ -535,13 +488,13 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
         //   we'll overwrite this with the real value there.
         // -------------------------------------------------------------------
         case XNAP_IE_GlobalNG_RAN_Node_ID: {
-            auto *nodeId = xnap_encode::Decode<ASN_XNAP_GlobalNG_RANNode_ID_t>(
-                asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, vbuf, vsize);
-            if (!nodeId)
+            if (ie->value.present != ASN_XNAP_ProtocolIE_Field_14202P118__value_PR_GlobalNG_RANNode_ID)
             {
                 m_logger->warn("xnSetupRequestReceive: cannot decode GlobalNG-RANNode-ID (clientId=%d)", clientId);
                 break;
             }
+            // Decoded in place with the PDU; borrowed, not owned.
+            auto *nodeId = &ie->value.choice.GlobalNG_RANNode_ID;
 
             if (nodeId->present == ASN_XNAP_GlobalNG_RANNode_ID_PR_gNB &&
                 nodeId->choice.gNB &&
@@ -558,7 +511,6 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
                 decodedGnbId = static_cast<int>(gnbIdVal);
                 hasGlobalId = true;
             }
-            asn::Free(asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, nodeId);
             break;
         }
 
@@ -569,13 +521,13 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
         //   stored only once (checked by mcc/mnc/isLongMnc equality).
         // -------------------------------------------------------------------
         case XNAP_IE_TAISupport_List: {
-            auto *taiList = xnap_encode::Decode<ASN_XNAP_TAISupport_List_t>(
-                asn_DEF_ASN_XNAP_TAISupport_List, vbuf, vsize);
-            if (!taiList)
+            if (ie->value.present != ASN_XNAP_ProtocolIE_Field_14202P118__value_PR_TAISupport_List)
             {
                 m_logger->warn("xnSetupRequestReceive: cannot decode TAISupport-List (clientId=%d)", clientId);
                 break;
             }
+            // Decoded in place with the PDU; borrowed, not owned.
+            auto *taiList = &ie->value.choice.TAISupport_List;
 
             for (int j = 0; j < taiList->list.count; ++j)
             {
@@ -601,7 +553,6 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
                 }
             }
             hasTaiList = true;
-            asn::Free(asn_DEF_ASN_XNAP_TAISupport_List, taiList);
             break;
         }
 
@@ -612,13 +563,13 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
         //   is already captured from TAISupport-List.
         // -------------------------------------------------------------------
         case XNAP_IE_AMF_Region_Information: {
-            auto *amfInfo = xnap_encode::Decode<ASN_XNAP_AMF_Region_Information_t>(
-                asn_DEF_ASN_XNAP_AMF_Region_Information, vbuf, vsize);
-            if (!amfInfo)
+            if (ie->value.present != ASN_XNAP_ProtocolIE_Field_14202P118__value_PR_AMF_Region_Information)
             {
                 m_logger->warn("xnSetupRequestReceive: cannot decode AMF-Region-Information (clientId=%d)", clientId);
                 break;
             }
+            // Decoded in place with the PDU; borrowed, not owned.
+            auto *amfInfo = &ie->value.choice.AMF_Region_Information;
 
             for (int j = 0; j < amfInfo->list.count; ++j)
             {
@@ -629,7 +580,6 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
                     peer.amfRegionList.push_back(asn::GetBitStringInt<8>(entry->amf_region_id));
             }
             hasAmfRegion = true;
-            asn::Free(asn_DEF_ASN_XNAP_AMF_Region_Information, amfInfo);
             break;
         }
 
@@ -640,9 +590,9 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
         //   the peer table is keyed per gNB, not per cell.
         // -------------------------------------------------------------------
         case XNAP_IE_List_of_served_cells_NR: {
-            auto *servedCells = xnap_encode::Decode<ASN_XNAP_ServedCells_NR_t>(
-                asn_DEF_ASN_XNAP_ServedCells_NR, vbuf, vsize);
-            if (!servedCells) break;
+            if (ie->value.present != ASN_XNAP_ProtocolIE_Field_14202P118__value_PR_ServedCells_NR) break;
+            // Decoded in place with the PDU; borrowed, not owned.
+            auto *servedCells = &ie->value.choice.ServedCells_NR;
 
             if (servedCells->list.count > 0 && servedCells->list.array[0])
             {
@@ -652,7 +602,6 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
                 // derived from GlobalNG-RANNode-ID above.
                 peer.nci = asn::GetBitStringLong<36>(info.cellID.nr_CI);
             }
-            asn::Free(asn_DEF_ASN_XNAP_ServedCells_NR, servedCells);
             break;
         }
 
@@ -661,7 +610,6 @@ void XnTask::xnSetupRequestReceive(int clientId, ASN_XNAP_XnAP_PDU *pdu)
         }
     }
 
-    asn::Free(asn_DEF_ASN_XNAP_XnSetupRequest, xnReq);
 
     // ------------------------------------------------------------------
     // Validate that all three mandatory IEs were present and decoded.
@@ -802,17 +750,13 @@ bool XnTask::xnSetupResponseSend(int clientId)
     globalNodeId->present = ASN_XNAP_GlobalNG_RANNode_ID_PR_gNB;
     globalNodeId->choice.gNB = gnbGlobalId;
 
-    auto *ieGlobalId = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    auto *ieGlobalId = asn::New<ASN_XNAP_ProtocolIE_Field_14202P119_t>();
     ieGlobalId->id          = XNAP_IE_GlobalNG_RAN_Node_ID;
     ieGlobalId->criticality = ASN_XNAP_Criticality_reject;
-    if (!setIeValue(ieGlobalId, &asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, globalNodeId))
-    {
-        m_logger->err("xnSetupResponseSend: failed to encode GlobalNG-RANNode-ID");
-        asn::Free(asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, globalNodeId);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieGlobalId);
-        return false;
-    }
-    asn::Free(asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, globalNodeId);
+    ieGlobalId->value.present = ASN_XNAP_ProtocolIE_Field_14202P119__value_PR_GlobalNG_RANNode_ID;
+    ieGlobalId->value.choice.GlobalNG_RANNode_ID = *globalNodeId;
+    free(globalNodeId);   // contents moved into the IE
+
 
     // -----------------------------------------------------------------------
     // IE 2 — TAISupport-List  (mandatory, criticality=reject)
@@ -844,18 +788,13 @@ bool XnTask::xnSetupResponseSend(int clientId)
     auto *taiList = asn::New<ASN_XNAP_TAISupport_List_t>();
     asn::SequenceAdd(*taiList, taiItem);
 
-    auto *ieTaiList = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    auto *ieTaiList = asn::New<ASN_XNAP_ProtocolIE_Field_14202P119_t>();
     ieTaiList->id          = XNAP_IE_TAISupport_List;
     ieTaiList->criticality = ASN_XNAP_Criticality_reject;
-    if (!setIeValue(ieTaiList, &asn_DEF_ASN_XNAP_TAISupport_List, taiList))
-    {
-        m_logger->err("xnSetupResponseSend: failed to encode TAISupport-List");
-        asn::Free(asn_DEF_ASN_XNAP_TAISupport_List, taiList);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieTaiList);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieGlobalId);
-        return false;
-    }
-    asn::Free(asn_DEF_ASN_XNAP_TAISupport_List, taiList);
+    ieTaiList->value.present = ASN_XNAP_ProtocolIE_Field_14202P119__value_PR_TAISupport_List;
+    ieTaiList->value.choice.TAISupport_List = *taiList;
+    free(taiList);   // contents moved into the IE
+
 
     // -----------------------------------------------------------------------
     // IE 3 — AMF-Region-Information  (optional in response, criticality=reject)
@@ -863,7 +802,7 @@ bool XnTask::xnSetupResponseSend(int clientId)
     //   aborting the whole response (the spec marks it OPTIONAL here).
     // -----------------------------------------------------------------------
 
-    ASN_XNAP_ProtocolIE_Field_14202P0_t *ieAmfRegion = nullptr;
+    ASN_XNAP_ProtocolIE_Field_14202P119_t *ieAmfRegion = nullptr;
 
     auto *amfRegionEntry = asn::New<ASN_XNAP_GlobalAMF_Region_Information_t>();
     setXnPlmn(amfRegionEntry->plmn_ID, cfg->plmn);
@@ -872,20 +811,12 @@ bool XnTask::xnSetupResponseSend(int clientId)
     auto *amfRegionInfo = asn::New<ASN_XNAP_AMF_Region_Information_t>();
     asn::SequenceAdd(*amfRegionInfo, amfRegionEntry);
 
-    ieAmfRegion = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    ieAmfRegion = asn::New<ASN_XNAP_ProtocolIE_Field_14202P119_t>();
     ieAmfRegion->id          = XNAP_IE_AMF_Region_Information;
     ieAmfRegion->criticality = ASN_XNAP_Criticality_reject;
-    if (!setIeValue(ieAmfRegion, &asn_DEF_ASN_XNAP_AMF_Region_Information, amfRegionInfo))
-    {
-        m_logger->warn("xnSetupResponseSend: failed to encode AMF-Region-Information (optional); skipping");
-        asn::Free(asn_DEF_ASN_XNAP_AMF_Region_Information, amfRegionInfo);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieAmfRegion);
-        ieAmfRegion = nullptr;
-    }
-    else
-    {
-        asn::Free(asn_DEF_ASN_XNAP_AMF_Region_Information, amfRegionInfo);
-    }
+    ieAmfRegion->value.present = ASN_XNAP_ProtocolIE_Field_14202P119__value_PR_AMF_Region_Information;
+    ieAmfRegion->value.choice.AMF_Region_Information = *amfRegionInfo;
+    free(amfRegionInfo);   // contents moved into the IE
 
     // -----------------------------------------------------------------------
     // IE 4 — List-of-served-cells-NR  (optional, criticality=reject)
@@ -952,21 +883,13 @@ bool XnTask::xnSetupResponseSend(int clientId)
     auto *servedCells = asn::New<ASN_XNAP_ServedCells_NR_t>();
     asn::SequenceAdd(*servedCells, servedCellItem);
 
-    ASN_XNAP_ProtocolIE_Field_14202P0_t *ieServedCells = nullptr;
-    ieServedCells = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    ASN_XNAP_ProtocolIE_Field_14202P119_t *ieServedCells = nullptr;
+    ieServedCells = asn::New<ASN_XNAP_ProtocolIE_Field_14202P119_t>();
     ieServedCells->id          = XNAP_IE_List_of_served_cells_NR;
     ieServedCells->criticality = ASN_XNAP_Criticality_reject;
-    if (!setIeValue(ieServedCells, &asn_DEF_ASN_XNAP_ServedCells_NR, servedCells))
-    {
-        m_logger->warn("xnSetupResponseSend: failed to encode ServedCells-NR (optional); skipping");
-        asn::Free(asn_DEF_ASN_XNAP_ServedCells_NR, servedCells);
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieServedCells);
-        ieServedCells = nullptr;
-    }
-    else
-    {
-        asn::Free(asn_DEF_ASN_XNAP_ServedCells_NR, servedCells);
-    }
+    ieServedCells->value.present = ASN_XNAP_ProtocolIE_Field_14202P119__value_PR_ServedCells_NR;
+    ieServedCells->value.choice.ServedCells_NR = *servedCells;
+    free(servedCells);   // contents moved into the IE
 
     // -----------------------------------------------------------------------
     // Assemble XnSetupResponse ProtocolIE container
@@ -987,14 +910,10 @@ bool XnTask::xnSetupResponseSend(int clientId)
     auto *succMsg = asn::New<ASN_XNAP_SuccessfulOutcome_t>();
     succMsg->procedureCode = XN_PROC_XN_SETUP;
     succMsg->criticality   = ASN_XNAP_Criticality_reject;
-    if (ANY_fromType_aper(&succMsg->value, &asn_DEF_ASN_XNAP_XnSetupResponse, xnSetupResp) != 0)
-    {
-        m_logger->err("xnSetupResponseSend: failed to encode XnSetupResponse into SuccessfulOutcome");
-        asn::Free(asn_DEF_ASN_XNAP_XnSetupResponse, xnSetupResp);
-        asn::Free(asn_DEF_ASN_XNAP_SuccessfulOutcome, succMsg);
-        return false;
-    }
-    asn::Free(asn_DEF_ASN_XNAP_XnSetupResponse, xnSetupResp);
+    succMsg->value.present = ASN_XNAP_SuccessfulOutcome__value_PR_XnSetupResponse;
+    succMsg->value.choice.XnSetupResponse = *xnSetupResp;
+    free(xnSetupResp);   // contents moved into the message
+
 
     auto *outerPdu = asn::New<ASN_XNAP_XnAP_PDU_t>();
     outerPdu->present                   = ASN_XNAP_XnAP_PDU_PR_successfulOutcome;
@@ -1030,21 +949,14 @@ void XnTask::xnSetupResponseReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     m_logger->debug("xnSetupResponseReceive gnbId=%d", gnbId);
 
     auto *succMsg = pdu->choice.successfulOutcome;
-    if (!succMsg || !succMsg->value.buf)
+    if (!succMsg || succMsg->value.present != ASN_XNAP_SuccessfulOutcome__value_PR_XnSetupResponse)
     {
-        m_logger->err("xnSetupResponseReceive: null successfulOutcome from gnbId=%d", gnbId);
+        m_logger->err("xnSetupResponseReceive: not an XnSetupResponse from gnbId=%d", gnbId);
         return;
     }
 
-    auto *xnResp = xnap_encode::Decode<ASN_XNAP_XnSetupResponse_t>(
-        asn_DEF_ASN_XNAP_XnSetupResponse,
-        reinterpret_cast<const uint8_t *>(succMsg->value.buf),
-        static_cast<size_t>(succMsg->value.size));
-    if (!xnResp)
-    {
-        m_logger->err("xnSetupResponseReceive: APER decode failed for gnbId=%d", gnbId);
-        return;
-    }
+    // Decoded in place with the enclosing PDU; owned by it, so not freed here.
+    auto *xnResp = &succMsg->value.choice.XnSetupResponse;
 
     XnPeerInfo peer;
     peer.gnbId = gnbId;
@@ -1055,22 +967,20 @@ void XnTask::xnSetupResponseReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     for (int i = 0; i < xnResp->protocolIEs.list.count; ++i)
     {
         auto *ie = xnResp->protocolIEs.list.array[i];
-        if (!ie || !ie->value.buf)
+        if (!ie)
             continue;
 
-        const uint8_t *vbuf  = reinterpret_cast<const uint8_t *>(ie->value.buf);
-        const size_t   vsize = static_cast<size_t>(ie->value.size);
 
         switch (ie->id)
         {
         case XNAP_IE_GlobalNG_RAN_Node_ID: {
-            auto *nodeId = xnap_encode::Decode<ASN_XNAP_GlobalNG_RANNode_ID_t>(
-                asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, vbuf, vsize);
-            if (!nodeId)
+            if (ie->value.present != ASN_XNAP_ProtocolIE_Field_14202P119__value_PR_GlobalNG_RANNode_ID)
             {
                 m_logger->warn("xnSetupResponseReceive: cannot decode GlobalNG-RANNode-ID from gnbId=%d", gnbId);
                 break;
             }
+            // Decoded in place with the PDU; borrowed, not owned.
+            auto *nodeId = &ie->value.choice.GlobalNG_RANNode_ID;
 
             if (nodeId->present == ASN_XNAP_GlobalNG_RANNode_ID_PR_gNB &&
                 nodeId->choice.gNB &&
@@ -1082,18 +992,17 @@ void XnTask::xnSetupResponseReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
                 peer.nci = gnbIdVal << (36 - gnbIdLength);
                 hasGlobalId = true;
             }
-            asn::Free(asn_DEF_ASN_XNAP_GlobalNG_RANNode_ID, nodeId);
             break;
         }
 
         case XNAP_IE_TAISupport_List: {
-            auto *taiList = xnap_encode::Decode<ASN_XNAP_TAISupport_List_t>(
-                asn_DEF_ASN_XNAP_TAISupport_List, vbuf, vsize);
-            if (!taiList)
+            if (ie->value.present != ASN_XNAP_ProtocolIE_Field_14202P119__value_PR_TAISupport_List)
             {
                 m_logger->warn("xnSetupResponseReceive: cannot decode TAISupport-List from gnbId=%d", gnbId);
                 break;
             }
+            // Decoded in place with the PDU; borrowed, not owned.
+            auto *taiList = &ie->value.choice.TAISupport_List;
 
             for (int j = 0; j < taiList->list.count; ++j)
             {
@@ -1117,19 +1026,18 @@ void XnTask::xnSetupResponseReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
                 }
             }
             hasTaiList = true;
-            asn::Free(asn_DEF_ASN_XNAP_TAISupport_List, taiList);
             break;
         }
 
         // AMF-Region-Information is optional in XnSetupResponse (per TS 38.423 Table 9.1.2.2-1)
         case XNAP_IE_AMF_Region_Information: {
-            auto *amfInfo = xnap_encode::Decode<ASN_XNAP_AMF_Region_Information_t>(
-                asn_DEF_ASN_XNAP_AMF_Region_Information, vbuf, vsize);
-            if (!amfInfo)
+            if (ie->value.present != ASN_XNAP_ProtocolIE_Field_14202P119__value_PR_AMF_Region_Information)
             {
                 m_logger->warn("xnSetupResponseReceive: cannot decode AMF-Region-Information from gnbId=%d", gnbId);
                 break;
             }
+            // Decoded in place with the PDU; borrowed, not owned.
+            auto *amfInfo = &ie->value.choice.AMF_Region_Information;
 
             for (int j = 0; j < amfInfo->list.count; ++j)
             {
@@ -1138,14 +1046,13 @@ void XnTask::xnSetupResponseReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
                 if (entry->amf_region_id.size > 0)
                     peer.amfRegionList.push_back(asn::GetBitStringInt<8>(entry->amf_region_id));
             }
-            asn::Free(asn_DEF_ASN_XNAP_AMF_Region_Information, amfInfo);
             break;
         }
 
         case XNAP_IE_List_of_served_cells_NR: {
-            auto *servedCells = xnap_encode::Decode<ASN_XNAP_ServedCells_NR_t>(
-                asn_DEF_ASN_XNAP_ServedCells_NR, vbuf, vsize);
-            if (!servedCells) break;
+            if (ie->value.present != ASN_XNAP_ProtocolIE_Field_14202P119__value_PR_ServedCells_NR) break;
+            // Decoded in place with the PDU; borrowed, not owned.
+            auto *servedCells = &ie->value.choice.ServedCells_NR;
 
             if (servedCells->list.count > 0 && servedCells->list.array[0])
             {
@@ -1153,7 +1060,6 @@ void XnTask::xnSetupResponseReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
                 peer.nrPCI = static_cast<int>(info.nrPCI);
                 peer.nci = asn::GetBitStringLong<36>(info.cellID.nr_CI);
             }
-            asn::Free(asn_DEF_ASN_XNAP_ServedCells_NR, servedCells);
             break;
         }
 
@@ -1162,7 +1068,6 @@ void XnTask::xnSetupResponseReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
         }
     }
 
-    asn::Free(asn_DEF_ASN_XNAP_XnSetupResponse, xnResp);
 
     if (!hasGlobalId || !hasTaiList)
     {
@@ -1193,15 +1098,12 @@ void XnTask::xnSetupFailureSend(int clientId)
     cause.present          = ASN_XNAP_Cause_PR_protocol;
     cause.choice.protocol  = ASN_XNAP_CauseProtocol_abstract_syntax_error_reject;
 
-    auto *ieCause = asn::New<ASN_XNAP_ProtocolIE_Field_14202P0_t>();
+    auto *ieCause = asn::New<ASN_XNAP_ProtocolIE_Field_14202P120_t>();
     ieCause->id          = XNAP_IE_Cause;
     ieCause->criticality = ASN_XNAP_Criticality_ignore;
-    if (!setIeValue(ieCause, &asn_DEF_ASN_XNAP_Cause, &cause))
-    {
-        m_logger->err("xnSetupFailureSend: failed to encode Cause");
-        asn::Free(asn_DEF_ASN_XNAP_ProtocolIE_Field_14202P0, ieCause);
-        return;
-    }
+    ieCause->value.present = ASN_XNAP_ProtocolIE_Field_14202P120__value_PR_Cause;
+    ieCause->value.choice.Cause = cause;
+
 
     auto *xnSetupFail = asn::New<ASN_XNAP_XnSetupFailure_t>();
     asn::SequenceAdd(xnSetupFail->protocolIEs, ieCause);
@@ -1209,14 +1111,10 @@ void XnTask::xnSetupFailureSend(int clientId)
     auto *unsuccMsg = asn::New<ASN_XNAP_UnsuccessfulOutcome_t>();
     unsuccMsg->procedureCode = XN_PROC_XN_SETUP;
     unsuccMsg->criticality   = ASN_XNAP_Criticality_reject;
-    if (ANY_fromType_aper(&unsuccMsg->value, &asn_DEF_ASN_XNAP_XnSetupFailure, xnSetupFail) != 0)
-    {
-        m_logger->err("xnSetupFailureSend: failed to encode XnSetupFailure into UnsuccessfulOutcome");
-        asn::Free(asn_DEF_ASN_XNAP_XnSetupFailure, xnSetupFail);
-        asn::Free(asn_DEF_ASN_XNAP_UnsuccessfulOutcome, unsuccMsg);
-        return;
-    }
-    asn::Free(asn_DEF_ASN_XNAP_XnSetupFailure, xnSetupFail);
+    unsuccMsg->value.present = ASN_XNAP_UnsuccessfulOutcome__value_PR_XnSetupFailure;
+    unsuccMsg->value.choice.XnSetupFailure = *xnSetupFail;
+    free(xnSetupFail);   // contents moved into the message
+
 
     auto *outerPdu = asn::New<ASN_XNAP_XnAP_PDU_t>();
     outerPdu->present                    = ASN_XNAP_XnAP_PDU_PR_unsuccessfulOutcome;
@@ -1256,35 +1154,25 @@ void XnTask::xnSetupFailureReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     }
 
     auto *unsuccMsg = pdu->choice.unsuccessfulOutcome;
-    if (!unsuccMsg || !unsuccMsg->value.buf)
+    if (!unsuccMsg || unsuccMsg->value.present != ASN_XNAP_UnsuccessfulOutcome__value_PR_XnSetupFailure)
     {
         m_logger->err("XnSetupFailure from gnbId=%d: malformed UnsuccessfulOutcome; Xn setup rejected", gnbId);
         return;
     }
 
-    auto *xnFail = xnap_encode::Decode<ASN_XNAP_XnSetupFailure_t>(
-        asn_DEF_ASN_XNAP_XnSetupFailure,
-        reinterpret_cast<const uint8_t *>(unsuccMsg->value.buf),
-        static_cast<size_t>(unsuccMsg->value.size));
-    if (!xnFail)
-    {
-        m_logger->err("XnSetupFailure from gnbId=%d: APER decode failed; Xn setup rejected", gnbId);
-        return;
-    }
+    // Decoded in place with the enclosing PDU; owned by it, so not freed here.
+    auto *xnFail = &unsuccMsg->value.choice.XnSetupFailure;
 
     // Decode the mandatory Cause IE and log it.  Peer is NOT added to m_xnPeerTable.
     for (int i = 0; i < xnFail->protocolIEs.list.count; ++i)
     {
         auto *ie = xnFail->protocolIEs.list.array[i];
-        if (!ie || ie->id != XNAP_IE_Cause || !ie->value.buf)
+        if (!ie || ie->id != XNAP_IE_Cause ||
+            ie->value.present != ASN_XNAP_ProtocolIE_Field_14202P120__value_PR_Cause)
             continue;
 
-        auto *cause = xnap_encode::Decode<ASN_XNAP_Cause_t>(
-            asn_DEF_ASN_XNAP_Cause,
-            reinterpret_cast<const uint8_t *>(ie->value.buf),
-            static_cast<size_t>(ie->value.size));
-        if (!cause)
-            break;
+        // Decoded in place with the PDU; borrowed, not owned.
+        auto *cause = &ie->value.choice.Cause;
 
         switch (cause->present)
         {
@@ -1304,11 +1192,9 @@ void XnTask::xnSetupFailureReceive(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
             m_logger->err("XnSetupFailure from gnbId=%d: cause=unknown", gnbId);
             break;
         }
-        asn::Free(asn_DEF_ASN_XNAP_Cause, cause);
         break;
     }
 
-    asn::Free(asn_DEF_ASN_XNAP_XnSetupFailure, xnFail);
 }
 
 
