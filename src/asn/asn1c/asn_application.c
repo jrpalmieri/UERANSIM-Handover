@@ -315,25 +315,25 @@ asn_encode_internal(const asn_codec_ctx_t *opt_codec_ctx,
 #endif /* ASN_DISABLE_OER_SUPPORT */
 
 #ifdef  ASN_DISABLE_PER_SUPPORT
-    case ATS_UNALIGNED_BASIC_PER:
-    case ATS_UNALIGNED_CANONICAL_PER:
     case ATS_ALIGNED_BASIC_PER:
     case ATS_ALIGNED_CANONICAL_PER:
+    case ATS_UNALIGNED_BASIC_PER:
+    case ATS_UNALIGNED_CANONICAL_PER:
         errno = ENOENT; /* PER is not defined. */
         ASN__ENCODE_FAILED;
         break;
 #else /* ASN_DISABLE_PER_SUPPORT */
-    case ATS_UNALIGNED_BASIC_PER:
-        /* CANONICAL-UPER is a superset of BASIC-UPER. */
+    case ATS_ALIGNED_BASIC_PER:
+        /* CANONICAL-APER is a superset of BASIC-APER. */
         /* Fall through. */
-    case ATS_UNALIGNED_CANONICAL_PER:
-        if(td->op->uper_encoder) {
-            er = uper_encode(td, 0, sptr, callback, callback_key);
+    case ATS_ALIGNED_CANONICAL_PER:
+        if(td->op->aper_encoder) {
+            er = aper_encode(td, 0, sptr, callback, callback_key);
             if(er.encoded == -1) {
-                if(er.failed_type && er.failed_type->op->uper_encoder) {
+                if(er.failed_type && er.failed_type->op->aper_encoder) {
                     errno = EBADF;  /* Structure has incorrect form. */
                 } else {
-                    errno = ENOENT; /* UPER is not defined for this type. */
+                    errno = ENOENT; /* APER is not defined for this type. */
                 }
             } else {
                 ASN_DEBUG("Complete encoded in %ld bits", (long)er.encoded);
@@ -353,17 +353,17 @@ asn_encode_internal(const asn_codec_ctx_t *opt_codec_ctx,
             ASN__ENCODE_FAILED;
         }
         break;
-    case ATS_ALIGNED_BASIC_PER:
-        /* CANONICAL-APER is a superset of BASIC-APER. */
+    case ATS_UNALIGNED_BASIC_PER:
+        /* CANONICAL-UPER is a superset of BASIC-UPER. */
         /* Fall through. */
-    case ATS_ALIGNED_CANONICAL_PER:
-        if(td->op->aper_encoder) {
-            er = aper_encode(td, 0, sptr, callback, callback_key);
+    case ATS_UNALIGNED_CANONICAL_PER:
+        if(td->op->uper_encoder) {
+            er = uper_encode(td, 0, sptr, callback, callback_key);
             if(er.encoded == -1) {
-                if(er.failed_type && er.failed_type->op->aper_encoder) {
+                if(er.failed_type && er.failed_type->op->uper_encoder) {
                     errno = EBADF;  /* Structure has incorrect form. */
                 } else {
-                    errno = ENOENT; /* APER is not defined for this type. */
+                    errno = ENOENT; /* UPER is not defined for this type. */
                 }
             } else {
                 ASN_DEBUG("Complete encoded in %ld bits", (long)er.encoded);
@@ -455,15 +455,6 @@ asn_decode(const asn_codec_ctx_t *opt_codec_ctx,
         return oer_decode(opt_codec_ctx, td, sptr, buffer, size);
 #endif
 
-    case ATS_UNALIGNED_BASIC_PER:
-    case ATS_UNALIGNED_CANONICAL_PER:
-#ifdef  ASN_DISABLE_PER_SUPPORT
-        errno = ENOENT;
-        ASN__DECODE_FAILED;
-#else
-        return uper_decode_complete(opt_codec_ctx, td, sptr, buffer, size);
-#endif
-
     case ATS_ALIGNED_BASIC_PER:
     case ATS_ALIGNED_CANONICAL_PER:
 #ifdef  ASN_DISABLE_PER_SUPPORT
@@ -471,6 +462,14 @@ asn_decode(const asn_codec_ctx_t *opt_codec_ctx,
         ASN__DECODE_FAILED;
 #else
         return aper_decode_complete(opt_codec_ctx, td, sptr, buffer, size);
+#endif
+    case ATS_UNALIGNED_BASIC_PER:
+    case ATS_UNALIGNED_CANONICAL_PER:
+#ifdef  ASN_DISABLE_PER_SUPPORT
+        errno = ENOENT;
+        ASN__DECODE_FAILED;
+#else
+        return uper_decode_complete(opt_codec_ctx, td, sptr, buffer, size);
 #endif
 
     case ATS_BASIC_XER:

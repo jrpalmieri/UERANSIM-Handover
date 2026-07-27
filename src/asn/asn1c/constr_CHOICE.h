@@ -51,8 +51,6 @@ oer_type_decoder_f CHOICE_decode_oer;
 oer_type_encoder_f CHOICE_encode_oer;
 per_type_decoder_f CHOICE_decode_uper;
 per_type_encoder_f CHOICE_encode_uper;
-per_type_decoder_f CHOICE_decode_aper;
-per_type_encoder_f CHOICE_encode_aper;
 asn_outmost_tag_f CHOICE_outmost_tag;
 asn_random_fill_f CHOICE_random_fill;
 extern asn_TYPE_operation_t asn_OP_CHOICE;
@@ -72,6 +70,10 @@ unsigned CHOICE_variant_get_presence(const asn_TYPE_descriptor_t *td,
  */
 int CHOICE_variant_set_presence(const asn_TYPE_descriptor_t *td,
                                 void *structure_ptr, unsigned present);
+
+/* --- Aligned PER (APER) support --- */
+per_type_decoder_f CHOICE_decode_aper;
+per_type_encoder_f CHOICE_encode_aper;
 
 #ifdef __cplusplus
 }

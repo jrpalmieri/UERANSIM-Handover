@@ -36,8 +36,6 @@ oer_type_decoder_f OCTET_STRING_decode_oer;
 oer_type_encoder_f OCTET_STRING_encode_oer;
 per_type_decoder_f OCTET_STRING_decode_uper;
 per_type_encoder_f OCTET_STRING_encode_uper;
-per_type_decoder_f OCTET_STRING_decode_aper;
-per_type_encoder_f OCTET_STRING_encode_aper;
 asn_random_fill_f  OCTET_STRING_random_fill;
 
 #define OCTET_STRING_constraint  asn_generic_no_constraint
@@ -94,6 +92,10 @@ extern asn_OCTET_STRING_specifics_t asn_SPC_OCTET_STRING_specs;
 size_t OCTET_STRING_random_length_constrained(
     const asn_TYPE_descriptor_t *, const asn_encoding_constraints_t *,
     size_t max_length);
+
+/* --- Aligned PER (APER) support --- */
+per_type_decoder_f OCTET_STRING_decode_aper;
+per_type_encoder_f OCTET_STRING_encode_aper;
 
 #ifdef __cplusplus
 }

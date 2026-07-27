@@ -119,7 +119,7 @@ uper_open_type_get_simple(const asn_codec_ctx_t *ctx,
 	if(rv.code == RC_OK) {
 		/* Check padding validity */
 		padding = spd.nbits - spd.nboff;
-                if (((padding > 0 && padding < 8) ||
+                if ((padding < 8 ||
 		/* X.691#10.1.3 */
 		(spd.nboff == 0 && spd.nbits == 8 && spd.buffer == buf)) &&
                     per_get_few_bits(&spd, padding) == 0) {
@@ -132,7 +132,8 @@ uper_open_type_get_simple(const asn_codec_ctx_t *ctx,
 			ASN_DEBUG("Too large padding %d in open type", (int)padding);
 			ASN__DECODE_FAILED;
 		} else {
-			ASN_DEBUG("No padding");
+			ASN_DEBUG("Non-zero padding");
+			ASN__DECODE_FAILED;
 		}
 	} else {
 		FREEMEM(buf);
@@ -294,7 +295,7 @@ uper_sot_suck(const asn_codec_ctx_t *ctx, const asn_TYPE_descriptor_t *td,
 	(void)constraints;
 	(void)sptr;
 
-	while(per_get_few_bits(pd, 1) >= 0);
+	while(per_get_few_bits(pd, 24) >= 0);
 
 	rv.code = RC_OK;
 	rv.consumed = pd->moved;
@@ -393,6 +394,11 @@ per_skip_bits(asn_per_data_t *pd, int skip_nbits) {
 	}
 	return hasNonZeroBits;
 }
+
+
+/* --- Aligned PER (APER) support --- */
+
+#ifndef	ASN_DISABLE_PER_SUPPORT
 
 static asn_dec_rval_t
 aper_open_type_get_simple(const asn_codec_ctx_t *ctx,
@@ -530,4 +536,4 @@ aper_open_type_skip(const asn_codec_ctx_t *ctx, asn_per_data_t *pd) {
 		return 0;
 }
 
-
+#endif	/* ASN_DISABLE_PER_SUPPORT */

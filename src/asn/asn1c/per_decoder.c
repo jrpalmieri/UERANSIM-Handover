@@ -95,6 +95,11 @@ uper_decode(const asn_codec_ctx_t *opt_codec_ctx,
 	return rval;
 }
 
+
+/* --- Aligned PER (APER) support --- */
+
+#ifndef	ASN_DISABLE_PER_SUPPORT
+
 asn_dec_rval_t
 aper_decode_complete(const asn_codec_ctx_t *opt_codec_ctx,
                      const asn_TYPE_descriptor_t *td, void **sptr,
@@ -167,8 +172,8 @@ aper_decode(const asn_codec_ctx_t *opt_codec_ctx,
 	 * Invoke type-specific decoder.
 	 */
 	if(!td->op->aper_decoder)
-		ASN__DECODE_FAILED;	/* PER is not compiled in */
-		rval = td->op->aper_decoder(opt_codec_ctx, td, 0, sptr, &pd);
+		ASN__DECODE_FAILED;	/* APER is not compiled in for this type */
+	rval = td->op->aper_decoder(opt_codec_ctx, td, 0, sptr, &pd);
 	if(rval.code == RC_OK) {
 		/* Return the number of consumed bits */
 		rval.consumed = ((pd.buffer - (const uint8_t *)buffer) << 3)
@@ -183,3 +188,4 @@ aper_decode(const asn_codec_ctx_t *opt_codec_ctx,
 	return rval;
 }
 
+#endif	/* ASN_DISABLE_PER_SUPPORT */

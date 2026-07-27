@@ -1484,6 +1484,155 @@ SEQUENCE_encode_uper(const asn_TYPE_descriptor_t *td,
 	ASN__ENCODED_OK(er);
 }
 
+#endif  /* ASN_DISABLE_PER_SUPPORT */
+
+int
+SEQUENCE_compare(const asn_TYPE_descriptor_t *td, const void *aptr,
+                 const void *bptr) {
+    size_t edx;
+
+	for(edx = 0; edx < td->elements_count; edx++) {
+		asn_TYPE_member_t *elm = &td->elements[edx];
+		const void *amemb;
+		const void *bmemb;
+        int ret;
+
+		if(elm->flags & ATF_POINTER) {
+            amemb =
+                *(const void *const *)((const char *)aptr + elm->memb_offset);
+            bmemb =
+                *(const void *const *)((const char *)bptr + elm->memb_offset);
+            if(!amemb) {
+                if(!bmemb) continue;
+                if(elm->default_value_cmp
+                   && elm->default_value_cmp(bmemb) == 0) {
+                    /* A is absent, but B is present and equal to DEFAULT */
+                    continue;
+                }
+                return -1;
+            } else if(!bmemb) {
+                if(elm->default_value_cmp
+                   && elm->default_value_cmp(amemb) == 0) {
+                    /* B is absent, but A is present and equal to DEFAULT */
+                    continue;
+                }
+                return 1;
+            }
+		} else {
+            amemb = (const void *)((const char *)aptr + elm->memb_offset);
+            bmemb = (const void *)((const char *)bptr + elm->memb_offset);
+		}
+
+        ret = elm->type->op->compare_struct(elm->type, amemb, bmemb);
+        if(ret != 0) return ret;
+    }
+
+    return 0;
+}
+
+asn_TYPE_operation_t asn_OP_SEQUENCE = {
+	SEQUENCE_free,
+	SEQUENCE_print,
+	SEQUENCE_compare,
+	SEQUENCE_decode_ber,
+	SEQUENCE_encode_der,
+	SEQUENCE_decode_xer,
+	SEQUENCE_encode_xer,
+#ifdef	ASN_DISABLE_OER_SUPPORT
+	0,
+	0,
+#else
+	SEQUENCE_decode_oer,
+	SEQUENCE_encode_oer,
+#endif  /* ASN_DISABLE_OER_SUPPORT */
+#ifdef ASN_DISABLE_PER_SUPPORT
+	0,
+	0,
+	0,
+	0,
+#else
+	SEQUENCE_decode_uper,
+	SEQUENCE_encode_uper,
+	SEQUENCE_decode_aper,
+	SEQUENCE_encode_aper,
+#endif /* ASN_DISABLE_PER_SUPPORT */
+	SEQUENCE_random_fill,
+	0	/* Use generic outmost tag fetcher */
+};
+
+
+asn_random_fill_result_t
+SEQUENCE_random_fill(const asn_TYPE_descriptor_t *td, void **sptr,
+                   const asn_encoding_constraints_t *constr,
+                   size_t max_length) {
+    const asn_SEQUENCE_specifics_t *specs =
+        (const asn_SEQUENCE_specifics_t *)td->specifics;
+    asn_random_fill_result_t result_ok = {ARFILL_OK, 0};
+    asn_random_fill_result_t result_failed = {ARFILL_FAILED, 0};
+    asn_random_fill_result_t result_skipped = {ARFILL_SKIPPED, 0};
+    void *st = *sptr;
+    size_t edx;
+
+    if(max_length == 0) return result_skipped;
+
+    (void)constr;
+
+    if(st == NULL) {
+        st = CALLOC(1, specs->struct_size);
+        if(st == NULL) {
+            return result_failed;
+        }
+    }
+
+    for(edx = 0; edx < td->elements_count; edx++) {
+        const asn_TYPE_member_t *elm = &td->elements[edx];
+        void *memb_ptr;   /* Pointer to the member */
+        void **memb_ptr2; /* Pointer to that pointer */
+        asn_random_fill_result_t tmpres;
+
+        if(elm->optional && asn_random_between(0, 4) == 2) {
+            /* Sometimes decide not to fill the optional value */
+            continue;
+        }
+
+        if(elm->flags & ATF_POINTER) {
+            /* Member is a pointer to another structure */
+            memb_ptr2 = (void **)((char *)st + elm->memb_offset);
+        } else {
+            memb_ptr = (char *)st + elm->memb_offset;
+            memb_ptr2 = &memb_ptr;
+        }
+
+        tmpres = elm->type->op->random_fill(
+            elm->type, memb_ptr2, &elm->encoding_constraints,
+            max_length > result_ok.length ? max_length - result_ok.length : 0);
+        switch(tmpres.code) {
+        case ARFILL_OK:
+            result_ok.length += tmpres.length;
+            continue;
+        case ARFILL_SKIPPED:
+            assert(!(elm->flags & ATF_POINTER) || *memb_ptr2 == NULL);
+            continue;
+        case ARFILL_FAILED:
+            if(st == *sptr) {
+                ASN_STRUCT_RESET(*td, st);
+            } else {
+                ASN_STRUCT_FREE(*td, st);
+            }
+            return tmpres;
+        }
+    }
+
+    *sptr = st;
+
+    return result_ok;
+}
+
+
+/* --- Aligned PER (APER) support --- */
+
+#ifndef	ASN_DISABLE_PER_SUPPORT
+
 asn_dec_rval_t
 SEQUENCE_decode_aper(const asn_codec_ctx_t *opt_codec_ctx,
                      const asn_TYPE_descriptor_t *td,
@@ -1913,147 +2062,4 @@ SEQUENCE_encode_aper(const asn_TYPE_descriptor_t *td,
 	ASN__ENCODED_OK(er);
 }
 
-#endif  /* ASN_DISABLE_PER_SUPPORT */
-
-int
-SEQUENCE_compare(const asn_TYPE_descriptor_t *td, const void *aptr,
-                 const void *bptr) {
-    size_t edx;
-
-	for(edx = 0; edx < td->elements_count; edx++) {
-		asn_TYPE_member_t *elm = &td->elements[edx];
-		const void *amemb;
-		const void *bmemb;
-        int ret;
-
-		if(elm->flags & ATF_POINTER) {
-            amemb =
-                *(const void *const *)((const char *)aptr + elm->memb_offset);
-            bmemb =
-                *(const void *const *)((const char *)bptr + elm->memb_offset);
-            if(!amemb) {
-                if(!bmemb) continue;
-                if(elm->default_value_cmp
-                   && elm->default_value_cmp(bmemb) == 0) {
-                    /* A is absent, but B is present and equal to DEFAULT */
-                    continue;
-                }
-                return -1;
-            } else if(!bmemb) {
-                if(elm->default_value_cmp
-                   && elm->default_value_cmp(amemb) == 0) {
-                    /* B is absent, but A is present and equal to DEFAULT */
-                    continue;
-                }
-                return 1;
-            }
-		} else {
-            amemb = (const void *)((const char *)aptr + elm->memb_offset);
-            bmemb = (const void *)((const char *)bptr + elm->memb_offset);
-		}
-
-        ret = elm->type->op->compare_struct(elm->type, amemb, bmemb);
-        if(ret != 0) return ret;
-    }
-
-    return 0;
-}
-
-asn_TYPE_operation_t asn_OP_SEQUENCE = {
-	SEQUENCE_free,
-	SEQUENCE_print,
-	SEQUENCE_compare,
-	SEQUENCE_decode_ber,
-	SEQUENCE_encode_der,
-	SEQUENCE_decode_xer,
-	SEQUENCE_encode_xer,
-#ifdef	ASN_DISABLE_OER_SUPPORT
-	0,
-	0,
-#else
-	SEQUENCE_decode_oer,
-	SEQUENCE_encode_oer,
-#endif  /* ASN_DISABLE_OER_SUPPORT */
-#ifdef ASN_DISABLE_PER_SUPPORT
-	0,
-	0,
-	0,
-	0,
-#else
-	SEQUENCE_decode_uper,
-	SEQUENCE_encode_uper,
-	SEQUENCE_decode_aper,
-	SEQUENCE_encode_aper,
-#endif /* ASN_DISABLE_PER_SUPPORT */
-	SEQUENCE_random_fill,
-	0	/* Use generic outmost tag fetcher */
-};
-
-
-asn_random_fill_result_t
-SEQUENCE_random_fill(const asn_TYPE_descriptor_t *td, void **sptr,
-                   const asn_encoding_constraints_t *constr,
-                   size_t max_length) {
-    const asn_SEQUENCE_specifics_t *specs =
-        (const asn_SEQUENCE_specifics_t *)td->specifics;
-    asn_random_fill_result_t result_ok = {ARFILL_OK, 0};
-    asn_random_fill_result_t result_failed = {ARFILL_FAILED, 0};
-    asn_random_fill_result_t result_skipped = {ARFILL_SKIPPED, 0};
-    void *st = *sptr;
-    size_t edx;
-
-    if(max_length == 0) return result_skipped;
-
-    (void)constr;
-
-    if(st == NULL) {
-        st = CALLOC(1, specs->struct_size);
-        if(st == NULL) {
-            return result_failed;
-        }
-    }
-
-    for(edx = 0; edx < td->elements_count; edx++) {
-        const asn_TYPE_member_t *elm = &td->elements[edx];
-        void *memb_ptr;   /* Pointer to the member */
-        void **memb_ptr2; /* Pointer to that pointer */
-        asn_random_fill_result_t tmpres;
-
-        if(elm->optional && asn_random_between(0, 4) == 2) {
-            /* Sometimes decide not to fill the optional value */
-            continue;
-        }
-
-        if(elm->flags & ATF_POINTER) {
-            /* Member is a pointer to another structure */
-            memb_ptr2 = (void **)((char *)st + elm->memb_offset);
-        } else {
-            memb_ptr = (char *)st + elm->memb_offset;
-            memb_ptr2 = &memb_ptr;
-        }
-
-        tmpres = elm->type->op->random_fill(
-            elm->type, memb_ptr2, &elm->encoding_constraints,
-            max_length > result_ok.length ? max_length - result_ok.length : 0);
-        switch(tmpres.code) {
-        case ARFILL_OK:
-            result_ok.length += tmpres.length;
-            continue;
-        case ARFILL_SKIPPED:
-            assert(!(elm->flags & ATF_POINTER) || *memb_ptr2 == NULL);
-            continue;
-        case ARFILL_FAILED:
-            if(st == *sptr) {
-                ASN_STRUCT_RESET(*td, st);
-            } else {
-                ASN_STRUCT_FREE(*td, st);
-            }
-            return tmpres;
-        }
-    }
-
-    *sptr = st;
-
-    return result_ok;
-}
-
+#endif	/* ASN_DISABLE_PER_SUPPORT */

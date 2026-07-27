@@ -294,6 +294,11 @@ per_long_range_unrebase(unsigned long inp, long lb, long ub, long *outp) {
     return 0;
 }
 
+
+/* --- Aligned PER (APER) support --- */
+
+#ifndef	ASN_DISABLE_PER_SUPPORT
+
 int32_t
 aper_get_align(asn_per_data_t *pd) {
 
@@ -424,7 +429,6 @@ aper_put_length(asn_per_outp_t *po, int range, size_t length) {
 	? -1 : (ssize_t)(length << 14);
 }
 
-
 int
 aper_put_nslength(asn_per_outp_t *po, size_t length) {
 
@@ -487,3 +491,5 @@ aper_put_nsnnwn(asn_per_outp_t *po, int range, int number) {
 */
     return per_put_few_bits(po, number, 8 * bytes);
 }
+
+#endif	/* ASN_DISABLE_PER_SUPPORT */

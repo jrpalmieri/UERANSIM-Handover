@@ -225,6 +225,72 @@ SEQUENCE_OF_encode_uper(const asn_TYPE_descriptor_t *td,
 	ASN__ENCODED_OK(er);
 }
 
+#endif  /* ASN_DISABLE_PER_SUPPORT */
+
+int
+SEQUENCE_OF_compare(const asn_TYPE_descriptor_t *td, const void *aptr,
+               const void *bptr) {
+    const asn_anonymous_sequence_ *a = _A_CSEQUENCE_FROM_VOID(aptr);
+    const asn_anonymous_sequence_ *b = _A_CSEQUENCE_FROM_VOID(bptr);
+    ssize_t idx;
+
+    if(a && b) {
+        ssize_t common_length = (a->count < b->count ? a->count : b->count);
+        for(idx = 0; idx < common_length; idx++) {
+            int ret = td->elements->type->op->compare_struct(
+                td->elements->type, a->array[idx], b->array[idx]);
+            if(ret) return ret;
+        }
+
+        if(idx < b->count) /* more elements in b */
+            return -1;    /* a is shorter, so put it first */
+        if(idx < a->count) return 1;
+
+    } else if(!a) {
+        return -1;
+    } else if(!b) {
+        return 1;
+    }
+
+    return 0;
+}
+
+
+asn_TYPE_operation_t asn_OP_SEQUENCE_OF = {
+	SEQUENCE_OF_free,
+	SEQUENCE_OF_print,
+	SEQUENCE_OF_compare,
+	SEQUENCE_OF_decode_ber,
+	SEQUENCE_OF_encode_der,
+	SEQUENCE_OF_decode_xer,
+	SEQUENCE_OF_encode_xer,
+#ifdef	ASN_DISABLE_OER_SUPPORT
+	0,
+	0,
+#else
+	SEQUENCE_OF_decode_oer, /* Same as SET OF decoder. */
+	SEQUENCE_OF_encode_oer, /* Same as SET OF encoder */
+#endif  /* ASN_DISABLE_OER_SUPPORT */
+#ifdef ASN_DISABLE_PER_SUPPORT
+	0,
+	0,
+	0,
+	0,
+#else
+	SEQUENCE_OF_decode_uper, /* Same as SET OF decoder */
+	SEQUENCE_OF_encode_uper,
+	SEQUENCE_OF_decode_aper,
+	SEQUENCE_OF_encode_aper,
+#endif /* ASN_DISABLE_PER_SUPPORT */
+	SEQUENCE_OF_random_fill,
+	0	/* Use generic outmost tag fetcher */
+};
+
+
+/* --- Aligned PER (APER) support --- */
+
+#ifndef	ASN_DISABLE_PER_SUPPORT
+
 asn_enc_rval_t
 SEQUENCE_OF_encode_aper(const asn_TYPE_descriptor_t *td,
                         const asn_per_constraints_t *constraints,
@@ -295,64 +361,5 @@ SEQUENCE_OF_encode_aper(const asn_TYPE_descriptor_t *td,
 
 	ASN__ENCODED_OK(er);
 }
-#endif  /* ASN_DISABLE_PER_SUPPORT */
 
-int
-SEQUENCE_OF_compare(const asn_TYPE_descriptor_t *td, const void *aptr,
-               const void *bptr) {
-    const asn_anonymous_sequence_ *a = _A_CSEQUENCE_FROM_VOID(aptr);
-    const asn_anonymous_sequence_ *b = _A_CSEQUENCE_FROM_VOID(bptr);
-    ssize_t idx;
-
-    if(a && b) {
-        ssize_t common_length = (a->count < b->count ? a->count : b->count);
-        for(idx = 0; idx < common_length; idx++) {
-            int ret = td->elements->type->op->compare_struct(
-                td->elements->type, a->array[idx], b->array[idx]);
-            if(ret) return ret;
-        }
-
-        if(idx < b->count) /* more elements in b */
-            return -1;    /* a is shorter, so put it first */
-        if(idx < a->count) return 1;
-
-    } else if(!a) {
-        return -1;
-    } else if(!b) {
-        return 1;
-    }
-
-    return 0;
-}
-
-
-asn_TYPE_operation_t asn_OP_SEQUENCE_OF = {
-	SEQUENCE_OF_free,
-	SEQUENCE_OF_print,
-	SEQUENCE_OF_compare,
-	SEQUENCE_OF_decode_ber,
-	SEQUENCE_OF_encode_der,
-	SEQUENCE_OF_decode_xer,
-	SEQUENCE_OF_encode_xer,
-#ifdef	ASN_DISABLE_OER_SUPPORT
-	0,
-	0,
-#else
-	SEQUENCE_OF_decode_oer, /* Same as SET OF decoder. */
-	SEQUENCE_OF_encode_oer, /* Same as SET OF encoder */
-#endif  /* ASN_DISABLE_OER_SUPPORT */
-#ifdef ASN_DISABLE_PER_SUPPORT
-	0,
-	0,
-	0,
-	0,
-#else
-	SEQUENCE_OF_decode_uper, /* Same as SET OF decoder */
-	SEQUENCE_OF_encode_uper,
-	SEQUENCE_OF_decode_aper,
-	SEQUENCE_OF_encode_aper,
-#endif /* ASN_DISABLE_PER_SUPPORT */
-	SEQUENCE_OF_random_fill,
-	0	/* Use generic outmost tag fetcher */
-};
-
+#endif	/* ASN_DISABLE_PER_SUPPORT */

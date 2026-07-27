@@ -103,18 +103,6 @@ typedef int(asn_struct_print_f)(
     asn_app_consume_bytes_f *callback, void *app_key);
 
 /*
- * Compatibility typedef for older asn1c-generated code (e.g. XnAP).
- * Those headers declare function prototypes using type_compare_f, which
- * originated in an older Eurecom asn1c skeleton. The functions are never
- * called from the gnb application layer, so a forward declaration suffices.
- */
-struct asn_comp_rval_s;
-typedef struct asn_comp_rval_s asn_comp_rval_t;
-typedef asn_comp_rval_t *(type_compare_f)(
-    struct asn_TYPE_descriptor_s *type_descriptor1, const void *struct_ptr1,
-    struct asn_TYPE_descriptor_s *type_descriptor2, const void *struct_ptr2);
-
-/*
  * Compare two structs between each other.
  * Returns <0 if struct_A is "smaller" than struct_B, >0 if "greater",
  * and =0 if "equal to", for some type-specific, stable definition of
@@ -153,6 +141,19 @@ typedef asn_type_selector_result_t(asn_type_selector_f)(
  * Generalized functions for dealing with the speciic type.
  * May be directly invoked by applications.
  */
+/*
+ * MIGRATION SHIM -- remove when src/asn/xnap is regenerated (plan stage 1).
+ * The XnAP tree is still 0.9.24-era and its headers declare prototypes using
+ * type_compare_f, a typedef from an older Eurecom skeleton. Those functions
+ * are never called from the application layer, so a forward declaration of the
+ * return type is enough to let the gNB C++ sources include XnAP headers.
+ */
+struct asn_comp_rval_s;
+typedef struct asn_comp_rval_s asn_comp_rval_t;
+typedef asn_comp_rval_t *(type_compare_f)(
+    struct asn_TYPE_descriptor_s *type_descriptor1, const void *struct_ptr1,
+    struct asn_TYPE_descriptor_s *type_descriptor2, const void *struct_ptr2);
+
 typedef struct asn_TYPE_operation_s {
     asn_struct_free_f *free_struct;     /* Free the structure */
     asn_struct_print_f *print_struct;   /* Human readable output */

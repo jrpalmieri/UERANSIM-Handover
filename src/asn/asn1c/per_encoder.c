@@ -163,6 +163,11 @@ _uper_encode_flush_outp(asn_per_outp_t *po) {
 	return po->output(po->tmpspace, buf - po->tmpspace, po->op_key);
 }
 
+
+/* --- Aligned PER (APER) support --- */
+
+#ifndef	ASN_DISABLE_PER_SUPPORT
+
 asn_enc_rval_t
 aper_encode_to_buffer(const asn_TYPE_descriptor_t *td,
                       const asn_per_constraints_t *constraints,
@@ -263,3 +268,5 @@ aper_encode(const asn_TYPE_descriptor_t *td,
 
 	return er;
 }
+
+#endif	/* ASN_DISABLE_PER_SUPPORT */

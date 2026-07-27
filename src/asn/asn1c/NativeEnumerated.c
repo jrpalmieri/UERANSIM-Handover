@@ -228,6 +228,11 @@ NativeEnumerated_encode_uper(const asn_TYPE_descriptor_t *td,
 	ASN__ENCODED_OK(er);
 }
 
+
+/* --- Aligned PER (APER) support --- */
+
+#ifndef	ASN_DISABLE_PER_SUPPORT
+
 asn_dec_rval_t
 NativeEnumerated_decode_aper(const asn_codec_ctx_t *opt_codec_ctx,
                              const asn_TYPE_descriptor_t *td,
@@ -365,3 +370,5 @@ NativeEnumerated_encode_aper(const asn_TYPE_descriptor_t *td,
 
 	ASN__ENCODED_OK(er);
 }
+
+#endif	/* ASN_DISABLE_PER_SUPPORT */

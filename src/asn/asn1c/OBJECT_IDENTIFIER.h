@@ -36,8 +36,6 @@ asn_random_fill_f  OBJECT_IDENTIFIER_random_fill;
 #define OBJECT_IDENTIFIER_encode_oer     oer_encode_primitive
 #define OBJECT_IDENTIFIER_decode_uper    OCTET_STRING_decode_uper
 #define OBJECT_IDENTIFIER_encode_uper    OCTET_STRING_encode_uper
-#define OBJECT_IDENTIFIER_decode_aper    OCTET_STRING_decode_aper
-#define OBJECT_IDENTIFIER_encode_aper    OCTET_STRING_encode_aper
 
 /**********************************
  * Some handy conversion routines *
@@ -148,6 +146,10 @@ ssize_t OBJECT_IDENTIFIER_get_single_arc(const uint8_t *arcbuf,
  */
 ssize_t OBJECT_IDENTIFIER_set_single_arc(uint8_t *arcbuf, size_t arcbuf_len,
                                          asn_oid_arc_t arc_value);
+
+/* --- Aligned PER (APER) support --- */
+#define OBJECT_IDENTIFIER_decode_aper    OCTET_STRING_decode_aper
+#define OBJECT_IDENTIFIER_encode_aper    OCTET_STRING_encode_aper
 
 #ifdef __cplusplus
 }

@@ -16,14 +16,12 @@ asn_TYPE_operation_t asn_OP_OPEN_TYPE = {
 	OPEN_TYPE_encode_der,
 	OPEN_TYPE_decode_xer,
 	OPEN_TYPE_encode_xer,
-#ifdef ASN_DISABLE_OER_SUPPORT
- 	0, 0,	/* No OER support, use "-gen-OER" to enable */
-#else
-	OPEN_TYPE_decode_oer,
-	OPEN_TYPE_encode_oer,
-#endif
+	0, 0,	/* No OER support, use "-gen-OER" to enable */
 #ifdef ASN_DISABLE_PER_SUPPORT
-	0, 0, 0, 0,
+	0,
+	0,
+	0,
+	0,
 #else
 	OPEN_TYPE_decode_uper,
 	OPEN_TYPE_encode_uper,
@@ -31,7 +29,7 @@ asn_TYPE_operation_t asn_OP_OPEN_TYPE = {
 	OPEN_TYPE_encode_aper,
 #endif
 	0,  /* Random fill is not supported for open type */
-	0	/* Use generic outmost tag fetcher */
+	0,	/* Use generic outmost tag fetcher */
 };
 
 #undef  ADVANCE
@@ -65,7 +63,12 @@ OPEN_TYPE_ber_get(const asn_codec_ctx_t *opt_codec_ctx,
     }
 
     selected = elm->type_selector(td, sptr);
-    if(!selected.presence_index) {
+    if(!selected.presence_index || !selected.type_descriptor) {
+        /*
+         * The constraining value does not select any type, or selects a
+         * row of the information object set which does not define a type
+         * for this open type field. Either way, there's nothing to decode.
+         */
         ASN__DECODE_FAILED;
     }
 
@@ -114,12 +117,14 @@ OPEN_TYPE_ber_get(const asn_codec_ctx_t *opt_codec_ctx,
     }
 
     if(*memb_ptr2) {
+        const asn_CHOICE_specifics_t *specs = elm->type->specifics;
         if(elm->flags & ATF_POINTER) {
             ASN_STRUCT_FREE(*selected.type_descriptor, inner_value);
             *memb_ptr2 = NULL;
         } else {
-            ASN_STRUCT_RESET(*selected.type_descriptor,
+            ASN_STRUCT_FREE_CONTENTS_ONLY(*selected.type_descriptor,
                                           inner_value);
+            memset(*memb_ptr2, 0, specs->struct_size);
         }
     }
     return rv;
@@ -151,7 +156,12 @@ OPEN_TYPE_xer_get(const asn_codec_ctx_t *opt_codec_ctx,
     }
 
     selected = elm->type_selector(td, sptr);
-    if(!selected.presence_index) {
+    if(!selected.presence_index || !selected.type_descriptor) {
+        /*
+         * The constraining value does not select any type, or selects a
+         * row of the information object set which does not define a type
+         * for this open type field. Either way, there's nothing to decode.
+         */
         ASN__DECODE_FAILED;
     }
 
@@ -233,12 +243,14 @@ OPEN_TYPE_xer_get(const asn_codec_ctx_t *opt_codec_ctx,
          * will have to be restarted.
          */
         if(*memb_ptr2) {
+            const asn_CHOICE_specifics_t *specs = elm->type->specifics;
             if(elm->flags & ATF_POINTER) {
                 ASN_STRUCT_FREE(*selected.type_descriptor, inner_value);
                 *memb_ptr2 = NULL;
             } else {
-                ASN_STRUCT_RESET(*selected.type_descriptor,
+                ASN_STRUCT_FREE_CONTENTS_ONLY(*selected.type_descriptor,
                                               inner_value);
+                memset(*memb_ptr2, 0, specs->struct_size);
             }
         }
         return rv;
@@ -307,7 +319,12 @@ OPEN_TYPE_uper_get(const asn_codec_ctx_t *opt_codec_ctx,
     }
 
     selected = elm->type_selector(td, sptr);
-    if(!selected.presence_index) {
+    if(!selected.presence_index || !selected.type_descriptor) {
+        /*
+         * The constraining value does not select any type, or selects a
+         * row of the information object set which does not define a type
+         * for this open type field. Either way, there's nothing to decode.
+         */
         ASN__DECODE_FAILED;
     }
 
@@ -346,12 +363,14 @@ OPEN_TYPE_uper_get(const asn_codec_ctx_t *opt_codec_ctx,
     case RC_WMORE:
     case RC_FAIL:
         if(*memb_ptr2) {
+            const asn_CHOICE_specifics_t *specs = elm->type->specifics;
             if(elm->flags & ATF_POINTER) {
                 ASN_STRUCT_FREE(*selected.type_descriptor, inner_value);
                 *memb_ptr2 = NULL;
             } else {
-                ASN_STRUCT_RESET(*selected.type_descriptor,
+                ASN_STRUCT_FREE_CONTENTS_ONLY(*selected.type_descriptor,
                                               inner_value);
+                memset(*memb_ptr2, 0, specs->struct_size);
             }
         }
     }
@@ -395,6 +414,14 @@ OPEN_TYPE_encode_uper(const asn_TYPE_descriptor_t *td,
     er.encoded = 0;
     ASN__ENCODED_OK(er);
 }
+
+
+#endif  /* ASN_DISABLE_PER_SUPPORT */
+
+
+/* --- Aligned PER (APER) support --- */
+
+#ifndef	ASN_DISABLE_PER_SUPPORT
 
 asn_dec_rval_t
 OPEN_TYPE_aper_get(const asn_codec_ctx_t *opt_codec_ctx,
@@ -506,4 +533,4 @@ OPEN_TYPE_encode_aper(const asn_TYPE_descriptor_t *td,
     ASN__ENCODED_OK(er);
 }
 
-#endif  /* ASN_DISABLE_PER_SUPPORT */
+#endif	/* ASN_DISABLE_PER_SUPPORT */

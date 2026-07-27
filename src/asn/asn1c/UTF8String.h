@@ -29,8 +29,6 @@ asn_random_fill_f  UTF8String_random_fill;
 #define UTF8String_encode_xer   OCTET_STRING_encode_xer_utf8
 #define UTF8String_decode_uper  OCTET_STRING_decode_uper
 #define UTF8String_encode_uper  OCTET_STRING_encode_uper
-#define UTF8String_decode_aper  OCTET_STRING_decode_aper
-#define UTF8String_encode_aper  OCTET_STRING_encode_aper
 
 /*
  * Returns length of the given UTF-8 string in characters,
@@ -55,6 +53,10 @@ ssize_t UTF8String_length(const UTF8String_t *st);
  * 	UTF8String_length(const UTF8String_t *st);
  */
 size_t UTF8String_to_wcs(const UTF8String_t *st, uint32_t *dst, size_t dstlen);
+
+/* --- Aligned PER (APER) support --- */
+#define UTF8String_decode_aper  OCTET_STRING_decode_aper
+#define UTF8String_encode_aper  OCTET_STRING_encode_aper
 
 #ifdef __cplusplus
 }
