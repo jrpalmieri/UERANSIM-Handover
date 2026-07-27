@@ -1,9 +1,9 @@
 # ASN.1 Release-18 Migration Plan (RRC / NGAP / XnAP)
 
-Status: **stage 0 complete**; **stage 1 attempted and backed out** (2026-07-27).
+Status: **stages 0 and 1 complete** (2026-07-27). Stages 2–4 not started.
 Author: analysis of `UERANSIM-Handover` @ `xn` (a68a5fad) and `/home/joe/repos/asn1c-r18` @ e835ff87, 2026-07-27.
 
-Stage 0 results are in [§6](#6-stage-0-as-built); what the stage 1 attempt found is in [§7](#7-stage-1-what-the-attempt-found).
+Stage 0 results are in [§6](#6-stage-0-as-built), stage 1 in [§7](#7-stage-1-as-built).
 
 ---
 
@@ -361,11 +361,11 @@ oracle; if the gNB suite is refreshed later it would make a good second one.
 
 ---
 
-## 7. Stage 1: what the attempt found
+## 7. Stage 1 as built
 
-Attempted 2026-07-27. **Not landed** — the tree is back at the stage-0 state and
-builds clean. Two things were learned, one of them a compiler defect that had to
-be fixed before any tree can be regenerated.
+Completed 2026-07-27. XnAP is regenerated from `xnap-rel18-v18_8.asn1` with
+asn1c-r18, the private 0.9.24 skeleton copy is gone, and two gNB processes
+complete the XnSetup handshake over SCTP.
 
 ### 7.1 Fixed: recursion-safe names dropped the parameterization suffix
 
@@ -383,7 +383,7 @@ clean. One recorded expectation (test 155) changed by two lines and was
 regenerated — where the element is a typedef alias rather than a struct, neither
 the old nor the new name is a real tag, so that case is unchanged in substance.
 
-### 7.2 The blocker: XnAP IE values change representation
+### 7.2 XnAP IE values change representation
 
 The 0.9.24 fork had no information-object-class support, so every
 `ProtocolIE-Field.value` was a plain `ANY_t` and the gNB packed IEs by
@@ -398,7 +398,8 @@ struct ASN_XNAP_ProtocolIE_Field_14202P81__value {
 ```
 
 There is no flag to get the old shape back, and it is the better
-representation — but it means `src/gnb/xn` must be **rewritten, not adapted**:
+representation — but it meant `src/gnb/xn` had to be **rewritten, not adapted**.
+What that came to:
 
 | Work | Count |
 | ---- | ----- |
@@ -421,25 +422,61 @@ Each message must use the container/field instance pair for *its* IE set:
 | XnSetupRequest | `..._14197P37` | `..._14202P118` |
 | XnSetupResponse | `..._14197P38` | `..._14202P119` |
 
-Ownership changes with it: the union holds values, so an IE is built in place
-rather than serialised into an `ANY_t`, and the error paths that freed a
-half-built message on encode failure disappear (there is no encode step left to
-fail). Mechanically this matches the "shallow move, free the shell" idiom the
-file already uses everywhere.
+Ownership changed with it. The union holds the value, not a serialised copy, so
+an IE is filled in place and the shell is released with `free()` — never
+`asn::Free()`, which would take the contents with it. The error paths that freed
+a half-built message on encode failure are gone, because there is no longer an
+encoding step that can fail. On the receive side the win is larger: the open
+type is decoded in place with the enclosing PDU, so the per-IE `Decode()` calls
+disappear entirely and the values are borrowed from the union rather than owned.
 
-### 7.3 Why it was stopped rather than pushed through
+### 7.3 How it was verified
 
-Nothing verifies this rewrite. XnAP has no golden vectors (the captures contain
-no Xn traffic), `tests/gnb` mostly skips, and by §1.3 the Xn path cannot have
-run end-to-end in its current form. A ~50-site ownership rewrite that is only
-known to *compile* would be a poor thing to declare complete, so the working
-tree was restored instead. Recommended order when resuming:
+There is no golden source for XnAP: these messages never reach the core network
+or a UE, and the pre-Release-18 implementation is not authoritative either (it
+could not have worked — §1.3). Verification is therefore behavioural, and the
+bar agreed with the project owner is a working exchange between two gNB
+instances.
 
-1. give Xn a golden-vector corpus first — build one by encoding each message
-   the gNB produces and recording the bytes, so the rewrite has an oracle;
-2. convert one message end to end (HandoverRequest is the largest, XnSetup the
-   smallest) and confirm the bytes match;
-3. then the rest, message by message.
+[tests/xn_setup_handshake.py](../tests/xn_setup_handshake.py) brings up two gNB
+processes against the fake AMF, points them at each other over Xn, and requires
+that the request and the response are each sent *and decoded*, and that the
+values each side reports match what the **other** side was configured with:
+
+```
+gnb1  XnSetupRequest sent to gnbId=2
+gnb2  XnSetupRequest from gNB 1: nci=17 pci=17 tacs=1 plmns=1 amfRegions=1
+gnb2  XnSetupResponse sent to clientId=-2
+gnb1  XnSetupResponse from gnbId=2: nci=34 pci=34 tacs=1 plmns=1 amfRegions=1
+```
+
+`nci=17` is gNB1's `0x011` and `nci=34` is gNB2's `0x022`, each read back by the
+*other* process — so those fields survived encode → APER → SCTP → decode in both
+directions. That is what makes this more than a smoke test; the two ends are
+separate processes.
+
+Also unchanged by stage 1: the 1156 NGAP APER vectors, `rrc_d1_probe`,
+`rrc_reference_location_tests`, `sat_lib_tests`, `sat_time_tests`.
+
+### 7.4 What is *not* verified
+
+The handover procedures — HandoverRequest/Acknowledge, SNStatusTransfer,
+UEContextRelease, HandoverCancel, HandoverSuccess and the CHO extensions — were
+converted to the same idiom and **compile**, but nothing exercises them. They
+are as unproven as they were before the migration, with one difference: they no
+longer read descriptors through a mismatched struct layout. Getting a UE handed
+over between two gNBs is the natural next check.
+
+Two conversions there needed more than a mechanical rewrite and are worth a
+second look when that happens:
+
+- `sendHandoverCancel` / `receiveHandoverCancel` build or parse *either*
+  HandoverCancel *or* ConditionalHandoverCancel, which are now distinct C types
+  (`_14202P86` vs `_14202P88`). The IEs are built per branch, and the receive
+  side walks the container through a generic lambda.
+- `BitRate` is `INTEGER (0..4000000000000)` and so generates as `INTEGER_t`, not
+  `long`. UE and session AMBR are boxed with `asn_uint642INTEGER` on the way out
+  and unboxed with `asn_INTEGER2umax` on the way in.
 
 ## 8. Open items for you
 
