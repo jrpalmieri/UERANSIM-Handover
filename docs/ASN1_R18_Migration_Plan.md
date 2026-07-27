@@ -351,11 +351,13 @@ The UE suite's 26 pre-existing failures are unrelated to ASN.1 (the first one,
 and reproduce exactly on the pre-swap runtime; they were not investigated
 further here.
 
-`pytest tests/gnb` — the suite with the fake AMF, which would exercise the
-ported APER end-to-end — **cannot run in this environment**: `pysctp` is not
-installed (it needs `libsctp-dev`), so all 38 tests skip. Installing it would
-make the strongest available APER regression test runnable and is worth doing
-before stage 2.
+`pytest tests/gnb` — the suite with the fake AMF — gave 3 passed, 35 skipped,
+2 errors once `pysctp` was installed. Its fixtures skip when the gNB does not
+complete NG Setup against the fake AMF inside 15 s, so most of the suite never
+runs. Per the project owner these tests predate the current implementation and
+may no longer describe it, so this is **not** treated as a signal either way,
+and stage 0 does not rest on it. The 1156-vector corpus remains the APER
+oracle; if the gNB suite is refreshed later it would make a good second one.
 
 ---
 
