@@ -94,6 +94,12 @@ if(BUILD_UNIT_TESTS)
     target_link_libraries(rrc_reference_location_tests asn-rrc)
     target_link_libraries(rrc_reference_location_tests common-lib)
 
+    # Golden-vector harness: detects any change in ASN.1 codec behaviour when
+    # the skeleton runtime is replaced. See docs/ASN1_R18_Migration_Plan.md.
+    add_executable(asn1_golden tests/asn1_golden.cpp)
+    target_compile_options(asn1_golden PRIVATE -Wall -Wextra -pedantic)
+    target_link_libraries(asn1_golden asn-ngap)
+
     add_executable(rrc_d1_probe tools/rrc_d1_probe.cpp)
     target_compile_options(rrc_d1_probe PRIVATE -Wall -Wextra -pedantic)
     target_compile_definitions(rrc_d1_probe PRIVATE ASN_EMIT_DEBUG=1)
