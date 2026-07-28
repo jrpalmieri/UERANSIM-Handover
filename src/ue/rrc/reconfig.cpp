@@ -16,8 +16,8 @@
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-v1540-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-v1560-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-v1610-IEs.h>
-#include <asn/rrc/ASN_RRC_ConditionalReconfiguration.h>
-#include <asn/rrc/ASN_RRC_CondReconfigToAddMod.h>
+#include <asn/rrc/ASN_RRC_ConditionalReconfiguration-r16.h>
+#include <asn/rrc/ASN_RRC_CondReconfigToAddMod-r16.h>
 #include <asn/rrc/ASN_RRC_RRCReconfigurationComplete.h>
 #include <asn/rrc/ASN_RRC_RRCReconfigurationComplete-IEs.h>
 #include <asn/rrc/ASN_RRC_CellGroupConfig.h>
@@ -36,6 +36,7 @@
 #include <asn/rrc/ASN_RRC_ReportConfigToAddModList.h>
 #include <asn/rrc/ASN_RRC_ReportConfigToAddMod.h>
 #include <asn/rrc/ASN_RRC_ReportConfigNR.h>
+#include <asn/rrc/ASN_RRC_CondTriggerConfig-r16.h>
 #include <asn/rrc/ASN_RRC_EventTriggerConfig.h>
 #include <asn/rrc/ASN_RRC_UL-DCCH-Message.h>
 #include <asn/rrc/ASN_RRC_UL-DCCH-MessageType.h>
@@ -245,7 +246,7 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
                         rc.d1_referenceLocation1);
                     referenceLocationFromAsnValue(d1->referenceLocation2_r17,
                         rc.d1_referenceLocation2);
-                    rc.ttt = static_cast<E_TTT_ms>(d1->timeToTrigger);
+                    rc.ttt = static_cast<E_TTT_ms>(d1->timeToTrigger_r17);
 
                     break;
                 }
@@ -271,7 +272,8 @@ static UeMeasConfig parseMeasConfig(const ASN_RRC_MeasConfig &mc)
 
                     rc.eventKind = HandoverEventType::CondT1;
                     rc.condT1_durationSec = durationFromASNValue(t1->duration_r17);
-                    rc.condT1_thresholdSecTS = t1ThresholdFromASNValue(t1->t1_Threshold_r17);
+                    rc.condT1_thresholdSecTS = t1ThresholdFromASNValue(
+                        static_cast<long>(asn::GetUnsigned64(t1->t1_Threshold_r17)));
                     rc.ttt = static_cast<E_TTT_ms>(E_TTT_ms::ms0);   // CondT1 doesn't have a TTT, it is satisfied immediately
                     break;
                 }
@@ -397,7 +399,7 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
     int hoNewCRNTI = 0;
     int hoT304Ms = 0;
     bool hoHasRachConfig = false;
-    const ASN_RRC_ConditionalReconfiguration *pendingConditionalReconfig = nullptr;
+    const ASN_RRC_ConditionalReconfiguration_r16 *pendingConditionalReconfig = nullptr;
 
     // Walk the nonCriticalExtension chain: v1530 → v1540 → v1560 → v1610 for CHO
     if (ies->nonCriticalExtension)
@@ -479,13 +481,13 @@ void UeRrcTask::receiveRrcReconfiguration(const ASN_RRC_RRCReconfiguration &msg)
             v1540 ? "yes" : "no",
             v1560 ? "yes" : "no",
             v1610 ? "yes" : "no",
-            (v1610 && v1610->conditionalReconfiguration) ? "yes" : "no");
+            (v1610 && v1610->conditionalReconfiguration_r16) ? "yes" : "no");
 
         // check for a ConditionalReconfiguration IE in the v1610 extension, which indicates 
         //   a CHO is pending and we should parse the CHO IEs 
-        if (v1610 && v1610->conditionalReconfiguration)
+        if (v1610 && v1610->conditionalReconfiguration_r16)
         {
-            pendingConditionalReconfig = v1610->conditionalReconfiguration;
+            pendingConditionalReconfig = v1610->conditionalReconfiguration_r16;
         }
         else if (v1610)
         {

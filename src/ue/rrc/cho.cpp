@@ -49,10 +49,11 @@
 #include <utils/constants.hpp>
 #include <lib/sat/sat_time.hpp>
 
-#include <asn/rrc/ASN_RRC_ConditionalReconfiguration.h>
-#include <asn/rrc/ASN_RRC_CondReconfigToAddMod.h>
+#include <asn/rrc/ASN_RRC_ConditionalReconfiguration-r16.h>
+#include <asn/rrc/ASN_RRC_CondReconfigToAddMod-r16.h>
+#include <asn/rrc/ASN_RRC_CondReconfigToAddModList-r16.h>
+#include <asn/rrc/ASN_RRC_CondReconfigToRemoveList-r16.h>
 #include <asn/rrc/ASN_RRC_CondTriggerConfig-r16.h>
-#include <asn/rrc/ASN_RRC_NTN-TriggerConfig-r17.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-IEs.h>
 #include <asn/rrc/ASN_RRC_RRCReconfiguration-v1530-IEs.h>
@@ -196,7 +197,7 @@ static bool upsertChoCandidate(std::vector<ChoCandidate> &candidates, ChoCandida
  * 
  */
 void UeRrcTask::parseConditionalReconfiguration(
-    const ASN_RRC_ConditionalReconfiguration *condReconfig)
+    const ASN_RRC_ConditionalReconfiguration_r16 *condReconfig)
 {
     if (!condReconfig)
     {
@@ -208,9 +209,9 @@ void UeRrcTask::parseConditionalReconfiguration(
     int removeMissCount = 0;
 
     // Apply remove list first, then add/modify list.
-    if (condReconfig->condReconfigToRemoveList)
+    if (condReconfig->condReconfigToRemoveList_r16)
     {
-        auto &removeList = condReconfig->condReconfigToRemoveList->list;
+        auto &removeList = condReconfig->condReconfigToRemoveList_r16->list;
         std::unordered_set<int> seenRemoveIds;
         if (removeList.count > MAX_COND_RECONFIG_REMOVE_ENTRIES)
         {
@@ -258,20 +259,20 @@ void UeRrcTask::parseConditionalReconfiguration(
         }
     }
 
-    int addModCount = condReconfig->condReconfigToAddModList ?
-        condReconfig->condReconfigToAddModList->list.count : 0;
+    int addModCount = condReconfig->condReconfigToAddModList_r16 ?
+        condReconfig->condReconfigToAddModList_r16->list.count : 0;
     m_logger->info("ConditionalReconfiguration received: addMod=%d remove=%d",
                    addModCount, removedCount);
 
     // if addMod list is not present, then we are done after applying the remove list
-    if (!condReconfig->condReconfigToAddModList)
+    if (!condReconfig->condReconfigToAddModList_r16)
     {
         m_logger->info("ConditionalReconfiguration applied: removed=%d removeMiss=%d activeCandidates=%zu",
                        removedCount, removeMissCount, m_choCandidates.size());
         return;
     }
 
-    auto &addList = condReconfig->condReconfigToAddModList->list;
+    auto &addList = condReconfig->condReconfigToAddModList_r16->list;
     if (addList.count > MAX_COND_RECONFIG_ADDMOD_ENTRIES)
     {
         m_logger->warn("ConditionalReconfiguration add/mod list has %d entries; processing first %d",
@@ -294,7 +295,7 @@ void UeRrcTask::parseConditionalReconfiguration(
         }
 
         ChoCandidate cand{};
-        cand.candidateId = static_cast<int>(item->condReconfigId);
+        cand.candidateId = static_cast<int>(item->condReconfigId_r16);
         if (cand.candidateId < MIN_COND_RECONFIG_ID || cand.candidateId > MAX_COND_RECONFIG_ID)
         {
             m_logger->warn("CHO candidate skipped: invalid condReconfigId=%d (valid range=%d..%d)",
@@ -314,9 +315,9 @@ void UeRrcTask::parseConditionalReconfiguration(
 
         // --- Build condition group from condExecutionCond MeasIds ---
         // Per TS 38.331: multiple MeasIds in one condExecutionCond = AND logic.
-        if (item->condExecutionCond)
+        if (item->condExecutionCond_r16)
         {
-            auto &measIdList = item->condExecutionCond->list;
+            auto &measIdList = item->condExecutionCond_r16->list;
             std::unordered_set<int> seenMeasIds;
             if (measIdList.count > MAX_COND_EXEC_MEAS_IDS)
             {
@@ -387,7 +388,7 @@ void UeRrcTask::parseConditionalReconfiguration(
         // Decode the nested RRCReconfiguration from condRRCReconfig to extract the target NCI, C-RNTI, and T304 for 
         //  the candidate target cell.
 
-        if (!item->condRRCReconfig || item->condRRCReconfig->size == 0)
+        if (!item->condRRCReconfig_r16 || item->condRRCReconfig_r16->size == 0)
         {
             m_logger->warn("CHO candidate %d: missing condRRCReconfig - skipping",
                            cand.candidateId);
@@ -395,16 +396,16 @@ void UeRrcTask::parseConditionalReconfiguration(
             continue;
         }
 
-        // if (item->condRRCReconfig->size > MAX_COND_RRC_RECONFIG_BYTES)
+        // if (item->condRRCReconfig_r16->size > MAX_COND_RRC_RECONFIG_BYTES)
         // {
         //     m_logger->warn("CHO candidate %d: condRRCReconfig too large (%zu bytes) – skipping",
-        //                    cand.candidateId, static_cast<size_t>(item->condRRCReconfig->size));
+        //                    cand.candidateId, static_cast<size_t>(item->condRRCReconfig_r16->size));
         //     skippedCount++;
         //     continue;
         // }
 
         auto *innerReconfig = rrc::encode::Decode<ASN_RRC_RRCReconfiguration>(
-            asn_DEF_ASN_RRC_RRCReconfiguration, *item->condRRCReconfig);
+            asn_DEF_ASN_RRC_RRCReconfiguration, *item->condRRCReconfig_r16);
 
         if (!innerReconfig)
         {

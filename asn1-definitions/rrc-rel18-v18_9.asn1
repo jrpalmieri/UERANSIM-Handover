@@ -9910,7 +9910,15 @@ MPE-Config-FR2-r17 ::=              SEQUENCE {
 -- TAG-PHR-CONFIG-STOP
 -- TAG-PHYSCELLID-START
 
-PhysCellId ::=                      INTEGER (0..1007)
+-- LOCAL DEVIATION FROM TS 38.331. See docs/ASN1_R18_Migration_Plan.md section 9.2.
+-- The specification defines:   PhysCellId ::= INTEGER (0..1007)
+-- This project currently transports the 36-bit NCI in physCellId (handover commands,
+-- measurement reports, CHO containers), which does not fit that constraint. Dropping the
+-- constraint makes UPER encode the field as a length-prefixed integer, so a 64-bit value
+-- survives the round trip. Both peers here are built from these definitions, so they agree;
+-- a real UE or gNB would not. Restore the line above once the NCI moves to an IE that can
+-- carry it.
+PhysCellId ::=                      INTEGER
 
 -- TAG-PHYSCELLID-STOP
 -- TAG-PHYSICALCELLGROUPCONFIG-START

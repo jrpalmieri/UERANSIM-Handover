@@ -77,7 +77,7 @@ static OctetString encodeSib1(int mcc, int mnc, int tac, int64_t nci)
     asn::SetBitStringInt<24>(tac, *plmnInfo->trackingAreaCode);
     asn::SetBitStringLong<36>(nci, plmnInfo->cellIdentity);
     asn::SequenceAdd(plmnInfo->plmn_IdentityList, asn::rrc::NewPlmnId(plmn));
-    asn::SequenceAdd(sib1.cellAccessRelatedInfo.plmn_IdentityList, plmnInfo);
+    asn::SequenceAdd(sib1.cellAccessRelatedInfo.plmn_IdentityInfoList, plmnInfo);
 
     auto result = rrc::encode::EncodeS(asn_DEF_ASN_RRC_BCCH_DL_SCH_Message, pdu);
     asn::Free(asn_DEF_ASN_RRC_BCCH_DL_SCH_Message, pdu);

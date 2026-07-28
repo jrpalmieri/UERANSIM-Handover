@@ -53,10 +53,9 @@
 #include <asn/rrc/ASN_RRC_SpCellConfig.h>
 #include <asn/rrc/ASN_RRC_ReconfigurationWithSync.h>
 #include <asn/rrc/ASN_RRC_ServingCellConfigCommon.h>
-#include <asn/rrc/ASN_RRC_ConditionalReconfiguration.h>
-#include <asn/rrc/ASN_RRC_CondReconfigToAddMod.h>
+#include <asn/rrc/ASN_RRC_ConditionalReconfiguration-r16.h>
+#include <asn/rrc/ASN_RRC_CondReconfigToAddMod-r16.h>
 #include <asn/rrc/ASN_RRC_CondTriggerConfig-r16.h>
-#include <asn/rrc/ASN_RRC_NTN-TriggerConfig-r17.h>
 #include <asn/rrc/ASN_RRC_DL-DCCH-Message.h>
 #include <asn/rrc/ASN_RRC_DL-DCCH-MessageType.h>
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
@@ -472,7 +471,7 @@ std::vector<long> GnbRrcTask::createMeasConfig(
                 d1->hysteresisLocation_r17 = nr::rrc::common::hysteresisLocationToASNValue(event.d1_hysteresisLocation);
 
                 d1->reportOnLeave_r17 = true;
-                d1->timeToTrigger = tttMsToASNValue(event.ttt);
+                d1->timeToTrigger_r17 = tttMsToASNValue(event.ttt);
 
                 reportConfig.d1_distanceThreshFromReference1 = event.d1_distanceThreshFromReference1;
                 reportConfig.d1_distanceThreshFromReference2 = event.d1_distanceThreshFromReference2;
@@ -577,7 +576,11 @@ std::vector<long> GnbRrcTask::createMeasConfig(
 
                 auto *t1 = ctc->condEventId.choice.condEventT1_r17;
                 // set trigger params from provided Trigger object
-                t1->t1_Threshold_r17 = nr::rrc::common::t1ThresholdToASNValue(event.condT1_thresholdSecTS);
+                // t1-Threshold-r17 is INTEGER (0..549755813887), which asn1c represents as an
+                // arbitrary-precision INTEGER_t rather than a native long.
+                asn::SetUnsigned64(
+                    static_cast<uint64_t>(nr::rrc::common::t1ThresholdToASNValue(event.condT1_thresholdSecTS)),
+                    t1->t1_Threshold_r17);
                 t1->duration_r17 = nr::rrc::common::durationToASNValue(event.condT1_durationSec);
 
                 reportConfig.condT1_thresholdSecTS = event.condT1_thresholdSecTS;

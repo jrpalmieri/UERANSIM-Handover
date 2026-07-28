@@ -12,10 +12,15 @@
 //   - Distance threshold for CHO event D1 triggering
 //   - Synchronisation validity duration
 //
-// Since UERANSIM's ASN.1 library is Rel-15-based and does not include native
-// SIB19 types, these structures are defined at the simulation level and
-// populated via a custom binary protocol (DL_SIB19 channel), mirroring the
-// approach used for CHO configuration (DL_CHO).
+// These structures are defined at the simulation level and populated via a custom
+// binary protocol (DL_SIB19 channel) rather than by encoding ASN_RRC_SIB19-r17.
+// That predates the Release-18 ASN.1 migration, which did bring the standard
+// SIB19-r17 / EphemerisInfo-r17 / NTN-Config-r17 types into src/asn/rrc; they are
+// generated and available, but nothing encodes them yet. Moving the NTN broadcast
+// onto them is a larger change than the migration itself (it touches the gNB
+// broadcast path, the DL_SIB19 channel, and the TLE-carrying entry format, which
+// has no standard counterpart), so the custom encoding below stays the active path.
+// See docs/ASN1_R18_Migration_Plan.md section 9.3.
 //
 
 #pragma once

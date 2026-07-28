@@ -204,7 +204,7 @@ OctetString buildD1Pdu(bool useFixedReference)
     d1->distanceThreshFromReference2_r17 = 5000;
     d1->reportOnLeave_r17 = false;
     d1->hysteresisLocation_r17 = 0;
-    d1->timeToTrigger = ASN_RRC_TimeToTrigger_ms160;
+    d1->timeToTrigger_r17 = ASN_RRC_TimeToTrigger_ms160;
 
     if (useFixedReference)
     {

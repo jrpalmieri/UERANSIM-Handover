@@ -1,9 +1,10 @@
 # ASN.1 Release-18 Migration Plan (RRC / NGAP / XnAP)
 
-Status: **stages 0, 1 and 2 complete** (2026-07-27). Stages 3–4 not started.
+Status: **stages 0–3 complete** (2026-07-28). Stage 4 (consolidation) not started.
 Author: analysis of `UERANSIM-Handover` @ `xn` (a68a5fad) and `/home/joe/repos/asn1c-r18` @ e835ff87, 2026-07-27.
 
-Stage 0 results are in [§6](#6-stage-0-as-built), stage 1 in [§7](#7-stage-1-as-built), stage 2 in [§8](#8-stage-2-as-built).
+Stage 0 results are in [§6](#6-stage-0-as-built), stage 1 in [§7](#7-stage-1-as-built),
+stage 2 in [§8](#8-stage-2-as-built), stage 3 in [§9](#9-stage-3-as-built).
 
 ---
 
@@ -553,12 +554,162 @@ handover, paging — are only covered to the extent the captured corpus exercise
 their encodings. Nothing drives them end to end here, because the suite that
 would (`tests/gnb`) predates the current implementation.
 
-## 9. Open items for you
+## 9. Stage 3 as built
 
-1. **Rel-15 fallback** — is there any reason to keep `src/asn/rrc_backup_r15`, or is deletion in Stage 3 fine?
-2. **RRC hand-edits** — do you want them reconstructed feature-for-feature on R18, or is the intent that
-   stock R18 definitions supersede them and the C++ adapts?
+Completed 2026-07-28. `src/asn/rrc` is regenerated from `rrc-rel18-v18_9.asn1`:
+800 types become 2630, and every hand-edited and Rel-17-spliced file is gone.
+`src/asn/rrc_backup_r15` and the unprefixed strays (`OnDemandSIB-Request-r16`,
+`T316-r16`) are deleted.
+
+### 9.1 The hand edits were reconstructions, and R18 supersedes all of them
+
+The eight hand-edited files were audited field by field against stock R18 before
+anything was deleted. Every one of them turned out to be an attempt to
+hand-write a definition that R18 has properly, and **no edit encoded behaviour
+that R18 cannot express** — so all were retired rather than reconstructed.
+
+| Hand-edited file | Relationship to stock R18 |
+| ---------------- | ------------------------- |
+| `RRCReconfiguration-v1610-IEs` | field-for-field identical, same order, 13 members |
+| `ConditionalReconfiguration` | subset; renamed `-r16`, lists became named types |
+| `ReportConfigNR` | same alternatives in the same order; `ext1{reportSFTD}` is a real `reportSFTD` alternative in R18, so `condTriggerConfig_r16` keeps its index |
+| `CondTriggerConfig-r16` | subset; `ReferenceLocation-r17` and `HysteresisLocation-r17` turn out to be typedefs of exactly the `OCTET_STRING_t` / `long` the edit used |
+| `EventTriggerConfig` | subset, but see below |
+| `CondReconfigToAddMod` | subset, plus two invented fields |
+| `RRCReconfiguration-v1700-IEs` | subset, with `OCTET_STRING_t` placeholders |
+| `NTN-TriggerConfig-r17` | not a 38.331 type at all |
+
+Three of those need more than a table row:
+
+- **`EventTriggerConfig` put `eventD1-r17` in the extension root.** The edit added
+  it as a 7th root alternative; in the specification it is the *third extension
+  addition*, after `eventX1-r17` and `eventX2-r17`. The C identifiers are the same
+  either way, so nothing failed to compile — but the encoded choice index differed
+  and the alternative was not wrapped in an open type. This was silently
+  non-conformant and is now fixed. It is also the reason `rrc_d1_probe`'s D1 PDUs
+  grew from 41 to 43 bytes.
+- **`CondReconfigToAddMod` invented two fields** — `condExecutionPriority_r17` and a
+  direct `condTriggerConfig_r16` member. Neither exists in 38.331 (the trigger
+  config reaches a candidate through `condExecutionCond` → `MeasId` →
+  `ReportConfigNR`, which is what the C++ actually does). Neither is read or
+  written anywhere outside the struct definition; `condExecutionPriority` survives
+  only in a comment in [cho.cpp](../src/ue/rrc/cho.cpp). Dropping them changes no
+  behaviour.
+- **`RRCReconfiguration-v1700-IEs` used `OCTET_STRING_t` as a placeholder for ten
+  of its twelve fields** — seven `SetupRelease` instantiations, plus
+  `otherConfig-v1700`, `appLayerMeasConfig-r17` and `nonCriticalExtension`. An
+  OCTET STRING does not encode like the type it stands in for, so those fields
+  could never have round-tripped; R18 gives them their real types. (Only
+  `dedicatedPagingDelivery-r17` is genuinely an OCTET STRING.)
+
+`NTN-TriggerConfig-r17` was included by three translation units and referenced by
+none, so it went with the includes.
+
+The call-site work was small. Only four type names disappeared
+(`ConditionalReconfiguration`, `CondReconfigToAddMod` and the two nested list
+structs, which are named types in R18), plus a handful of field renames
+(`conditionalReconfiguration` → `_r16` and friends), `plmn_IdentityList` →
+`plmn_IdentityInfoList` on `CellAccessRelatedInfo`, and `timeToTrigger` →
+`timeToTrigger_r17` inside `eventD1-r17`. Two places needed real changes:
+`t1-Threshold-r17` is `INTEGER (0..549755813887)`, which asn1c represents as an
+arbitrary-precision `INTEGER_t` rather than a native `long`, so the CondT1
+encode/decode path goes through `asn::SetUnsigned64` / `asn::GetUnsigned64`; and
+because `-findirect-choice` headers only forward-declare CHOICE members,
+[reconfig.cpp](../src/ue/rrc/reconfig.cpp) needed an explicit
+`CondTriggerConfig-r16` include that the hand-edited `ReportConfigNR.h` used to
+supply transitively.
+
+### 9.2 `PhysCellId` constraint dropped, deliberately and visibly
+
+`docs/RRC_summary.md` §4 records that this project transports the 36-bit NCI in
+`physCellId`, which the specification constrains to `INTEGER (0..1007)`. That is
+a real defect and fixing it properly means moving the NCI to an IE that can carry
+it — out of scope for a codec migration.
+
+As an interim measure, and at your direction, the constraint is **removed in the
+ASN.1 input**, with a comment at [rrc-rel18-v18_9.asn1:9911](../asn1-definitions/rrc-rel18-v18_9.asn1#L9911)
+saying so and quoting the original line. `PhysCellId ::= INTEGER` still generates
+as a native `long` (a bounded 36-bit range would have generated as `INTEGER_t`
+and forced call-site churn), and UPER now encodes the field as a length-prefixed
+integer, so a 64-bit value survives the round trip instead of being squeezed into
+10 bits.
+
+Doing it in the input rather than by editing generated files keeps regeneration
+reproducible and keeps the deviation in one greppable place. The cost is that
+`physCellId` is no longer wire-compatible with a real UE or gNB. Both peers here
+are built from these definitions, so they agree with each other.
+
+`testLargeNciSurvivesPhysCellId` in
+[rrc_reference_location_tests.cpp](../tests/rrc_reference_location_tests.cpp) round-trips
+`0xFEDCBA987` through `MeasResultNR.physCellId`, so a regeneration that puts the bound
+back fails loudly instead of truncating an NCI to ten bits.
+
+### 9.3 SIB19 keeps its custom encoding
+
+R18 brings `SIB19-r17`, `EphemerisInfo-r17` and `NTN-Config-r17` into
+`src/asn/rrc` for the first time. Nothing encodes them. The NTN broadcast stays
+on the custom binary `DL_SIB19` channel
+([broadcast.cpp](../src/gnb/rrc/broadcast.cpp), [sib19.hpp](../src/ue/rrc/sib19.hpp)),
+which is unchanged and remains the active path — there was no name conflict to
+resolve, since the custom path is C++ types in `nr::ue` and the generated ones are
+`ASN_RRC_`-prefixed. The header comment that justified the custom encoding by
+saying the ASN.1 library had no SIB19 types is now updated, because that reason
+has expired: what keeps it is that the custom entry format carries TLE data,
+which has no standard counterpart.
+
+### 9.4 How it was verified
+
+| Gate | Result |
+| ---- | ------ |
+| build | 0 errors |
+| `rrc_reference_location_tests` | pass, including a new 36-bit-NCI round trip through `physCellId` |
+| `sat_time_tests`, `sat_lib_tests` | pass |
+| `pytest tests/gnb` | 3 passed, 35 skipped, 2 errors — same as before stage 3 |
+| `pytest tests/ue` | 45 passed, 14 skipped, 16 failed, 10 errors — the *same 26 failures, by name*, as the stage-0 baseline |
+| `rrc_d1_probe` | encodes and decodes; D1 PDUs changed size, see §9.1 |
+| 1156 NGAP APER vectors | still byte-identical |
+| `tests/ngap_ngsetup.py` | pass |
+| `tests/xn_setup_handshake.py` | pass |
+| `tools/check_asn1_runtime.sh` | OK: one runtime, shims only |
+
+The RRC wire format **did** change, so unlike stages 1–2 there is no
+byte-identity gate to point at. What can be said precisely is *where* it changed
+and why: `eventD1-r17`'s position in `EventTriggerConfig` (§9.1), `physCellId`'s
+constraint (§9.2), and the ten `RRCReconfiguration-v1700-IEs` fields that were
+`OCTET_STRING_t` placeholders. `rrc_d1_probe`'s A3 PDU moved by a single bit and
+its D1 PDUs by two bytes; both still decode.
+
+The substitute for byte-identity is that **both Python suites land on exactly the
+outcome they landed on before** — `tests/ue` reproduces the stage-0 baseline's 26
+failures by name, not merely by count. Those suites drive real gNB and UE
+processes over RLS, so a change that broke SIB1, RRC setup or measurement
+reporting would move that set.
+
+### 9.5 What is *not* verified
+
+`tests/ue`'s Python `rrc_builder` encodes `eventD1-r17` in an early-draft shape
+(one `distanceThresh-r17`, one `referenceLocation-r17` with a `nadir` choice)
+that matches neither R18 nor the hand-edited tree it was written against. The
+hardcoded Python vector in `rrc_d1_probe` already failed to decode before this
+stage, and still does — identically. Bringing that harness onto the R18 field
+names is separate work.
+
+## 10. Open items for you
+
+~~1. **Rel-15 fallback**~~ — resolved in stage 3: `src/asn/rrc_backup_r15` is deleted.
+
+~~2. **RRC hand-edits**~~ — resolved in stage 3: stock R18 supersedes all eight, and the C++ adapts (§9.1).
+
 3. **`asn1c-r18` ownership** — should the `-fprefix` and APER work land as commits in that repo (and be
    pinned by hash here), or be carried as patches inside this repo?
 4. **Interop target** — which AMF/gNB versions must stay interoperable after the jump? That decides how
    conservative Stage 2 has to be.
+
+Carried forward out of stage 3:
+
+5. **NCI in `physCellId`** — §9.2 removes the constraint so testing can proceed, but the design problem
+   is untouched: the NCI needs an IE that can carry 36 bits. Until then this build cannot interoperate
+   with a real UE or gNB on `physCellId`.
+6. **SIB19 on standard types** — §9.3 keeps the custom `DL_SIB19` encoding. The R18 `SIB19-r17` types now
+   exist; moving to them means finding a home for the TLE data the custom format carries.
+7. **`tests/ue` Python RRC builder** — encodes `eventD1-r17` in a shape that matches no release (§9.5).

@@ -42,7 +42,7 @@ void UeRrcTask::receiveSib1(int64_t cellId, const ASN_RRC_SIB1 &msg)
 
     desc.sib1.isReserved = msg.cellAccessRelatedInfo.cellReservedForOtherUse != nullptr;
 
-    auto *plmnIdentityInfo = msg.cellAccessRelatedInfo.plmn_IdentityList.list.array[0];
+    auto *plmnIdentityInfo = msg.cellAccessRelatedInfo.plmn_IdentityInfoList.list.array[0];
     desc.sib1.nci = asn::GetBitStringLong<36>(plmnIdentityInfo->cellIdentity);
     desc.nci = desc.sib1.nci; // cache nci to cellDesc for easier access in other places
 

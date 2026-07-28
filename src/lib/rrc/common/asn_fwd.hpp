@@ -33,5 +33,5 @@ struct ASN_RRC_Paging;
 struct ASN_RRC_MIB;
 struct ASN_RRC_SIB1;
 struct ASN_RRC_RRCReconfiguration;
-struct ASN_RRC_ConditionalReconfiguration;
+struct ASN_RRC_ConditionalReconfiguration_r16;
 }

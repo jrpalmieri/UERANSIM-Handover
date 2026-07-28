@@ -1,4 +1,6 @@
 #include <asn/rrc/ASN_RRC_CondTriggerConfig-r16.h>
+#include <asn/rrc/ASN_RRC_MeasResultNR.h>
+#include <asn/rrc/ASN_RRC_PhysCellId.h>
 #include <asn/rrc/ASN_RRC_EventTriggerConfig.h>
 
 #include <lib/asn/utils.hpp>
@@ -45,7 +47,7 @@ void testEventD1ReferenceLocationRoundTrip()
     d1->distanceThreshFromReference2_r17 = 2222;
     d1->reportOnLeave_r17 = true;
     d1->hysteresisLocation_r17 = 12;
-    d1->timeToTrigger = ASN_RRC_TimeToTrigger_ms160;
+    d1->timeToTrigger_r17 = ASN_RRC_TimeToTrigger_ms160;
 
     EventReferenceLocation loc1{};
     loc1.latitudeDeg = 33.7756;
@@ -101,7 +103,7 @@ void testEventD1ReferenceLocationRoundTrip()
     assertEq(decodedD1->distanceThreshFromReference1_r17, 1111, "EventD1 threshold1 mismatch");
     assertEq(decodedD1->distanceThreshFromReference2_r17, 2222, "EventD1 threshold2 mismatch");
     assertEq(decodedD1->hysteresisLocation_r17, 12, "EventD1 hysteresis mismatch");
-    assertEq(decodedD1->timeToTrigger, ASN_RRC_TimeToTrigger_ms160, "EventD1 TTT mismatch");
+    assertEq(decodedD1->timeToTrigger_r17, ASN_RRC_TimeToTrigger_ms160, "EventD1 TTT mismatch");
 
     assertNear(decodedLoc1.latitudeDeg, loc1.latitudeDeg, 5e-5, "EventD1 ref1 latitude mismatch");
     assertNear(decodedLoc1.longitudeDeg, loc1.longitudeDeg, 5e-5, "EventD1 ref1 longitude mismatch");
@@ -186,6 +188,36 @@ void testCondEventD1ReferenceLocationRoundTrip()
     asn::Free(asn_DEF_ASN_RRC_CondTriggerConfig_r16, decoded);
 }
 
+// This project transports the 36-bit NCI in physCellId, which TS 38.331 constrains to
+// INTEGER (0..1007). The constraint is deliberately dropped in asn1-definitions/rrc-rel18-v18_9.asn1
+// so that testing can proceed -- see docs/ASN1_R18_Migration_Plan.md section 9.2. This
+// test is what keeps that deviation honest: it fails the moment a regeneration puts the
+// bound back, rather than silently truncating an NCI to ten bits.
+void testLargeNciSurvivesPhysCellId()
+{
+    // 0xFEDCBA987 -- 36 bits, the full NCI width, and far outside 0..1007.
+    constexpr long largeNci = 68361438087L;
+
+    auto *report = asn::New<ASN_RRC_MeasResultNR>();
+    report->physCellId = asn::New<ASN_RRC_PhysCellId_t>();
+    *report->physCellId = largeNci;
+
+    auto encoded = rrc::encode::EncodeS(asn_DEF_ASN_RRC_MeasResultNR, report);
+    if (encoded.length() == 0)
+        throw std::runtime_error("MeasResultNR with a 36-bit physCellId failed to encode");
+
+    auto *decoded = rrc::encode::Decode<ASN_RRC_MeasResultNR>(asn_DEF_ASN_RRC_MeasResultNR, encoded);
+    if (decoded == nullptr)
+        throw std::runtime_error("MeasResultNR with a 36-bit physCellId failed to decode");
+    if (decoded->physCellId == nullptr)
+        throw std::runtime_error("physCellId absent after decode");
+
+    assertEq(*decoded->physCellId, largeNci, "physCellId did not survive the round trip");
+
+    asn::Free(asn_DEF_ASN_RRC_MeasResultNR, report);
+    asn::Free(asn_DEF_ASN_RRC_MeasResultNR, decoded);
+}
+
 } // namespace
 
 int main()
@@ -194,6 +226,7 @@ int main()
     {
         testEventD1ReferenceLocationRoundTrip();
         testCondEventD1ReferenceLocationRoundTrip();
+        testLargeNciSurvivesPhysCellId();
     }
     catch (const std::exception &error)
     {

@@ -61,10 +61,11 @@
 #include <asn/rrc/ASN_RRC_SpCellConfig.h>
 #include <asn/rrc/ASN_RRC_ReconfigurationWithSync.h>
 #include <asn/rrc/ASN_RRC_ServingCellConfigCommon.h>
-#include <asn/rrc/ASN_RRC_ConditionalReconfiguration.h>
-#include <asn/rrc/ASN_RRC_CondReconfigToAddMod.h>
+#include <asn/rrc/ASN_RRC_ConditionalReconfiguration-r16.h>
+#include <asn/rrc/ASN_RRC_CondReconfigToAddMod-r16.h>
+#include <asn/rrc/ASN_RRC_CondReconfigToAddModList-r16.h>
+#include <asn/rrc/ASN_RRC_CondReconfigToRemoveList-r16.h>
 #include <asn/rrc/ASN_RRC_CondTriggerConfig-r16.h>
-#include <asn/rrc/ASN_RRC_NTN-TriggerConfig-r17.h>
 #include <asn/rrc/ASN_RRC_DL-DCCH-Message.h>
 #include <asn/rrc/ASN_RRC_DL-DCCH-MessageType.h>
 #include <asn/rrc/ASN_RRC_MeasConfig.h>
@@ -1306,12 +1307,11 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, std::unique_ptr<O
     auto *v1610 = asn::New<ASN_RRC_RRCReconfiguration_v1610_IEs>();
     ies->nonCriticalExtension->nonCriticalExtension->nonCriticalExtension->nonCriticalExtension = v1610;
 
-    v1610->conditionalReconfiguration = asn::New<ASN_RRC_ConditionalReconfiguration>();
-    v1610->conditionalReconfiguration->condReconfigToAddModList =
-        asn::New<ASN_RRC_ConditionalReconfiguration::
-                    ASN_RRC_ConditionalReconfiguration__condReconfigToAddModList>();
+    v1610->conditionalReconfiguration_r16 = asn::New<ASN_RRC_ConditionalReconfiguration_r16>();
+    v1610->conditionalReconfiguration_r16->condReconfigToAddModList_r16 =
+        asn::New<ASN_RRC_CondReconfigToAddModList_r16>();
 
-    auto *addMod = asn::New<ASN_RRC_CondReconfigToAddMod>();
+    auto *addMod = asn::New<ASN_RRC_CondReconfigToAddMod_r16>();
 
     // select a unique condReconfigId
     int condReconfigId = -1;
@@ -1328,26 +1328,26 @@ void GnbRrcTask::completeConditionalHandover(RrcUeContext *ue, std::unique_ptr<O
         return;
     }
 
-    addMod->condReconfigId = condReconfigId;
+    addMod->condReconfigId_r16 = condReconfigId;
 
     // assign MeasId(s) to this condReconfig
     //  It will be the MeasId(s) created as part of the earlier MeasConfig
-    addMod->condExecutionCond =
-        asn::New<ASN_RRC_CondReconfigToAddMod::ASN_RRC_CondReconfigToAddMod__condExecutionCond>();
+    addMod->condExecutionCond_r16 =
+        asn::New<ASN_RRC_CondReconfigToAddMod_r16::ASN_RRC_CondReconfigToAddMod_r16__condExecutionCond_r16>();
     for (long measId : prepState->measIds)
     {
         auto *entry = asn::New<ASN_RRC_MeasId_t>();
         *entry = measId;
-        asn::SequenceAdd(*addMod->condExecutionCond, entry);
+        asn::SequenceAdd(*addMod->condExecutionCond_r16, entry);
     }
 
     // add the transparent container with the nested RRCReconfiguration from the target gNB
 
-    addMod->condRRCReconfig = asn::New<OCTET_STRING_t>();
-    asn::SetOctetString(*addMod->condRRCReconfig, nestedRrcReconfig);
+    addMod->condRRCReconfig_r16 = asn::New<OCTET_STRING_t>();
+    asn::SetOctetString(*addMod->condRRCReconfig_r16, nestedRrcReconfig);
 
     // add this candidate to the message's list of conditional reconfigurations
-    asn::SequenceAdd(*v1610->conditionalReconfiguration->condReconfigToAddModList, addMod);
+    asn::SequenceAdd(*v1610->conditionalReconfiguration_r16->condReconfigToAddModList_r16, addMod);
 
     // send to the UE
     sendRrcMessage(ue->ueId, pdu);

@@ -1,11 +1,38 @@
 {
   "permissions": {
     "allow": [
-      "Bash(xargs cat -n)",
-      "Bash(grep \"\\\\.h$\")",
-      "Bash(git -C /home/joe/repos/GT/cs8903/UERANSIM-Handover show HEAD:src/gnb/xn/task.hpp)",
-      "Bash(xargs -n1 basename)",
-      "Bash(python3 -c ' *)"
+      "Read(//home/joe/repos/**)",
+      "Write(/build/**)",
+      "Write(/docs/**)",
+      "Write(/tests/**)",
+      "Bash(ls *)",
+      "Bash(cd *)",
+      "Bash(pwd)",
+      "Bash(grep *)",
+      "Bash(echo *)",
+      "Bash(find . -name \"*.c\" -o -name \"*.h\")",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(diff *)",
+      "Bash(comm *)",
+      "Bash(yes y *)",
+      "Bash(* | sed *)",
+      "Bash(* | awk *)",
+      "Bash(* | sort *)",
+      "Bash(* | uniq *)",
+      "Read(//tmp/claude-*/**)",
+      "Write(//tmp/claude-*/**)",
+      "Bash(mkdir -p /tmp/claude-*/**)",
+      "Bash(rm -rf /tmp/claude-*/**)",
+      "Bash(/home/joe/repos/asn1c-r18/asn1c/asn1c *)",
+      "Bash(git add *)",
+      "Bash(git status *)",
+      "Bash(awk '{print $1}')",
+      "Bash(./rrc_d1_probe)",
+      "Bash(./tools/check_asn1_runtime.sh)"
+    ],
+    "additionalDirectories": [
+      "/tmp/claude-1000"
     ]
   }
 }
