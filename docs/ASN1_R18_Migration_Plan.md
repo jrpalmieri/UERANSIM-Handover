@@ -1,9 +1,9 @@
 # ASN.1 Release-18 Migration Plan (RRC / NGAP / XnAP)
 
-Status: **stages 0 and 1 complete** (2026-07-27). Stages 2–4 not started.
+Status: **stages 0, 1 and 2 complete** (2026-07-27). Stages 3–4 not started.
 Author: analysis of `UERANSIM-Handover` @ `xn` (a68a5fad) and `/home/joe/repos/asn1c-r18` @ e835ff87, 2026-07-27.
 
-Stage 0 results are in [§6](#6-stage-0-as-built), stage 1 in [§7](#7-stage-1-as-built).
+Stage 0 results are in [§6](#6-stage-0-as-built), stage 1 in [§7](#7-stage-1-as-built), stage 2 in [§8](#8-stage-2-as-built).
 
 ---
 
@@ -478,7 +478,82 @@ second look when that happens:
   `long`. UE and session AMBR are boxed with `asn_uint642INTEGER` on the way out
   and unboxed with `asn_INTEGER2umax` on the way in.
 
-## 8. Open items for you
+## 8. Stage 2 as built
+
+Completed 2026-07-27. NGAP is regenerated from `ngap-rel18-v18_9.asn1`, and the
+runtime now carries **no migration shims at all** — `src/asn/asn1c` is exactly
+the fork's skeletons plus APER.
+
+### 8.1 One more compiler gap: value assignments were never emitted
+
+3GPP addresses IEs by name (`id-NAS-PDU ProtocolIE-ID ::= 38`), and the old tree
+exposed 362 of these as `#define ASN_NGAP_ProtocolIE_ID_id_NAS_PDU
+((ASN_NGAP_ProtocolIE_ID_t)38)`. Neither asn1c-r18 nor upstream 0.9.29 emits
+them — value assignments are compiled for the generator's own use (object set
+tables reference them as `asn_VAL_*`) but never exposed, leaving the numbers to
+be copied into the application by hand. UERANSIM's original fork had added this;
+asn1c-r18 now does too, in the header of the type the value belongs to.
+
+Terminal-type resolution is what makes this expensive, so every integer value
+assignment is resolved once into an index on first use rather than per type; the
+naive version pushed NGAP generation past two minutes, the indexed one runs in
+about a minute. NGAP now emits 438 constants and XnAP 476, with the values
+spot-checked against the old tree (`id-AMF-UE-NGAP-ID` = 10, `id-NAS-PDU` = 38).
+
+### 8.2 The call-site work was mostly a rename
+
+Unlike XnAP, the NGAP tree was **already** generated with typed open types, so
+the C++ was already written in the `present`/`choice` idiom. What changed is
+naming: asn1c-r18 names the instantiated parameterized type
+(`ASN_NGAP_ProtocolIE_Field_13561P74`) where the old fork named it after the
+object set (`ASN_NGAP_PDUSessionResourceSetupResponseIEs`). 16 IE type families
+are referenced from C++; the mapping from each to its instance was derived from
+the generated headers, then applied as a rename — 47 type references and 39
+presence enumerators across 6 files.
+
+Two things needed judgement rather than renaming:
+
+- `AMF_UE_NGAP_ID_1` no longer exists. The old tree emitted a uniquified second
+  union member where two object-set rows carry the same type; asn1c-r18 collapses
+  the member and keeps the presence enumerators distinct, which is what holds
+  `presence_index` aligned. The call site reads the single member.
+- The generic machinery needed no changes at all. `NgapMessageToIeType` deduces
+  the IE type from the container's element type, so it followed the rename by
+  itself — but only because §7.1 made that element type a real one.
+
+### 8.3 How it was verified
+
+The strongest evidence is that the **1156 captured NGAP PDUs still decode and
+re-encode byte-identically** ([tests/data/asn1_vectors](../tests/data/asn1_vectors/)).
+These were captured from Rel-15-era runs of this project and are now being parsed
+by Rel-18 descriptors, so the wire format is unchanged for everything this
+deployment actually uses.
+
+Added alongside it: [tests/ngap_ngsetup.py](../tests/ngap_ngsetup.py), which is a
+*cross-implementation* check rather than a round trip through our own encoder.
+The fake AMF parses NGAP with its own Python codec, so NGSetupRequest built from
+the Release-18 descriptors has to be readable by something that shares no code
+with them, and its NGSetupResponse has to be readable back.
+
+| Gate | Result |
+| ---- | ------ |
+| 1156 NGAP APER vectors | byte-identical to the pre-migration baseline |
+| `tests/ngap_ngsetup.py` | pass — independent codec reads our NGSetupRequest |
+| `tests/xn_setup_handshake.py` | pass (stage 1 unaffected) |
+| `rrc_d1_probe`, three unit-test binaries | identical / pass |
+| `pytest tests/gnb` | 3 passed, 35 skipped, 2 errors — same as before stage 2 |
+
+XnAP was regenerated with the same compiler build so both trees have identical
+provenance and XnAP picks up its 476 constants too.
+
+### 8.4 What is *not* verified
+
+The NGAP procedures beyond NG Setup — registration, PDU session setup, N2
+handover, paging — are only covered to the extent the captured corpus exercises
+their encodings. Nothing drives them end to end here, because the suite that
+would (`tests/gnb`) predates the current implementation.
+
+## 9. Open items for you
 
 1. **Rel-15 fallback** — is there any reason to keep `src/asn/rrc_backup_r15`, or is deletion in Stage 3 fine?
 2. **RRC hand-edits** — do you want them reconstructed feature-for-feature on R18, or is the intent that
