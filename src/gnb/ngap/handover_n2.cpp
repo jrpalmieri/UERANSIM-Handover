@@ -370,10 +370,10 @@ static OctetString MakeHoRequiredTransfer()
 
 void NgapTask::sendHandoverFailure(NgapCause cause, int64_t ueId) 
 {
-    auto *causeIe = asn::New<ASN_NGAP_HandoverFailureIEs>();
+    auto *causeIe = asn::New<ASN_NGAP_ProtocolIE_Field_13561P106>();
     causeIe->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
     causeIe->criticality = ASN_NGAP_Criticality_ignore;
-    causeIe->value.present = ASN_NGAP_HandoverFailureIEs__value_PR_Cause;
+    causeIe->value.present = ASN_NGAP_ProtocolIE_Field_13561P106__value_PR_Cause;
     ngap_utils::ToCauseAsn_Ref(cause, causeIe->value.choice.Cause);
 
     auto *failurePdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverFailure>({causeIe});
@@ -411,16 +411,16 @@ void NgapTask::handleRrcHandoverFailure(uint32_t transactionId, NgapCause cause)
                    transactionId, static_cast<int>(cause), pending.amfId);
 
     // AMF-UE-NGAP-ID is mandatory in HandoverFailure; take it from the provisional context.
-    auto *idIe = asn::New<ASN_NGAP_HandoverFailureIEs>();
+    auto *idIe = asn::New<ASN_NGAP_ProtocolIE_Field_13561P106>();
     idIe->id = ASN_NGAP_ProtocolIE_ID_id_AMF_UE_NGAP_ID;
     idIe->criticality = ASN_NGAP_Criticality_ignore;
-    idIe->value.present = ASN_NGAP_HandoverFailureIEs__value_PR_AMF_UE_NGAP_ID;
+    idIe->value.present = ASN_NGAP_ProtocolIE_Field_13561P106__value_PR_AMF_UE_NGAP_ID;
     asn::SetSigned64(pending.ctx ? pending.ctx->amfUeNgapId : 0, idIe->value.choice.AMF_UE_NGAP_ID);
 
-    auto *causeIe = asn::New<ASN_NGAP_HandoverFailureIEs>();
+    auto *causeIe = asn::New<ASN_NGAP_ProtocolIE_Field_13561P106>();
     causeIe->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
     causeIe->criticality = ASN_NGAP_Criticality_ignore;
-    causeIe->value.present = ASN_NGAP_HandoverFailureIEs__value_PR_Cause;
+    causeIe->value.present = ASN_NGAP_ProtocolIE_Field_13561P106__value_PR_Cause;
     ngap_utils::ToCauseAsn_Ref(cause, causeIe->value.choice.Cause);
 
     auto *failurePdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverFailure>({idIe, causeIe});
@@ -489,10 +489,10 @@ void NgapTask::sweepPendingHandovers()
 // TODO: failure mode without UE context
 // void NgapTask::sendHandoverFailure(int64_t amfUeNgapId, uint16_t stream, NgapCause cause) 
 // {
-//     auto *causeIe = asn::New<ASN_NGAP_HandoverFailureIEs>();
+//     auto *causeIe = asn::New<ASN_NGAP_ProtocolIE_Field_13561P106>();
 //     causeIe->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
 //     causeIe->criticality = ASN_NGAP_Criticality_ignore;
-//     causeIe->value.present = ASN_NGAP_HandoverFailureIEs__value_PR_Cause;
+//     causeIe->value.present = ASN_NGAP_ProtocolIE_Field_13561P106__value_PR_Cause;
 //     ngap_utils::ToCauseAsn_Ref(cause, causeIe->value.choice.Cause);
 
 //     auto *failurePdu = asn::ngap::NewMessagePdu<ASN_NGAP_HandoverFailure>({causeIe});
@@ -548,34 +548,34 @@ void NgapTask::sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause c
                    neighbor.tac,
                    neighbor.handoverInterface == EHandoverInterface::N2 ? "N2" : "Xn");
 
-    std::vector<ASN_NGAP_HandoverRequiredIEs *> ies;
+    std::vector<ASN_NGAP_ProtocolIE_Field_13561P101 *> ies;
 
     // IE: HandoverType = intra5gs
     {
-        auto *ie = asn::New<ASN_NGAP_HandoverRequiredIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P101>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_HandoverType;
         ie->criticality = ASN_NGAP_Criticality_reject;
-        ie->value.present = ASN_NGAP_HandoverRequiredIEs__value_PR_HandoverType;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P101__value_PR_HandoverType;
         ie->value.choice.HandoverType = ASN_NGAP_HandoverType_intra5gs;
         ies.push_back(ie);
     }
 
     // IE: Cause
     {
-        auto *ie = asn::New<ASN_NGAP_HandoverRequiredIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P101>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
         ie->criticality = ASN_NGAP_Criticality_ignore;
-        ie->value.present = ASN_NGAP_HandoverRequiredIEs__value_PR_Cause;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P101__value_PR_Cause;
         ngap_utils::ToCauseAsn_Ref(cause, ie->value.choice.Cause);
         ies.push_back(ie);
     }
 
     // IE: TargetID
     {
-        auto *ie = asn::New<ASN_NGAP_HandoverRequiredIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P101>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_TargetID;
         ie->criticality = ASN_NGAP_Criticality_reject;
-        ie->value.present = ASN_NGAP_HandoverRequiredIEs__value_PR_TargetID;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P101__value_PR_TargetID;
 
         ie->value.choice.TargetID.present = ASN_NGAP_TargetID_PR_targetRANNodeID;
         auto *targetRanNode = asn::New<ASN_NGAP_TargetRANNodeID>();
@@ -609,11 +609,11 @@ void NgapTask::sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause c
     // TODO: need to add SessionInformationList to enable DL Forwarding
     {
         auto sttc = makeSourceTargetNgranTransparentContainer(targetNci, neighbor.plmn, std::move(rrcContainer));
-        auto *ie = asn::New<ASN_NGAP_HandoverRequiredIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P101>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_SourceToTarget_TransparentContainer;
         ie->criticality = ASN_NGAP_Criticality_reject;
         ie->value.present =
-            ASN_NGAP_HandoverRequiredIEs__value_PR_SourceToTarget_TransparentContainer;
+            ASN_NGAP_ProtocolIE_Field_13561P101__value_PR_SourceToTarget_TransparentContainer;
         asn::SetOctetString(ie->value.choice.SourceToTarget_TransparentContainer,
                             *sttc);
         ies.push_back(ie);
@@ -628,7 +628,7 @@ void NgapTask::sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause c
         if (hoRequiredTransfer.length() == 0)
         {
             m_logger->err("sendHandoverRequired: failed to encode HandoverRequiredTransfer");
-            for (auto *ie : ies) asn::Free(asn_DEF_ASN_NGAP_HandoverRequiredIEs, ie);
+            for (auto *ie : ies) asn::Free(asn_DEF_ASN_NGAP_ProtocolIE_Field_13561P101, ie);
             return;
         }
 
@@ -640,14 +640,14 @@ void NgapTask::sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause c
         else
         {
             m_logger->warn("UE[%ld]: send Handoverrequired: no active PDU sessions found", ueId);
-            for (auto *ie : ies) asn::Free(asn_DEF_ASN_NGAP_HandoverRequiredIEs, ie);
+            for (auto *ie : ies) asn::Free(asn_DEF_ASN_NGAP_ProtocolIE_Field_13561P101, ie);
             return;
         }
 
-        auto *ie = asn::New<ASN_NGAP_HandoverRequiredIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P101>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceListHORqd;
         ie->criticality = ASN_NGAP_Criticality_reject;
-        ie->value.present = ASN_NGAP_HandoverRequiredIEs__value_PR_PDUSessionResourceListHORqd;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P101__value_PR_PDUSessionResourceListHORqd;
 
         for (int psi : pduSessionIds)
         {
@@ -1055,23 +1055,23 @@ void NgapTask::sendHandoverRequestAcknowledge(uint32_t transactionId, int64_t ue
         return;
     }
 
-    std::vector<ASN_NGAP_HandoverRequestAcknowledgeIEs *> ackIes;
+    std::vector<ASN_NGAP_ProtocolIE_Field_13561P105 *> ackIes;
 
-    auto *admittedIe = asn::New<ASN_NGAP_HandoverRequestAcknowledgeIEs>();
+    auto *admittedIe = asn::New<ASN_NGAP_ProtocolIE_Field_13561P105>();
     admittedIe->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceAdmittedList;
     admittedIe->criticality = ASN_NGAP_Criticality_ignore;
-    admittedIe->value.present = ASN_NGAP_HandoverRequestAcknowledgeIEs__value_PR_PDUSessionResourceAdmittedList;
+    admittedIe->value.present = ASN_NGAP_ProtocolIE_Field_13561P105__value_PR_PDUSessionResourceAdmittedList;
     for (auto *item : admittedList)
         asn::SequenceAdd(admittedIe->value.choice.PDUSessionResourceAdmittedList, item);
     ackIes.push_back(admittedIe);
 
     if (!failedList.empty())
     {
-        auto *failedIe = asn::New<ASN_NGAP_HandoverRequestAcknowledgeIEs>();
+        auto *failedIe = asn::New<ASN_NGAP_ProtocolIE_Field_13561P105>();
         failedIe->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceFailedToSetupListHOAck;
         failedIe->criticality = ASN_NGAP_Criticality_ignore;
         failedIe->value.present =
-            ASN_NGAP_HandoverRequestAcknowledgeIEs__value_PR_PDUSessionResourceFailedToSetupListHOAck;
+            ASN_NGAP_ProtocolIE_Field_13561P105__value_PR_PDUSessionResourceFailedToSetupListHOAck;
         for (auto *item : failedList)
             asn::SequenceAdd(failedIe->value.choice.PDUSessionResourceFailedToSetupListHOAck, item);
         ackIes.push_back(failedIe);
@@ -1080,11 +1080,11 @@ void NgapTask::sendHandoverRequestAcknowledge(uint32_t transactionId, int64_t ue
 
     /* Send Handover Request Acknowledge to AMF*/
 
-    auto *t2sIe = asn::New<ASN_NGAP_HandoverRequestAcknowledgeIEs>();
+    auto *t2sIe = asn::New<ASN_NGAP_ProtocolIE_Field_13561P105>();
     t2sIe->id = ASN_NGAP_ProtocolIE_ID_id_TargetToSource_TransparentContainer;
     t2sIe->criticality = ASN_NGAP_Criticality_reject;
     t2sIe->value.present =
-        ASN_NGAP_HandoverRequestAcknowledgeIEs__value_PR_TargetToSource_TransparentContainer;
+        ASN_NGAP_ProtocolIE_Field_13561P105__value_PR_TargetToSource_TransparentContainer;
     asn::SetOctetString(t2sIe->value.choice.TargetToSource_TransparentContainer, *targetRrcContainer);
     ackIes.push_back(t2sIe);
 
@@ -1352,14 +1352,14 @@ void NgapTask::sendHandoverNotify(int64_t ueId)
         return;
     }
 
-    std::vector<ASN_NGAP_HandoverNotifyIEs *> ies;
+    std::vector<ASN_NGAP_ProtocolIE_Field_13561P107 *> ies;
 
     // IE: UserLocationInformation (required) - use the current cell's PLMN and TAC
     {
-        auto *ie = asn::New<ASN_NGAP_HandoverNotifyIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P107>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_UserLocationInformation;
         ie->criticality = ASN_NGAP_Criticality_reject;
-        ie->value.present = ASN_NGAP_HandoverNotifyIEs__value_PR_UserLocationInformation;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P107__value_PR_UserLocationInformation;
 
         ie->value.choice.UserLocationInformation.present =
             ASN_NGAP_UserLocationInformation_PR_userLocationInformationNR;

@@ -257,25 +257,25 @@ void NgapTask::sendPathSwitchRequest(int64_t ueId)
         transfers.emplace_back(resource->psi, std::move(transfer));
     }
 
-    std::vector<ASN_NGAP_PathSwitchRequestIEs *> ies;
+    std::vector<ASN_NGAP_ProtocolIE_Field_13561P108 *> ies;
 
     // IE: SourceAMF-UE-NGAP-ID (id 100, mandatory, reject).  PathSwitchRequest
     // does not use the generic AMF-UE-NGAP-ID (id 10) IE.
     {
-        auto *ie = asn::New<ASN_NGAP_PathSwitchRequestIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P108>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_SourceAMF_UE_NGAP_ID;
         ie->criticality = ASN_NGAP_Criticality_reject;
-        ie->value.present = ASN_NGAP_PathSwitchRequestIEs__value_PR_AMF_UE_NGAP_ID;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P108__value_PR_AMF_UE_NGAP_ID;
         asn::SetSigned64(ue->amfUeNgapId, ie->value.choice.AMF_UE_NGAP_ID);
         ies.push_back(ie);
     }
 
     // IE: UserLocationInformation
     {
-        auto *ie = asn::New<ASN_NGAP_PathSwitchRequestIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P108>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_UserLocationInformation;
         ie->criticality = ASN_NGAP_Criticality_ignore;
-        ie->value.present = ASN_NGAP_PathSwitchRequestIEs__value_PR_UserLocationInformation;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P108__value_PR_UserLocationInformation;
 
         ie->value.choice.UserLocationInformation.present =
             ASN_NGAP_UserLocationInformation_PR_userLocationInformationNR;
@@ -295,10 +295,10 @@ void NgapTask::sendPathSwitchRequest(int64_t ueId)
     // IE: UESecurityCapabilities (mandatory, ignore) — transferred from the
     // source gNB over Xn and stored in the provisional context.
     {
-        auto *ie = asn::New<ASN_NGAP_PathSwitchRequestIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P108>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_UESecurityCapabilities;
         ie->criticality = ASN_NGAP_Criticality_ignore;
-        ie->value.present = ASN_NGAP_PathSwitchRequestIEs__value_PR_UESecurityCapabilities;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P108__value_PR_UESecurityCapabilities;
 
         auto &sc = ie->value.choice.UESecurityCapabilities;
         asn::SetBitStringInt<16>(ue->ueSecInfo.nRencryptionAlgorithmsBitmap, sc.nRencryptionAlgorithms);
@@ -312,10 +312,10 @@ void NgapTask::sendPathSwitchRequest(int64_t ueId)
 
     // IE: PDUSessionResourceToBeSwitchedDLList (mandatory, reject)
     {
-        auto *ie = asn::New<ASN_NGAP_PathSwitchRequestIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P108>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceToBeSwitchedDLList;
         ie->criticality = ASN_NGAP_Criticality_reject;
-        ie->value.present = ASN_NGAP_PathSwitchRequestIEs__value_PR_PDUSessionResourceToBeSwitchedDLList;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P108__value_PR_PDUSessionResourceToBeSwitchedDLList;
 
         for (auto &[psi, transfer] : transfers)
         {

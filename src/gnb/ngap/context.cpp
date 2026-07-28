@@ -225,14 +225,14 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
 
     // Send Response to AMF
     
-    std::vector<ASN_NGAP_InitialContextSetupResponseIEs *> responseIes;
+    std::vector<ASN_NGAP_ProtocolIE_Field_13561P83 *> responseIes;
 
     if (!successList.empty())
     {
-        auto *ie = asn::New<ASN_NGAP_InitialContextSetupResponseIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P83>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceSetupListCxtRes;
         ie->criticality = ASN_NGAP_Criticality_ignore;
-        ie->value.present = ASN_NGAP_InitialContextSetupResponseIEs__value_PR_PDUSessionResourceSetupListCxtRes;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P83__value_PR_PDUSessionResourceSetupListCxtRes;
 
         for (auto &item : successList)
             asn::SequenceAdd(ie->value.choice.PDUSessionResourceSetupListCxtRes, item);
@@ -242,10 +242,10 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
 
     if (!failedList.empty())
     {
-        auto *ie = asn::New<ASN_NGAP_InitialContextSetupResponseIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P83>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceFailedToSetupListCxtRes;
         ie->criticality = ASN_NGAP_Criticality_ignore;
-        ie->value.present = ASN_NGAP_InitialContextSetupResponseIEs__value_PR_PDUSessionResourceFailedToSetupListCxtRes;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P83__value_PR_PDUSessionResourceFailedToSetupListCxtRes;
 
         for (auto &item : failedList)
             asn::SequenceAdd(ie->value.choice.PDUSessionResourceFailedToSetupListCxtRes, item);
@@ -328,7 +328,7 @@ void NgapTask::receiveContextModification(int amfId, ASN_NGAP_UEContextModificat
     if (ie)
     {
         int64_t old = ue->amfUeNgapId;
-        ue->amfUeNgapId = asn::GetSigned64(ie->AMF_UE_NGAP_ID_1);
+        ue->amfUeNgapId = asn::GetSigned64(ie->AMF_UE_NGAP_ID);
         m_logger->debug("UE[%ld} AMF-UE-NGAP-ID changed from %ld to %ld", ue->ctxId, old, ue->amfUeNgapId);
     }
 
@@ -348,14 +348,14 @@ void NgapTask::sendContextRelease(int64_t ueId, NgapCause cause)
     if (ue == nullptr)
         return;
 
-    std::vector<ASN_NGAP_UEContextReleaseRequest_IEs *> ies;
+    std::vector<ASN_NGAP_ProtocolIE_Field_13561P85 *> ies;
 
     if (!ue->pduSessions.empty())
     {
-        auto *ieSessionList = asn::New<ASN_NGAP_UEContextReleaseRequest_IEs>();
+        auto *ieSessionList = asn::New<ASN_NGAP_ProtocolIE_Field_13561P85>();
         ieSessionList->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceListCxtRelReq;
         ieSessionList->criticality = ASN_NGAP_Criticality_reject;
-        ieSessionList->value.present = ASN_NGAP_UEContextReleaseRequest_IEs__value_PR_PDUSessionResourceListCxtRelReq;
+        ieSessionList->value.present = ASN_NGAP_ProtocolIE_Field_13561P85__value_PR_PDUSessionResourceListCxtRelReq;
 
         for (int psi : ue->pduSessions)
         {
@@ -367,10 +367,10 @@ void NgapTask::sendContextRelease(int64_t ueId, NgapCause cause)
         ies.push_back(ieSessionList);
     }
 
-    auto *ieCause = asn::New<ASN_NGAP_UEContextReleaseRequest_IEs>();
+    auto *ieCause = asn::New<ASN_NGAP_ProtocolIE_Field_13561P85>();
     ieCause->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
     ieCause->criticality = ASN_NGAP_Criticality_ignore;
-    ieCause->value.present = ASN_NGAP_UEContextReleaseRequest_IEs__value_PR_Cause;
+    ieCause->value.present = ASN_NGAP_ProtocolIE_Field_13561P85__value_PR_Cause;
     ngap_utils::ToCauseAsn_Ref(cause, ieCause->value.choice.Cause);
     ies.push_back(ieCause);
 

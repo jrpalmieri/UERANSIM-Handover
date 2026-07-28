@@ -130,17 +130,17 @@ void NgapTask::sendNgSetupRequest(int amfId)
                       static_cast<size_t>(gnbIdLength));
     asn::SetOctetString3(globalGnbId->pLMNIdentity, ngap_utils::PlmnToOctet3(m_base->config->plmn));
 
-    auto *ieGlobalGnbId = asn::New<ASN_NGAP_NGSetupRequestIEs>();
+    auto *ieGlobalGnbId = asn::New<ASN_NGAP_ProtocolIE_Field_13561P124>();
     ieGlobalGnbId->id = ASN_NGAP_ProtocolIE_ID_id_GlobalRANNodeID;
     ieGlobalGnbId->criticality = ASN_NGAP_Criticality_reject;
-    ieGlobalGnbId->value.present = ASN_NGAP_NGSetupRequestIEs__value_PR_GlobalRANNodeID;
+    ieGlobalGnbId->value.present = ASN_NGAP_ProtocolIE_Field_13561P124__value_PR_GlobalRANNodeID;
     ieGlobalGnbId->value.choice.GlobalRANNodeID.present = ASN_NGAP_GlobalRANNodeID_PR_globalGNB_ID;
     ieGlobalGnbId->value.choice.GlobalRANNodeID.choice.globalGNB_ID = globalGnbId;
 
-    auto *ieRanNodeName = asn::New<ASN_NGAP_NGSetupRequestIEs>();
+    auto *ieRanNodeName = asn::New<ASN_NGAP_ProtocolIE_Field_13561P124>();
     ieRanNodeName->id = ASN_NGAP_ProtocolIE_ID_id_RANNodeName;
     ieRanNodeName->criticality = ASN_NGAP_Criticality_ignore;
-    ieRanNodeName->value.present = ASN_NGAP_NGSetupRequestIEs__value_PR_RANNodeName;
+    ieRanNodeName->value.present = ASN_NGAP_ProtocolIE_Field_13561P124__value_PR_RANNodeName;
     asn::SetPrintableString(ieRanNodeName->value.choice.RANNodeName, m_base->config->name);
 
     auto *broadcastPlmn = asn::New<ASN_NGAP_BroadcastPLMNItem>();
@@ -161,16 +161,16 @@ void NgapTask::sendNgSetupRequest(int amfId)
     asn::SetOctetString3(supportedTa->tAC, octet3{m_base->config->tac});
     asn::SequenceAdd(supportedTa->broadcastPLMNList, broadcastPlmn);
 
-    auto *ieSupportedTaList = asn::New<ASN_NGAP_NGSetupRequestIEs>();
+    auto *ieSupportedTaList = asn::New<ASN_NGAP_ProtocolIE_Field_13561P124>();
     ieSupportedTaList->id = ASN_NGAP_ProtocolIE_ID_id_SupportedTAList;
     ieSupportedTaList->criticality = ASN_NGAP_Criticality_reject;
-    ieSupportedTaList->value.present = ASN_NGAP_NGSetupRequestIEs__value_PR_SupportedTAList;
+    ieSupportedTaList->value.present = ASN_NGAP_ProtocolIE_Field_13561P124__value_PR_SupportedTAList;
     asn::SequenceAdd(ieSupportedTaList->value.choice.SupportedTAList, supportedTa);
 
-    auto *iePagingDrx = asn::New<ASN_NGAP_NGSetupRequestIEs>();
+    auto *iePagingDrx = asn::New<ASN_NGAP_ProtocolIE_Field_13561P124>();
     iePagingDrx->id = ASN_NGAP_ProtocolIE_ID_id_DefaultPagingDRX;
     iePagingDrx->criticality = ASN_NGAP_Criticality_ignore;
-    iePagingDrx->value.present = ASN_NGAP_NGSetupRequestIEs__value_PR_PagingDRX;
+    iePagingDrx->value.present = ASN_NGAP_ProtocolIE_Field_13561P124__value_PR_PagingDRX;
     iePagingDrx->value.choice.PagingDRX = ngap_utils::PagingDrxToAsn(m_base->config->pagingDrx);
 
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_NGSetupRequest>(
@@ -247,10 +247,10 @@ void NgapTask::receiveErrorIndication(int amfId, ASN_NGAP_ErrorIndication *msg)
 
 void NgapTask::sendErrorIndication(int amfId, NgapCause cause, int64_t ueId)
 {
-    auto ieCause = asn::New<ASN_NGAP_ErrorIndicationIEs>();
+    auto ieCause = asn::New<ASN_NGAP_ProtocolIE_Field_13561P136>();
     ieCause->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
     ieCause->criticality = ASN_NGAP_Criticality_ignore;
-    ieCause->value.present = ASN_NGAP_ErrorIndicationIEs__value_PR_Cause;
+    ieCause->value.present = ASN_NGAP_ProtocolIE_Field_13561P136__value_PR_Cause;
     ngap_utils::ToCauseAsn_Ref(cause, ieCause->value.choice.Cause);
 
     m_logger->warn("Sending an error indication with cause: %s",
@@ -293,10 +293,10 @@ void NgapTask::receiveAmfConfigurationUpdate(int amfId, ASN_NGAP_AMFConfiguratio
     {
         m_logger->err("TNL modification is not supported, rejecting AMF %d configuration update", amfId);
 
-        auto *ieCause = asn::New<ASN_NGAP_AMFConfigurationUpdateFailureIEs>();
+        auto *ieCause = asn::New<ASN_NGAP_ProtocolIE_Field_13561P132>();
         ieCause->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
         ieCause->criticality = ASN_NGAP_Criticality_ignore;
-        ieCause->value.present = ASN_NGAP_AMFConfigurationUpdateFailureIEs__value_PR_Cause;
+        ieCause->value.present = ASN_NGAP_ProtocolIE_Field_13561P132__value_PR_Cause;
         ngap_utils::ToCauseAsn_Ref(NgapCause::Transport_unspecified, ieCause->value.choice.Cause);
 
         auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_AMFConfigurationUpdateFailure>({ieCause});
@@ -306,10 +306,10 @@ void NgapTask::receiveAmfConfigurationUpdate(int amfId, ASN_NGAP_AMFConfiguratio
     {
         AssignDefaultAmfConfigs(amf, msg);
 
-        auto *ieList = asn::New<ASN_NGAP_AMFConfigurationUpdateAcknowledgeIEs>();
+        auto *ieList = asn::New<ASN_NGAP_ProtocolIE_Field_13561P131>();
         ieList->id = ASN_NGAP_ProtocolIE_ID_id_AMF_TNLAssociationSetupList;
         ieList->criticality = ASN_NGAP_Criticality_ignore;
-        ieList->value.present = ASN_NGAP_AMFConfigurationUpdateAcknowledgeIEs__value_PR_AMF_TNLAssociationSetupList;
+        ieList->value.present = ASN_NGAP_ProtocolIE_Field_13561P131__value_PR_AMF_TNLAssociationSetupList;
 
         auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_AMFConfigurationUpdateAcknowledge>({ieList});
         sendNgapNonUe(amfId, pdu);

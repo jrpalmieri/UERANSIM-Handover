@@ -182,14 +182,14 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
 
     // Send response to AMF
 
-    std::vector<ASN_NGAP_PDUSessionResourceSetupResponseIEs *> responseIes;
+    std::vector<ASN_NGAP_ProtocolIE_Field_13561P74 *> responseIes;
 
     if (!successList.empty())
     {
-        auto *ie = asn::New<ASN_NGAP_PDUSessionResourceSetupResponseIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P74>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceSetupListSURes;
         ie->criticality = ASN_NGAP_Criticality_ignore;
-        ie->value.present = ASN_NGAP_PDUSessionResourceSetupResponseIEs__value_PR_PDUSessionResourceSetupListSURes;
+        ie->value.present = ASN_NGAP_ProtocolIE_Field_13561P74__value_PR_PDUSessionResourceSetupListSURes;
 
         for (auto &item : successList)
             asn::SequenceAdd(ie->value.choice.PDUSessionResourceSetupListSURes, item);
@@ -199,11 +199,11 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
 
     if (!failedList.empty())
     {
-        auto *ie = asn::New<ASN_NGAP_PDUSessionResourceSetupResponseIEs>();
+        auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P74>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceFailedToSetupListSURes;
         ie->criticality = ASN_NGAP_Criticality_ignore;
         ie->value.present =
-            ASN_NGAP_PDUSessionResourceSetupResponseIEs__value_PR_PDUSessionResourceFailedToSetupListSURes;
+            ASN_NGAP_ProtocolIE_Field_13561P74__value_PR_PDUSessionResourceFailedToSetupListSURes;
 
         for (auto &item : failedList)
             asn::SequenceAdd(ie->value.choice.PDUSessionResourceFailedToSetupListSURes, item);
@@ -296,11 +296,11 @@ void NgapTask::receiveSessionResourceReleaseCommand(int amfId, ASN_NGAP_PDUSessi
     if (ieReq)
         deliverDownlinkNas(ue->ctxId, asn::GetOctetString(ieReq->NAS_PDU));
 
-    auto *ieResp = asn::New<ASN_NGAP_PDUSessionResourceReleaseResponseIEs>();
+    auto *ieResp = asn::New<ASN_NGAP_ProtocolIE_Field_13561P76>();
     ieResp->id = ASN_NGAP_ProtocolIE_ID_id_PDUSessionResourceReleasedListRelRes;
     ieResp->criticality = ASN_NGAP_Criticality_ignore;
     ieResp->value.present =
-        ASN_NGAP_PDUSessionResourceReleaseResponseIEs__value_PR_PDUSessionResourceReleasedListRelRes;
+        ASN_NGAP_ProtocolIE_Field_13561P76__value_PR_PDUSessionResourceReleasedListRelRes;
 
     // Perform release
     for (auto &psi : psIds)

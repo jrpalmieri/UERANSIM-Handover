@@ -117,35 +117,35 @@ void NgapTask::handleInitialNasTransport(int64_t ueId, OctetString &nasPdu, int6
 
     // create NGAP message to AMF
 
-    std::vector<ASN_NGAP_InitialUEMessage_IEs *> ies;
+    std::vector<ASN_NGAP_ProtocolIE_Field_13561P119 *> ies;
 
-    auto *ieEstablishmentCause = asn::New<ASN_NGAP_InitialUEMessage_IEs>();
+    auto *ieEstablishmentCause = asn::New<ASN_NGAP_ProtocolIE_Field_13561P119>();
     ieEstablishmentCause->id = ASN_NGAP_ProtocolIE_ID_id_RRCEstablishmentCause;
     ieEstablishmentCause->criticality = ASN_NGAP_Criticality_ignore;
-    ieEstablishmentCause->value.present = ASN_NGAP_InitialUEMessage_IEs__value_PR_RRCEstablishmentCause;
+    ieEstablishmentCause->value.present = ASN_NGAP_ProtocolIE_Field_13561P119__value_PR_RRCEstablishmentCause;
     ieEstablishmentCause->value.choice.RRCEstablishmentCause = rrcEstablishmentCause;
     ies.push_back(ieEstablishmentCause);
 
-    auto *ieCtxRequest = asn::New<ASN_NGAP_InitialUEMessage_IEs>();
+    auto *ieCtxRequest = asn::New<ASN_NGAP_ProtocolIE_Field_13561P119>();
     ieCtxRequest->id = ASN_NGAP_ProtocolIE_ID_id_UEContextRequest;
     ieCtxRequest->criticality = ASN_NGAP_Criticality_ignore;
-    ieCtxRequest->value.present = ASN_NGAP_InitialUEMessage_IEs__value_PR_UEContextRequest;
+    ieCtxRequest->value.present = ASN_NGAP_ProtocolIE_Field_13561P119__value_PR_UEContextRequest;
     ieCtxRequest->value.choice.UEContextRequest = ASN_NGAP_UEContextRequest_requested;
     ies.push_back(ieCtxRequest);
 
-    auto *ieNasPdu = asn::New<ASN_NGAP_InitialUEMessage_IEs>();
+    auto *ieNasPdu = asn::New<ASN_NGAP_ProtocolIE_Field_13561P119>();
     ieNasPdu->id = ASN_NGAP_ProtocolIE_ID_id_NAS_PDU;
     ieNasPdu->criticality = ASN_NGAP_Criticality_reject;
-    ieNasPdu->value.present = ASN_NGAP_InitialUEMessage_IEs__value_PR_NAS_PDU;
+    ieNasPdu->value.present = ASN_NGAP_ProtocolIE_Field_13561P119__value_PR_NAS_PDU;
     asn::SetOctetString(ieNasPdu->value.choice.NAS_PDU, nasPdu);
     ies.push_back(ieNasPdu);
 
     if (sTmsi)
     {
-        auto *ieTmsi = asn::New<ASN_NGAP_InitialUEMessage_IEs>();
+        auto *ieTmsi = asn::New<ASN_NGAP_ProtocolIE_Field_13561P119>();
         ieTmsi->id = ASN_NGAP_ProtocolIE_ID_id_FiveG_S_TMSI;
         ieTmsi->criticality = ASN_NGAP_Criticality_reject;
-        ieTmsi->value.present = ASN_NGAP_InitialUEMessage_IEs__value_PR_FiveG_S_TMSI;
+        ieTmsi->value.present = ASN_NGAP_ProtocolIE_Field_13561P119__value_PR_FiveG_S_TMSI;
 
         asn::SetBitStringInt<10>(sTmsi->amfSetId, ieTmsi->value.choice.FiveG_S_TMSI.aMFSetID);
         asn::SetBitStringInt<6>(sTmsi->amfPointer, ieTmsi->value.choice.FiveG_S_TMSI.aMFPointer);
@@ -194,10 +194,10 @@ void NgapTask::handleUplinkNasTransport(int64_t ueId, const OctetString &nasPdu)
     if (ue == nullptr)
         return;
 
-    auto *ieNasPdu = asn::New<ASN_NGAP_UplinkNASTransport_IEs>();
+    auto *ieNasPdu = asn::New<ASN_NGAP_ProtocolIE_Field_13561P121>();
     ieNasPdu->id = ASN_NGAP_ProtocolIE_ID_id_NAS_PDU;
     ieNasPdu->criticality = ASN_NGAP_Criticality_reject;
-    ieNasPdu->value.present = ASN_NGAP_UplinkNASTransport_IEs__value_PR_NAS_PDU;
+    ieNasPdu->value.present = ASN_NGAP_ProtocolIE_Field_13561P121__value_PR_NAS_PDU;
     asn::SetOctetString(ieNasPdu->value.choice.NAS_PDU, nasPdu);
 
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_UplinkNASTransport>({ieNasPdu});
@@ -208,16 +208,16 @@ void NgapTask::sendNasNonDeliveryIndication(int64_t ueId, const OctetString &nas
 {
     m_logger->debug("Sending non-delivery indication UE[%ld] ", ueId);
 
-    auto *ieNasPdu = asn::New<ASN_NGAP_NASNonDeliveryIndication_IEs>();
+    auto *ieNasPdu = asn::New<ASN_NGAP_ProtocolIE_Field_13561P122>();
     ieNasPdu->id = ASN_NGAP_ProtocolIE_ID_id_NAS_PDU;
     ieNasPdu->criticality = ASN_NGAP_Criticality_ignore;
-    ieNasPdu->value.present = ASN_NGAP_NASNonDeliveryIndication_IEs__value_PR_NAS_PDU;
+    ieNasPdu->value.present = ASN_NGAP_ProtocolIE_Field_13561P122__value_PR_NAS_PDU;
     asn::SetOctetString(ieNasPdu->value.choice.NAS_PDU, nasPdu);
 
-    auto *ieCause = asn::New<ASN_NGAP_NASNonDeliveryIndication_IEs>();
+    auto *ieCause = asn::New<ASN_NGAP_ProtocolIE_Field_13561P122>();
     ieCause->id = ASN_NGAP_ProtocolIE_ID_id_Cause;
     ieCause->criticality = ASN_NGAP_Criticality_ignore;
-    ieCause->value.present = ASN_NGAP_NASNonDeliveryIndication_IEs__value_PR_Cause;
+    ieCause->value.present = ASN_NGAP_ProtocolIE_Field_13561P122__value_PR_Cause;
     ngap_utils::ToCauseAsn_Ref(cause, ieCause->value.choice.Cause);
 
     auto *pdu = asn::ngap::NewMessagePdu<ASN_NGAP_NASNonDeliveryIndication>({ieNasPdu, ieCause});
@@ -271,10 +271,10 @@ void NgapTask::receiveRerouteNasRequest(int amfId, ASN_NGAP_RerouteNASRequest *m
             asn::DeepCopy(asn_DEF_ASN_NGAP_AllowedNSSAI, ieAllowedNssai->AllowedNSSAI, &oldAllowedNssai->AllowedNSSAI);
         else
         {
-            auto *newAllowedNssai = asn::New<ASN_NGAP_InitialUEMessage_IEs>();
+            auto *newAllowedNssai = asn::New<ASN_NGAP_ProtocolIE_Field_13561P119>();
             newAllowedNssai->id = ASN_NGAP_ProtocolIE_ID_id_AllowedNSSAI;
             newAllowedNssai->criticality = ASN_NGAP_Criticality_reject;
-            newAllowedNssai->value.present = ASN_NGAP_InitialUEMessage_IEs__value_PR_AllowedNSSAI;
+            newAllowedNssai->value.present = ASN_NGAP_ProtocolIE_Field_13561P119__value_PR_AllowedNSSAI;
 
             asn::ngap::AddProtocolIe(*initialUeMessage, newAllowedNssai);
         }
