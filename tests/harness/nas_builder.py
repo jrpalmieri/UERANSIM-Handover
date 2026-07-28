@@ -101,19 +101,27 @@ class NasSecurityContext:
     def integrity_protect(self, plain_nas: bytes, direction: int = 0) -> bytes:
         """Wrap *plain_nas* in an integrity-protected NAS container.
 
+        Parameters
+        ----------
+        direction : 0 = downlink (gNB→UE), 1 = uplink (UE→gNB).
+            Note: 3GPP MAC direction bit is the *inverse* of this convention
+            (3GPP: 0=UL, 1=DL), so we flip before passing to NIA2.
+
         Returns the full protected NAS message:
           EPD(1) | SecHeader(1) | MAC(4) | SQN(1) | plain_nas(N)
         """
         count = self.dl_count if direction == 0 else self.ul_count
         sqn = count & 0xFF
+        # 3GPP direction bit: 0=uplink, 1=downlink (opposite of our parameter)
+        mac_dir = 1 - direction
 
         # The message fed to the integrity algorithm starts at SQN octet
         m = struct.pack("!B", sqn) + plain_nas
         mac = milenage.nas_integrity_nia2(
-            self.k_nas_int, count, NAS_BEARER, direction, m
+            self.k_nas_int, count, NAS_BEARER, mac_dir, m
         )
 
-        header = struct.pack("!BB", EPD_5GMM, (SEC_INTEGRITY_NEW_CTX << 4))
+        header = struct.pack("!BB", EPD_5GMM, SEC_INTEGRITY_NEW_CTX)
         result = header + mac + m
 
         if direction == 0:
@@ -121,21 +129,27 @@ class NasSecurityContext:
         return result
 
     def integrity_protect_and_cipher(self, plain_nas: bytes, direction: int = 0) -> bytes:
-        """Wrap *plain_nas* with integrity + ciphering."""
+        """Wrap *plain_nas* with integrity + ciphering.
+
+        Parameters
+        ----------
+        direction : 0 = downlink, 1 = uplink (same convention as integrity_protect).
+        """
         count = self.dl_count if direction == 0 else self.ul_count
         sqn = count & 0xFF
+        mac_dir = 1 - direction
 
         # Cipher the NAS message (not the SQN)
         ciphered = milenage.nas_encrypt_nea2(
-            self.k_nas_enc, count, NAS_BEARER, direction, plain_nas
+            self.k_nas_enc, count, NAS_BEARER, mac_dir, plain_nas
         )
 
         m = struct.pack("!B", sqn) + ciphered
         mac = milenage.nas_integrity_nia2(
-            self.k_nas_int, count, NAS_BEARER, direction, m
+            self.k_nas_int, count, NAS_BEARER, mac_dir, m
         )
 
-        header = struct.pack("!BB", EPD_5GMM, (SEC_INTEGRITY_CIPHERED << 4))
+        header = struct.pack("!BB", EPD_5GMM, SEC_INTEGRITY_CIPHERED)
         result = header + mac + m
 
         if direction == 0:
@@ -208,9 +222,12 @@ def build_security_mode_command(
 
     # Replayed UE security capabilities (LV)
     if ue_security_capabilities is None:
-        # Default: 5GS encryption (EA1-3) | 5GS integrity (IA1-3) = 0xE0 each
-        # Format: 5G-EA bits(8) | 5G-IA bits(8)
-        ue_security_capabilities = bytes([0xE0, 0xE0])
+        # Default: must match what the UE sends in RegistrationRequest.
+        # 5G-EA: EA0(always 1)+EA1+EA2+EA3 = 0xF0
+        # 5G-IA: IA0(always 1)+IA1+IA2+IA3 = 0xF0
+        # EEA:   EEA0(always 1)+EEA1+EEA2+EEA3 = 0xF0
+        # EIA:   EIA0(always 1)+EIA1+EIA2+EIA3 = 0xF0
+        ue_security_capabilities = bytes([0xF0, 0xF0, 0xF0, 0xF0])
     buf += struct.pack("!B", len(ue_security_capabilities))
     buf += ue_security_capabilities
 
@@ -341,7 +358,7 @@ def parse_nas_header(data: bytes) -> ParsedNasMessage:
         return msg
 
     msg.epd = data[0]
-    msg.security_header = (data[1] >> 4) & 0x0F
+    msg.security_header = data[1] & 0x0F
 
     if msg.security_header == SEC_NONE:
         msg.message_type = data[2]

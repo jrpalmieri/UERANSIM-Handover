@@ -7,9 +7,9 @@ import time
 from pathlib import Path
 
 # Allow running this file directly from the repo root.
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+TESTS_DIR = Path(__file__).resolve().parents[1] / "tests"
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
 
 from harness.fake_gnb import FakeGnb
 from harness.ue_process import UeProcess

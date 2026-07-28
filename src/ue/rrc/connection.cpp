@@ -163,9 +163,9 @@ void UeRrcTask::receiveRrcReject(int64_t cellId, const ASN_RRC_RRCReject &msg)
 void UeRrcTask::receiveRrcRelease(const ASN_RRC_RRCRelease &msg)
 {
     int64_t activeCell = m_base->shCtx.currentCell.get<int64_t>([](auto &item) { return item.cellId; });
-    m_logger->debug("RRC Release received for cellId=%ld", activeCell);
+    m_logger->info("RRC Release received for cellId=%ld", activeCell);
     cancelAllChoCandidates();
-    m_state = ERrcState::RRC_IDLE;
+    switchState(ERrcState::RRC_IDLE);
     m_base->nasTask->push(std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::RRC_CONNECTION_RELEASE));
 }
 

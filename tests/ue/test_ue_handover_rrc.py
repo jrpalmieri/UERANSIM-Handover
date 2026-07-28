@@ -42,7 +42,7 @@ from harness.rrc_builder import (
 from harness.fake_gnb import FakeGnb, CapturedMessage
 from harness.rls_protocol import RrcChannel
 from harness.ue_process import UeProcess, UeState
-from conftest import ue_binary_exists, needs_asn1tools
+from .conftest import ue_binary_exists, needs_asn1tools
 
 
 # ======================================================================
@@ -99,7 +99,7 @@ class TestRrcReconfigWithSync:
     def test_cell_group_config_returns_bytes(self):
         """build_cell_group_config_handover should produce non-empty bytes."""
         result = self.rrc.build_cell_group_config_handover(
-            target_pci=100, new_crnti=0x5678, t304_ms=500
+            target_nci=100, new_crnti=0x5678, t304_ms=500
         )
         assert isinstance(result, bytes)
         # With asn1tools installed it should be non-empty
@@ -110,8 +110,8 @@ class TestRrcReconfigWithSync:
         """Different PCI values should produce different encodings."""
         if not self.rrc.has_asn1:
             pytest.skip("asn1tools required for encoding comparison")
-        a = self.rrc.build_cell_group_config_handover(target_pci=1)
-        b = self.rrc.build_cell_group_config_handover(target_pci=100)
+        a = self.rrc.build_cell_group_config_handover(target_nci=1)
+        b = self.rrc.build_cell_group_config_handover(target_nci=100)
         assert a != b
 
     def test_cell_group_config_different_t304(self):
@@ -125,7 +125,7 @@ class TestRrcReconfigWithSync:
     def test_rrc_reconfig_with_sync_returns_bytes(self):
         """build_rrc_reconfiguration_with_sync should produce bytes."""
         result = self.rrc.build_rrc_reconfiguration_with_sync(
-            transaction_id=1, target_pci=2, new_crnti=0x1234, t304_ms=1000
+            transaction_id=1, target_nci=2, new_crnti=0x1234, t304_ms=1000
         )
         assert isinstance(result, bytes)
         assert len(result) > 0
@@ -136,7 +136,7 @@ class TestRrcReconfigWithSync:
         if not self.rrc.has_asn1:
             pytest.skip("ASN.1 schema compilation failed")
         encoded = self.rrc.build_rrc_reconfiguration_with_sync(
-            transaction_id=3, target_pci=42, new_crnti=100, t304_ms=200
+            transaction_id=3, target_nci=42, new_crnti=100, t304_ms=200
         )
         decoded = self.rrc._asn1.decode("DL-DCCH-Message", encoded)
         assert "message" in decoded
@@ -149,7 +149,7 @@ class TestRrcReconfigWithSync:
         if not self.rrc.has_asn1:
             pytest.skip("ASN.1 schema compilation failed")
         encoded = self.rrc.build_rrc_reconfiguration_with_sync(
-            transaction_id=1, target_pci=77, new_crnti=0xABCD, t304_ms=500
+            transaction_id=1, target_nci=77, new_crnti=0xABCD, t304_ms=500
         )
         decoded = self.rrc._asn1.decode("DL-DCCH-Message", encoded)
         c1 = decoded["message"][1]
@@ -180,7 +180,7 @@ class TestRrcReconfigWithSync:
     def test_pci_range_boundaries(self):
         """PCI boundary values (0, 1007) should encode successfully."""
         for pci in [0, 1, 500, 1007]:
-            result = self.rrc.build_cell_group_config_handover(target_pci=pci)
+            result = self.rrc.build_cell_group_config_handover(target_nci=pci)
             assert isinstance(result, bytes)
 
 
@@ -192,12 +192,12 @@ class TestRrcReconfCompleteId:
     """Test the heuristic that identifies RRCReconfigurationComplete."""
 
     def test_first_nibble_1_is_reconfig_complete(self):
-        """UL-DCCH c1 choice 1 = rrcReconfigurationComplete."""
+        """UL-DCCH c1 choice 1 = rrcReconfigurationComplete (top 5 bits = 00001)."""
         cm = CapturedMessage(
             timestamp=0.0,
             rls_msg=None,
             channel=RrcChannel.UL_DCCH,
-            raw_pdu=bytes([0x10, 0x00]),  # first nibble = 1
+            raw_pdu=bytes([0x08, 0x00]),  # top 5 bits = 00001
         )
         assert FakeGnb._is_rrc_reconfiguration_complete(cm) is True
 
@@ -221,8 +221,8 @@ class TestRrcReconfCompleteId:
         assert FakeGnb._is_rrc_reconfiguration_complete(cm) is False
 
     def test_various_transaction_ids(self):
-        """Different transaction IDs should still be identified."""
-        for tx_high in [0x10, 0x14, 0x18, 0x1C]:
+        """Different transaction IDs should still be identified (top 5 bits = 00001)."""
+        for tx_high in [0x08, 0x09, 0x0A, 0x0B]:
             cm = CapturedMessage(
                 timestamp=0.0,
                 rls_msg=None,
@@ -249,11 +249,11 @@ class TestHandoverLogParsing:
 
     def test_handover_command_received(self):
         ue = self._ue_with_logs([
-            "[2026-02-28] [rrc] Handover command: targetPCI=42 newC-RNTI=4660 t304=1000ms",
+            "[2026-02-28] [rrc] Handover command: targetNCI=42 newC-RNTI=4660 t304=1000ms",
         ])
         info = ue.parse_handover_info()
         assert info["command_received"] is True
-        assert info["target_pci"] == 42
+        assert info["target_nci"] == 42
 
     def test_serving_cell_switched(self):
         ue = self._ue_with_logs([
@@ -265,14 +265,14 @@ class TestHandoverLogParsing:
 
     def test_handover_completed(self):
         ue = self._ue_with_logs([
-            "[rrc] Handover to cell[2] completed (PCI=42, newC-RNTI=4660)",
+            "[rrc] Handover to cell[2] completed (NCI=42, newC-RNTI=4660)",
         ])
         info = ue.parse_handover_info()
         assert info["completed"] is True
 
     def test_handover_failure_target_not_found(self):
         ue = self._ue_with_logs([
-            "[rrc] Handover failure: target PCI 99 not found among 1 detected cells",
+            "[rrc] Handover failure: target NCI 99 not found among 1 detected cells",
         ])
         info = ue.parse_handover_info()
         assert info["failed"] is True
@@ -287,14 +287,14 @@ class TestHandoverLogParsing:
 
     def test_full_successful_handover_sequence(self):
         ue = self._ue_with_logs([
-            "[rrc] ReconfigurationWithSync detected: PCI=2 newC-RNTI=4660 t304=1000ms",
-            "[rrc] Handover command: targetPCI=2 newC-RNTI=4660 t304=1000ms",
+            "[rrc] ReconfigurationWithSync detected: NCI=2 newC-RNTI=4660 t304=1000ms",
+            "[rrc] Handover command: targetNCI=2 newC-RNTI=4660 t304=1000ms",
             "[rrc] Serving cell switched: cell[1] → cell[2]",
-            "[rrc] Handover to cell[2] completed (PCI=2, newC-RNTI=4660)",
+            "[rrc] Handover to cell[2] completed (NCI=2, newC-RNTI=4660)",
         ])
         info = ue.parse_handover_info()
         assert info["command_received"] is True
-        assert info["target_pci"] == 2
+        assert info["target_nci"] == 2
         assert info["source_cell"] == 1
         assert info["target_cell"] == 2
         assert info["completed"] is True
@@ -303,8 +303,8 @@ class TestHandoverLogParsing:
 
     def test_full_failure_sequence(self):
         ue = self._ue_with_logs([
-            "[rrc] Handover command: targetPCI=99 newC-RNTI=100 t304=500ms",
-            "[rrc] Handover failure: target PCI 99 not found among 1 detected cells",
+            "[rrc] Handover command: targetNCI=99 newC-RNTI=100 t304=500ms",
+            "[rrc] Handover failure: target NCI 99 not found among 1 detected cells",
         ])
         info = ue.parse_handover_info()
         assert info["command_received"] is True
@@ -316,18 +316,18 @@ class TestHandoverLogParsing:
         ue = self._ue_with_logs([
             "[rrc] RRC-CONNECTED",
             "[rrc] Serving cell switched: cell[1] → cell[3]",
-            "[rrc] Handover to cell[3] completed (PCI=5, newC-RNTI=200)",
+            "[rrc] Handover to cell[3] completed (NCI=5, newC-RNTI=200)",
         ])
         state = ue.parse_state()
         assert state.handover_completed is True
         assert state.handover_source_cell == 1
         assert state.handover_target_cell == 3
-        assert state.handover_target_pci == 5
+        assert state.handover_target_nci == 5
 
     def test_parse_state_handover_failure(self):
         ue = self._ue_with_logs([
             "[rrc] RRC-CONNECTED",
-            "[rrc] Handover failure: target PCI 99 not found",
+            "[rrc] Handover failure: target NCI 99 not found",
         ])
         state = ue.parse_state()
         assert state.handover_failed is True
@@ -374,7 +374,7 @@ class TestHandoverFailureSingleCell:
 
         # Send handover command with target PCI=99 (not the serving cell)
         fake_gnb.send_handover_command(
-            target_pci=99, new_crnti=0x1234, t304_ms=1000
+            target_nci=99, new_crnti=0x1234, t304_ms=1000
         )
 
         # Check for handover command reception in UE logs
@@ -400,7 +400,7 @@ class TestHandoverFailureSingleCell:
 
         # Handover to non-existent cell (PCI 999)
         fake_gnb.send_handover_command(
-            target_pci=999, new_crnti=0x5678, t304_ms=500
+            target_nci=999, new_crnti=0x5678, t304_ms=500
         )
 
         # UE should log handover failure
@@ -424,7 +424,7 @@ class TestHandoverFailureSingleCell:
         fake_gnb.wait_for_ul_dcch(timeout_s=10)
         time.sleep(1)
 
-        fake_gnb.send_handover_command(target_pci=888, t304_ms=200)
+        fake_gnb.send_handover_command(target_nci=888, t304_ms=200)
 
         # Wait for either "Handover failure" or radio link failure indication
         ue_process.wait_for_handover_failure(timeout_s=10)
@@ -451,7 +451,7 @@ class TestHandoverFailureSingleCell:
         assert fake_gnb.wait_for_heartbeat(timeout_s=10)
 
         # Send handover BEFORE cell attach / RRC setup
-        fake_gnb.send_handover_command(target_pci=42, t304_ms=1000)
+        fake_gnb.send_handover_command(target_nci=42, t304_ms=1000)
         time.sleep(3)
 
         # The UE should still be responsive (no crash)
@@ -499,7 +499,7 @@ class TestHandoverSuccessTwoCells:
         # Send handover command from source cell
         # Use PCI=2 (target). Strategy 2 will pick the strongest neighbour.
         source_gnb.send_handover_command(
-            target_pci=2, new_crnti=0x5678, t304_ms=1000
+            target_nci=2, new_crnti=0x5678, t304_ms=1000
         )
 
         # Wait for handover completion log
@@ -528,7 +528,7 @@ class TestHandoverSuccessTwoCells:
         target_gnb.clear_captured()
 
         source_gnb.send_handover_command(
-            target_pci=2, new_crnti=0x5678, t304_ms=1000
+            target_nci=2, new_crnti=0x5678, t304_ms=1000
         )
 
         # The RRCReconfigurationComplete should arrive at the TARGET cell.
@@ -562,7 +562,7 @@ class TestHandoverSuccessTwoCells:
         time.sleep(3)
 
         source_gnb.send_handover_command(
-            target_pci=2, new_crnti=0x5678, t304_ms=1000
+            target_nci=2, new_crnti=0x5678, t304_ms=1000
         )
         two_cell_ue.wait_for_handover_complete(timeout_s=15)
         time.sleep(1)
@@ -586,7 +586,7 @@ class TestHandoverSuccessTwoCells:
         time.sleep(3)
 
         source_gnb.send_handover_command(
-            target_pci=2, new_crnti=0x5678, t304_ms=1000
+            target_nci=2, new_crnti=0x5678, t304_ms=1000
         )
         two_cell_ue.wait_for_handover_complete(timeout_s=15)
 
@@ -622,7 +622,7 @@ class TestT304TimerSupervision:
 
         # Use short T304 = 200ms — handover should still complete
         source_gnb.send_handover_command(
-            target_pci=2, new_crnti=0x5678, t304_ms=200
+            target_nci=2, new_crnti=0x5678, t304_ms=200
         )
         ho_line = two_cell_ue.wait_for_handover_complete(timeout_s=10)
 
@@ -652,7 +652,7 @@ class TestT304TimerSupervision:
         # fail immediately (findCellByPci returns 0) rather than
         # waiting for T304.  The failure is synchronous.
         fake_gnb.send_handover_command(
-            target_pci=777, new_crnti=0x9999, t304_ms=50
+            target_nci=777, new_crnti=0x9999, t304_ms=50
         )
 
         fail_line = ue_process.wait_for_handover_failure(timeout_s=10)
@@ -719,7 +719,7 @@ class TestMeasTriggeredHandover:
         if report is not None:
             # 5. Issue handover command
             source_gnb.send_handover_command(
-                target_pci=2, new_crnti=0xBEEF, t304_ms=1000
+                target_nci=2, new_crnti=0xBEEF, t304_ms=1000
             )
 
             # 6. Wait for handover completion

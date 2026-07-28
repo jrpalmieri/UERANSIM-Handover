@@ -9,11 +9,11 @@ import pytest
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-from .harness.fake_amf import FakeAmf
-from .harness.gnb_process import GnbProcess
+from harness.fake_amf import FakeAmf
+from harness.gnb_process import GnbProcess
 
-from .harness.fake_ue import FakeUe
-from .harness.fake_ue import RrcChannel
+from harness.fake_ue import FakeUe
+from harness.fake_ue import RrcChannel
 
 logging.basicConfig(
     level=logging.DEBUG,

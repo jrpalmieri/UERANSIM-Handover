@@ -216,7 +216,7 @@ void RlsUdpTask::receiveRlsPdu(const InetAddress &addr, std::unique_ptr<rls::Rls
         m_cellMap.upsertCell(reportedSti, time, addr);
         m_base->cellDbMeas.upsertMeasurement(nciFromSti(reportedSti), newDbm);
 
-        m_logger->debug("RLS heartbeat ACK received: sti=%lu NCI=%d dbm=%d",
+        m_logger->info("RLS heartbeat ACK received: sti=%lu NCI=%d dbm=%d",
                 reportedSti, nciFromSti(reportedSti), newDbm);
 
         // check if reported dBm is below the Radio Link Failure threshold

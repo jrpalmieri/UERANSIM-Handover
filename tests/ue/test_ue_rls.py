@@ -8,7 +8,7 @@ from .conftest import ue_binary_exists
 
 def _latest_cell_dbm(log_lines: list[str]) -> dict[int, int]:
     latest: dict[int, int] = {}
-    pattern = re.compile(r"cellId=(\d+) dbm=(-?\d+)")
+    pattern = re.compile(r"NCI=(\d+) dbm=(-?\d+)")
     for line in log_lines:
         m = pattern.search(line)
         if m:
@@ -42,7 +42,7 @@ class TestUeRlsAndSignals:
         assert fake_gnb.wait_for_heartbeat(timeout_s=10)
 
         fake_gnb.cell_dbm = -64
-        assert ue_process.wait_for_log(r"cellId=1 dbm=-64", timeout_s=8) is not None
+        assert ue_process.wait_for_log(r"NCI=1 dbm=-64", timeout_s=8) is not None
 
         fake_gnb.cell_dbm = -91
-        assert ue_process.wait_for_log(r"cellId=1 dbm=-91", timeout_s=8) is not None
+        assert ue_process.wait_for_log(r"NCI=1 dbm=-91", timeout_s=8) is not None

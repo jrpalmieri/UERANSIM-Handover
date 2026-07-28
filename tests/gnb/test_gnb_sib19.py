@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from .harness.fake_ue import FakeUe, RrcChannel
-from .harness.gnb_process import GnbProcess
-from .harness.marks import gnb_binary_exists, needs_pysctp
+from harness.fake_ue import FakeUe, RrcChannel
+from harness.gnb_process import GnbProcess
+from harness.marks import gnb_binary_exists, needs_pysctp
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 pytestmark = [gnb_binary_exists, needs_pysctp]

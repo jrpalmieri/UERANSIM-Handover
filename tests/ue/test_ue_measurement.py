@@ -20,7 +20,7 @@ from harness.fake_gnb import FakeGnb
 from harness.meas_injector import MeasurementInjector, CellMeas
 from harness.ue_process import UeProcess
 from harness.rls_protocol import RrcChannel
-from conftest import ue_binary_exists, needs_asn1tools
+from .conftest import ue_binary_exists, needs_asn1tools
 
 
 # ======================================================================

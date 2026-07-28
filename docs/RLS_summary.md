@@ -268,4 +268,20 @@ Prior development used the cRNTI in the RLS wire protocol to provide identificat
 
 The failure mode operations are only minimally specified.  Further development would add hardening and reporting for error conditions.  For example, the gNB currently does nothing when RLS produces a SIGNAL_LOST, TRANSMISSION_FAILURE or RADIO_LINK_FAILURE message for a UE.  There is also no mechanism for deleting a UE RLS context, which should occur at a minimum after a certain period of inactivity after a failure event.
 
+### m_cellDesc bug
+
+ m_cellDesc uses int (32-bit) keys, but NCIs are int64_t
+
+   - src/ue/rrc/task.hpp:53: std::unordered_map<int, UeCellDesc> m_cellDesc{}
+   - nciFromSti() returns int64_t (static_cast<int64_t>(sti >> 10))
+   - NmUeRlsToRls::cellId (line 128 in nts.hpp) is also int, so the NCI is already truncated to 32 bits before it reaches the RRC task and gets stored as a m_cellDesc key
+   - cellDbMeas.upsertMeasurement() takes int64_t, so it stores the full 64-bit NCI
+   - lookForSuitableCell calls cellDbMeas.getMeasurement(item.first) where item.first is the truncated int, sign-extended to int64_t at the call site — this produces a different 64-bit value than the one stored, so the lookup returns MIN_RSRP - 1 and the cell silently fails the signal check
+
+   Consequence: Any STI whose upper 54 bits encode an NCI that doesn't fit in int32_t causes cell selection to always fail — even when the measurement is present and healthy.
+
+   Current workaround in the test harness: fake_gnb.py sets self._gnb_sti = (nci << 10) | random.getrandbits(10), which forces nciFromSti(sti) = nci to be a small value (e.g., 1) that is identical whether stored as int or int64_t.
+
+   The real fix would be to change m_cellDesc's key type to int64_t and update NmUeRlsToRls::cellId similarly — but that's a broader C++ refactor touching the RRC task, the message types, and all call sites.
+
 

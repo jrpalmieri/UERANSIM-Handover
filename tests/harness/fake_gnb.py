@@ -47,6 +47,125 @@ logger = logging.getLogger(__name__)
 
 
 # ======================================================================
+#  CHO binary protocol helper – v2 (condition groups)
+# ======================================================================
+
+# Event type constants for the v2 binary protocol
+CHO_EVENT_T1 = 0
+CHO_EVENT_A2 = 1
+CHO_EVENT_A3 = 2
+CHO_EVENT_A5 = 3
+CHO_EVENT_D1 = 4
+CHO_EVENT_D1_SIB19 = 5
+
+_EVENT_TYPE_MAP = {
+    "T1": CHO_EVENT_T1,
+    "A2": CHO_EVENT_A2,
+    "A3": CHO_EVENT_A3,
+    "A5": CHO_EVENT_A5,
+    "D1": CHO_EVENT_D1,
+    "D1_SIB19": CHO_EVENT_D1_SIB19,
+}
+
+# Condition size = 56 bytes:
+#   6 × int32 (24 bytes) + 4 × double (32 bytes)
+CONDITION_SIZE = 56
+
+# Candidate header = 24 bytes:
+#   candidateId + targetNci + newCRNTI + t304Ms + executionPriority + numConditions
+CANDIDATE_HEADER_SIZE = 24
+
+
+def _build_condition(cond: Dict) -> bytes:
+    """Encode a single condition into 56 bytes.
+
+    Condition wire format (little-endian, 56 bytes):
+      [0..3]   eventType      (int32)  0=T1, 1=A2, 2=A3, 3=A5, 4=D1, 5=D1_SIB19
+      [4..7]   intParam1      (int32)
+      [8..11]  intParam2      (int32)
+      [12..15] intParam3      (int32)
+      [16..19] timeToTriggerMs (int32)
+      [20..23] reserved       (int32)
+      [24..31] floatParam1    (double)
+      [32..39] floatParam2    (double)
+      [40..47] floatParam3    (double)
+      [48..55] floatParam4    (double)
+
+    Parameter mapping by event type:
+      T1:       intParam1 = t1DurationMs
+      A2:       intParam1 = threshold, intParam2 = hysteresis
+      A3:       intParam1 = offset, intParam2 = hysteresis
+      A5:       intParam1 = threshold1, intParam2 = threshold2, intParam3 = hysteresis
+      D1:       floatParam1..4 = refX, refY, refZ, thresholdM
+      D1_SIB19: intParam1 = flags (bit0=useNadir), floatParam1 = thresholdM, floatParam2 = elevMinDeg
+    """
+    evt_str = cond.get("event", "T1")
+    evt = _EVENT_TYPE_MAP.get(evt_str, CHO_EVENT_T1)
+    ttt = cond.get("timeToTriggerMs", 0)
+
+    ip1, ip2, ip3 = 0, 0, 0
+    fp1, fp2, fp3, fp4 = 0.0, 0.0, 0.0, 0.0
+
+    if evt == CHO_EVENT_T1:
+        ip1 = cond.get("t1DurationMs", 1000)
+    elif evt == CHO_EVENT_A2:
+        ip1 = cond.get("threshold", -110)
+        ip2 = cond.get("hysteresis", 2)
+    elif evt == CHO_EVENT_A3:
+        ip1 = cond.get("offset", 6)
+        ip2 = cond.get("hysteresis", 2)
+    elif evt == CHO_EVENT_A5:
+        ip1 = cond.get("threshold1", -110)
+        ip2 = cond.get("threshold2", -100)
+        ip3 = cond.get("hysteresis", 2)
+    elif evt == CHO_EVENT_D1:
+        fp1 = cond.get("refX", 0.0)
+        fp2 = cond.get("refY", 0.0)
+        fp3 = cond.get("refZ", 0.0)
+        fp4 = cond.get("thresholdM", 1000.0)
+    elif evt == CHO_EVENT_D1_SIB19:
+        # flags: bit0 = useNadir (default true)
+        flags = 0
+        if cond.get("useNadir", True):
+            flags |= 0x01
+        ip1 = flags
+        fp1 = cond.get("thresholdM", -1.0)           # <0 = use SIB19's distanceThresh
+        fp2 = cond.get("elevationMinDeg", -1.0)       # <0 = disabled
+
+    return struct.pack("<iiiiii", evt, ip1, ip2, ip3, ttt, 0) + \
+           struct.pack("<dddd", fp1, fp2, fp3, fp4)
+
+
+
+
+def _legacy_to_conditions(c: Dict, cond_str: str) -> List[Dict]:
+    """Convert legacy single-conditionType to a list of condition dicts."""
+    if cond_str == "T1_ONLY":
+        return [{"event": "T1", "t1DurationMs": c.get("t1DurationMs", 1000)}]
+    elif cond_str == "T1_AND_A3":
+        return [
+            {"event": "T1", "t1DurationMs": c.get("t1DurationMs", 1000)},
+            {"event": "A3",
+             "offset": c.get("a3Offset", 6),
+             "hysteresis": c.get("a3Hysteresis", 2),
+             "timeToTriggerMs": c.get("a3TimeToTriggerMs", 0)},
+        ]
+    elif cond_str == "D1_ONLY":
+        return [{"event": "D1",
+                 "refX": c.get("d1RefX", 0.0),
+                 "refY": c.get("d1RefY", 0.0),
+                 "refZ": c.get("d1RefZ", 0.0),
+                 "thresholdM": c.get("d1ThresholdM", 1000.0)}]
+    elif cond_str == "D1_SIB19_ONLY":
+        return [{"event": "D1_SIB19",
+                 "useNadir": c.get("d1sib19UseNadir", True),
+                 "thresholdM": c.get("d1sib19ThresholdM", -1.0),
+                 "elevationMinDeg": c.get("d1sib19ElevationMinDeg", -1.0)}]
+    else:
+        return [{"event": "T1", "t1DurationMs": c.get("t1DurationMs", 1000)}]
+
+
+# ======================================================================
 #  Data types
 # ======================================================================
 
@@ -88,6 +207,7 @@ class FakeGnb:
         self._mnc = mnc
         self._tac = tac
         self._nci = nci
+        self._cell_id = int(nci & 0x3FF)
         self._supi = ue_supi
         self._ue_key = bytes.fromhex(ue_key)
         self._ue_op = bytes.fromhex(ue_op)
@@ -97,12 +217,22 @@ class FakeGnb:
         self._sock: Optional[socket.socket] = None
         self._ue_addr: Optional[Tuple[str, int]] = None
         self._ue_sti: int = 0
-        self._gnb_sti: int = random.getrandbits(64)
+        # Encode nci in upper bits so nciFromSti(sti) == nci (a small value that
+        # fits in both int32 m_cellDesc keys and int64_t cellDbMeas keys).
+        self._gnb_sti: int = (nci << 10) | random.getrandbits(10)
         self._pdu_id_counter: int = 1
 
         # Captured messages
         self._captured: Deque[CapturedMessage] = deque(maxlen=1000)
+        self._consumed_idx: int = 0
         self._lock = threading.Lock()
+
+        # Heartbeat observability for position-based tests
+        self._heartbeat_count: int = 0
+        self._last_heartbeat_sim_pos: Optional[Tuple[float, float, float]] = None
+
+        # True gNB position/velocity used by CLI-equivalent set-loc-pv command.
+        self._true_position_velocity: Optional[Dict[str, float]] = None
 
         # RRC codec
         self._rrc = RrcCodec()
@@ -127,6 +257,7 @@ class FakeGnb:
         self._sock.settimeout(0.5)
 
         self._running = True
+        self._consumed_idx = 0
         self._thread = threading.Thread(target=self._listen_loop, daemon=True)
         self._thread.start()
         logger.info("FakeGnb listening on %s:%d", self._addr, self._port)
@@ -158,7 +289,7 @@ class FakeGnb:
     def send_rrc(self, channel: RrcChannel, pdu: bytes):
         """Send an RRC PDU to the UE on the given channel."""
         msg = encode_pdu_transmission(
-            self._ue_sti, EPduType.RRC, self._next_pdu_id(),
+            self._gnb_sti, EPduType.RRC, self._next_pdu_id(),
             int(channel), pdu,
         )
         self._send_raw(msg)
@@ -193,23 +324,53 @@ class FakeGnb:
 
         Must be called after wait_for_heartbeat() succeeds.
         """
+        self.broadcast_system_information()
+        logger.info("Sent MIB + SIB1 for cell attach")
+
+    def broadcast_system_information(self):
+        """Broadcast MIB + SIB1 once.
+
+        The UE may miss a single SI burst while transitioning states. Higher-level
+        attach helpers can call this multiple times.
+        """
         mib = self._rrc.build_mib()
         sib1 = self._rrc.build_sib1(self._mcc, self._mnc, self._tac, self._nci)
         self.send_rrc(RrcChannel.BCCH_BCH, mib)
         time.sleep(0.1)
         self.send_rrc(RrcChannel.BCCH_DL_SCH, sib1)
-        logger.info("Sent MIB + SIB1 for cell attach")
+        logger.debug("Broadcast system information (MIB=%dB SIB1=%dB)", len(mib), len(sib1))
 
-    def wait_for_rrc_setup_request(self, timeout_s: float = 10.0) -> Optional[CapturedMessage]:
-        """Wait for the UE to send an RRCSetupRequest on UL-CCCH."""
-        return self._wait_for_ul(RrcChannel.UL_CCCH, timeout_s=timeout_s)
+    def wait_for_rrc_setup_request(
+        self,
+        timeout_s: float = 20.0,
+        rebroadcast_si: bool = True,
+        si_period_s: float = 1.0,
+    ) -> Optional[CapturedMessage]:
+        """Wait for the UE to send an RRCSetupRequest on UL-CCCH.
 
-    def perform_rrc_setup(self, transaction_id: int = 0) -> bool:
+        When *rebroadcast_si* is enabled, MIB/SIB1 are re-sent periodically to
+        avoid missing initial-access windows in timing-sensitive test runs.
+        """
+        end = time.monotonic() + timeout_s
+        next_si_broadcast = time.monotonic() + max(0.2, si_period_s)
+
+        while time.monotonic() < end:
+            msg = self._wait_for_ul(RrcChannel.UL_CCCH, timeout_s=0.4)
+            if msg is not None:
+                return msg
+
+            if rebroadcast_si and time.monotonic() >= next_si_broadcast:
+                self.broadcast_system_information()
+                next_si_broadcast = time.monotonic() + max(0.2, si_period_s)
+
+        return None
+
+    def perform_rrc_setup(self, transaction_id: int = 0, timeout_s: float = 20.0) -> bool:
         """Wait for RRCSetupRequest and respond with RRCSetup.
 
         Returns True if the setup request was received.
         """
-        req = self.wait_for_rrc_setup_request()
+        req = self.wait_for_rrc_setup_request(timeout_s=timeout_s)
         if req is None:
             logger.warning("No RRCSetupRequest received")
             return False
@@ -304,6 +465,7 @@ class FakeGnb:
         report_configs: Optional[List[Dict]] = None,
         meas_ids: Optional[List[Dict]] = None,
         transaction_id: int = 1,
+        full_config: bool = False,
     ):
         """Send RRCReconfiguration with measurement configuration."""
         reconfig = self._rrc.build_rrc_reconfiguration(
@@ -311,13 +473,14 @@ class FakeGnb:
             meas_objects=meas_objects,
             report_configs=report_configs,
             meas_ids=meas_ids,
+            full_config=full_config,
         )
         self.send_dl_dcch(reconfig)
         logger.info("Sent RRCReconfiguration with measConfig")
 
     def send_handover_command(
         self,
-        target_pci: int = 2,
+        target_nci: int = 2,
         new_crnti: int = 0x1234,
         t304_ms: int = 1000,
         transaction_id: int = 2,
@@ -325,18 +488,18 @@ class FakeGnb:
         """Send an RRCReconfiguration containing ReconfigurationWithSync.
 
         This triggers the UE to perform a handover to the cell identified
-        by *target_pci*.
+        by *target_nci*.
         """
         reconfig = self._rrc.build_rrc_reconfiguration_with_sync(
             transaction_id=transaction_id,
-            target_pci=target_pci,
+            target_nci=target_nci,
             new_crnti=new_crnti,
             t304_ms=t304_ms,
         )
         self.send_dl_dcch(reconfig)
         logger.info(
-            "Sent handover command: targetPCI=%d newC-RNTI=%d t304=%dms",
-            target_pci, new_crnti, t304_ms,
+            "Sent handover command: targetNCI=%d newC-RNTI=%d t304=%dms",
+            target_nci, new_crnti, t304_ms,
         )
 
     def send_rrc_release(self, transaction_id: int = 0):
@@ -345,12 +508,98 @@ class FakeGnb:
         self.send_dl_dcch(release)
         logger.info("Sent RRCRelease")
 
+
+    def send_conditional_reconfiguration(
+        self,
+        candidates_to_add_mod: Optional[List[Dict]] = None,
+        candidate_ids_to_remove: Optional[List[int]] = None,
+        transaction_id: int = 3,
+    ):
+        """Send ASN-based ConditionalReconfiguration in DL-DCCH.
+
+        candidates_to_add_mod entries:
+          {
+            "candidateId": int,
+            "measIds": [int, ...],
+            "condRrcReconfig": bytes,
+          }
+
+        candidate_ids_to_remove is a list of CondReconfigId values.
+        """
+        reconfig = self._rrc.build_rrc_reconfiguration_conditional_handover(
+            transaction_id=transaction_id,
+            candidates_to_add_mod=candidates_to_add_mod,
+            candidate_ids_to_remove=candidate_ids_to_remove,
+        )
+        self.send_dl_dcch(reconfig)
+        logger.info(
+            "Sent ConditionalReconfiguration: addMod=%d remove=%d",
+            len(candidates_to_add_mod or []),
+            len(candidate_ids_to_remove or []),
+        )
+
+    def send_sib19(self, **kwargs):
+        """Send a SIB19 NTN configuration via the DL_SIB19 custom channel.
+
+        All keyword arguments are forwarded to ``RrcCodec.build_sib19()``.
+        Common parameters:
+
+        - position_x/y/z : float — satellite ECEF position in meters.
+        - velocity_vx/vy/vz : float — satellite velocity in m/s.
+        - epoch_time : int — reference time in 10-ms steps.
+        - k_offset : int — scheduling offset in ms.
+        - distance_thresh : float — CHO D1 threshold in meters (< 0 = absent).
+        - ta_common : int — common Timing Advance in T_c units.
+        - ta_common_drift : int — TA drift rate (T_c/s).
+        - ul_sync_validity : int — seconds (-1 = absent).
+        - ntn_polarization : int — 0=RHCP, 1=LHCP, 2=LINEAR, -1=absent.
+        """
+        pdu = RrcCodec.build_sib19(**kwargs)
+        self.send_rrc(RrcChannel.DL_SIB19, pdu)
+        logger.info("Sent SIB19 (%d bytes)", len(pdu))
+
     def wait_for_measurement_report(self, timeout_s: float = 15.0) -> Optional[CapturedMessage]:
         """Wait for a MeasurementReport on UL-DCCH."""
         return self._wait_for_ul(
             RrcChannel.UL_DCCH, timeout_s=timeout_s,
             filter_fn=lambda cm: self._is_measurement_report(cm),
         )
+
+    def wait_for_measurement_report_since(self, start_ts: float, timeout_s: float = 15.0) -> Optional[CapturedMessage]:
+        """Wait for a parseable MeasurementReport captured at/after *start_ts*.
+
+        Unlike ``wait_for_measurement_report``, this does not depend on the
+        internal consumed-index cursor and is resilient to prior reads from
+        other fixtures/helpers.
+        """
+        end = time.monotonic() + timeout_s
+        while time.monotonic() < end:
+            with self._lock:
+                for cm in self._captured:
+                    if cm.timestamp < start_ts:
+                        continue
+                    if cm.channel == RrcChannel.UL_DCCH and self._is_measurement_report(cm):
+                        return cm
+            time.sleep(0.2)
+        return None
+
+    def get_ul_dcch_message_type(self, raw_pdu: bytes) -> str:
+        """Best-effort message-type extraction for UL-DCCH payloads."""
+        decoded = self._rrc.decode_ul_dcch(raw_pdu)
+
+        msg_type = decoded.get("message_type")
+        if isinstance(msg_type, str) and msg_type:
+            return msg_type
+
+        message = decoded.get("message")
+        if isinstance(message, tuple) and len(message) == 2:
+            c1 = message[1]
+            if isinstance(c1, tuple) and len(c1) == 2:
+                name = c1[0]
+                if isinstance(name, str) and name:
+                    return name
+
+        return "unknown"
 
     def wait_for_rrc_reconfiguration_complete(
         self, timeout_s: float = 10.0
@@ -374,6 +623,104 @@ class FakeGnb:
         with self._lock:
             return list(self._captured)
 
+    @property
+    def heartbeat_count(self) -> int:
+        with self._lock:
+            return self._heartbeat_count
+
+    @property
+    def last_heartbeat_sim_pos(self) -> Optional[Tuple[float, float, float]]:
+        with self._lock:
+            return self._last_heartbeat_sim_pos
+
+    def wait_for_heartbeat_position(self, timeout_s: float = 10.0) -> Optional[Tuple[float, float, float]]:
+        """Wait for the first heartbeat that carries UE simulated position."""
+        end = time.monotonic() + timeout_s
+        while time.monotonic() < end:
+            with self._lock:
+                if self._last_heartbeat_sim_pos is not None:
+                    return self._last_heartbeat_sim_pos
+            time.sleep(0.2)
+        return None
+
+    @property
+    def true_position_velocity(self) -> Optional[Dict[str, float]]:
+        with self._lock:
+            if self._true_position_velocity is None:
+                return None
+            return dict(self._true_position_velocity)
+
+    def _update_modeled_cell_dbm_locked(self, now_ms: Optional[int] = None):
+        """Update modeled cell dBm from true gNB PV and latest UE heartbeat position.
+
+        Caller must hold ``self._lock``.
+        """
+        if self._true_position_velocity is None or self._last_heartbeat_sim_pos is None:
+            return
+
+        if now_ms is None:
+            now_ms = int(time.time() * 1000)
+
+        pv = self._true_position_velocity
+        dt_sec = max(0.0, (now_ms - int(pv["epochMs"])) / 1000.0)
+        gx = pv["x"] + pv["vx"] * dt_sec
+        gy = pv["y"] + pv["vy"] * dt_sec
+        gz = pv["z"] + pv["vz"] * dt_sec
+
+        ux, uy, uz = self._last_heartbeat_sim_pos
+        dx = ux - gx
+        dy = uy - gy
+        dz = uz - gz
+        distance_m = (dx * dx + dy * dy + dz * dz) ** 0.5
+
+        modeled = int(round(-35.0 - min(distance_m, 2_000_000.0) / 20_000.0))
+        self._cell_dbm = max(-120, min(-30, modeled))
+
+    def refresh_modeled_cell_dbm(self, now_ms: Optional[int] = None):
+        """Refresh modeled cell dBm from time-evolved true gNB position."""
+        with self._lock:
+            self._update_modeled_cell_dbm_locked(now_ms)
+
+    def run_command(self, command: str) -> str:
+        """Run a minimal CLI-equivalent gNB command in the test harness.
+
+        Supported commands:
+          - set-loc-pv x:y:z:vx:vy:vz:epoch-ms
+        """
+        cmd = command.strip()
+        if not cmd.startswith("set-loc-pv "):
+            raise ValueError(f"Unsupported command: {command}")
+
+        arg = cmd[len("set-loc-pv "):].strip()
+        parts = arg.split(":")
+        if len(parts) != 7:
+            raise ValueError("Invalid set-loc-pv format. Expected x:y:z:vx:vy:vz:epoch-ms")
+
+        try:
+            x = float(parts[0])
+            y = float(parts[1])
+            z = float(parts[2])
+            vx = float(parts[3])
+            vy = float(parts[4])
+            vz = float(parts[5])
+            epoch_ms = int(parts[6])
+        except ValueError as exc:
+            raise ValueError("Invalid set-loc-pv argument values") from exc
+
+        with self._lock:
+            self._true_position_velocity = {
+                "x": x,
+                "y": y,
+                "z": z,
+                "vx": vx,
+                "vy": vy,
+                "vz": vz,
+                "epochMs": epoch_ms,
+            }
+            self._update_modeled_cell_dbm_locked(epoch_ms)
+
+        return "Updated true gNB position/velocity for SIB19 generation"
+
     def captured_rrc_on(self, channel: RrcChannel) -> List[CapturedMessage]:
         """Return all captured RRC messages on a specific channel."""
         return [
@@ -384,6 +731,7 @@ class FakeGnb:
     def clear_captured(self):
         with self._lock:
             self._captured.clear()
+            self._consumed_idx = 0
 
     # ------------------------------------------------------------------
     #  Properties
@@ -436,13 +784,24 @@ class FakeGnb:
         """Reply with HeartBeatAck and record UE address/STI."""
         self._ue_addr = addr
         self._ue_sti = hb.sti
-        ack = encode_heartbeat_ack(self._gnb_sti, self._cell_dbm)
+        with self._lock:
+            self._heartbeat_count += 1
+            self._last_heartbeat_sim_pos = hb.sim_pos
+            self._update_modeled_cell_dbm_locked()
+        ack = encode_heartbeat_ack(
+            self._gnb_sti,
+            self._cell_dbm,
+        )
         self._send_raw(ack, addr)
 
     def _handle_pdu_transmission(self, pdu_tx: RlsPduTransmission, addr: Tuple[str, int]):
         """Process an uplink PDU_TRANSMISSION: ACK it and capture."""
         # Send ACK
-        ack = encode_pdu_transmission_ack(self._gnb_sti, [pdu_tx.pdu_id])
+        ack = encode_pdu_transmission_ack(
+            self._gnb_sti,
+            [pdu_tx.pdu_id],
+            radio_bearers=[pdu_tx.radio_bearer],
+        )
         self._send_raw(ack, addr)
 
         # Determine channel
@@ -489,37 +848,42 @@ class FakeGnb:
         timeout_s: float = 10.0,
         filter_fn: Optional[Callable[[CapturedMessage], bool]] = None,
     ) -> Optional[CapturedMessage]:
-        """Wait for a captured UL message on *channel*, optionally filtered."""
-        start_idx = len(self._captured)
+        """Wait for a captured UL message on *channel*, optionally filtered.
+
+        Searches from the internal consumption index so that each call
+        returns the *next* matching message (not one already returned).
+        """
         end = time.monotonic() + timeout_s
         while time.monotonic() < end:
             with self._lock:
-                for i in range(start_idx, len(self._captured)):
+                for i in range(self._consumed_idx, len(self._captured)):
                     cm = self._captured[i]
                     if cm.channel == channel:
                         if filter_fn is None or filter_fn(cm):
+                            self._consumed_idx = i + 1
                             return cm
             time.sleep(0.2)
         return None
 
-    @staticmethod
-    def _is_measurement_report(cm: CapturedMessage) -> bool:
-        """Heuristic: check if a UL-DCCH PDU is a MeasurementReport."""
+    def _is_measurement_report(self, cm: CapturedMessage) -> bool:
+        """Check if a UL-DCCH PDU is a parseable MeasurementReport."""
         if len(cm.raw_pdu) < 1:
             return False
-        # In UPER, UL-DCCH c1 choice 0 = measurementReport
-        first_nibble = (cm.raw_pdu[0] >> 4) & 0x0F
-        return first_nibble == 0
+
+        msg_type = self.get_ul_dcch_message_type(cm.raw_pdu)
+        if msg_type == "measurementReport":
+            return True
+
+        # Fallback to bit-level heuristic if decoder cannot classify.
+        return (cm.raw_pdu[0] >> 3) == 0
 
     @staticmethod
     def _is_rrc_reconfiguration_complete(cm: CapturedMessage) -> bool:
         """Heuristic: check if a UL-DCCH PDU is RRCReconfigurationComplete.
 
         In UPER, UL-DCCH-MessageType → c1 → choice index 1 =
-        rrcReconfigurationComplete.  The first 4 bits of the encoded
-        PDU represent the c1 choice index.
+        rrcReconfigurationComplete.  Top 5 bits = 00001.
         """
         if len(cm.raw_pdu) < 1:
             return False
-        first_nibble = (cm.raw_pdu[0] >> 4) & 0x0F
-        return first_nibble == 1
+        return (cm.raw_pdu[0] >> 3) == 1

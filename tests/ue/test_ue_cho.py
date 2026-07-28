@@ -12,9 +12,9 @@ import time
 import pytest
 
 from .conftest import needs_asn1tools, ue_binary_exists
-from .harness.rls_protocol import RrcChannel
-from .harness.rrc_builder import RrcCodec
-from .harness.ue_process import UeProcess
+from harness.rls_protocol import RrcChannel
+from harness.rrc_builder import RrcCodec
+from harness.ue_process import UeProcess
 
 
 class TestUeChoAsnBuilderHelpers:

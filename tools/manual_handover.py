@@ -6,14 +6,17 @@ instances are already running (configured via their respective YAML files).
 It simply drives the ``MeasurementInjector`` to send periodic measurements to
 whatever UE is listening.  No assertions are performed.
 """
+import sys
 from pathlib import Path
 import time
 
-import pytest
 import yaml
 
+TESTS_DIR = Path(__file__).resolve().parents[1] / "tests"
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
 
-from .harness.meas_injector import MeasurementInjector
+from harness.meas_injector import MeasurementInjector
 
 # def get_db(db_uri="mongodb://localhost:27017/open5gs"):
 #     """Connect to MongoDB and return the database object."""

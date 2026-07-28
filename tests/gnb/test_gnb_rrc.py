@@ -15,11 +15,11 @@ import time
 
 import pytest
 
-from .harness.marks import gnb_binary_exists, needs_pysctp
-from .harness.fake_ue import FakeUe
-from .harness.gnb_process import GnbProcess
+from harness.marks import gnb_binary_exists, needs_pysctp
+from harness.fake_ue import FakeUe
+from harness.gnb_process import GnbProcess
 
-from .harness.fake_ue import RrcChannel
+from harness.fake_ue import RrcChannel
 
 
 # =====================================================================

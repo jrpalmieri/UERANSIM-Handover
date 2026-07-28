@@ -129,7 +129,7 @@ void UeRrcTask::handleRadioLinkFailure(rls::ERlfCause cause, int64_t cellId, int
                 m_logger->info("Radio Link failure detected for active cell[%ld], dbm=%d", cellId, dbm);
 
                 cancelAllChoCandidates();
-                m_state = ERrcState::RRC_IDLE;
+                switchState(ERrcState::RRC_IDLE);
 
                 // notify NAS
                 m_base->nasTask->push(std::make_unique<NmUeRrcToNas>(NmUeRrcToNas::RADIO_LINK_FAILURE));

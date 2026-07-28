@@ -15,7 +15,7 @@ from typing import Deque, List, Optional, Sequence
 logger = logging.getLogger(__name__)
 
 RLS_COMPAT_MARKER = 0x03
-RLS_VERSION = (3, 3, 7)
+RLS_VERSION = (3, 4, 7)
 
 MSG_HEARTBEAT = 4
 MSG_HEARTBEAT_ACK = 5
@@ -31,7 +31,7 @@ _DEFAULT_NAS_REG_REQUEST = bytes.fromhex("7e004179000d0182f61000000000000000102f
 _FALLBACK_RRC_SETUP_COMPLETE = bytes.fromhex("1000059f80105e40034060bd8400000000000000040bc0804040")
 _FALLBACK_RRC_RECONFIG_COMPLETE = bytes.fromhex("1000")
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _ASN1_PATH = _PROJECT_ROOT / "tests" / "data" / "asn1_specs" / "rrc-15.6.0.asn1"
 _ASN1_EXPANDED = _PROJECT_ROOT / "tests" / "data" / "asn1_specs" / "rrc-15.6.0-expanded.asn1"
 
@@ -74,8 +74,6 @@ class CapturedDlRrc:
 class CapturedHeartbeatAck:
     timestamp: float
     sti: int
-    sender_id: int
-    sender_id2: int
     dbm: int
 
 
@@ -267,8 +265,6 @@ class FakeUe:
                         CapturedHeartbeatAck(
                             timestamp=time.monotonic(),
                             sti=parsed["sti"],
-                            sender_id=parsed["sender_id"],
-                            sender_id2=parsed["sender_id2"],
                             dbm=parsed["dbm"],
                         )
                     )
@@ -291,79 +287,67 @@ class FakeUe:
             ack = self._encode_pdu_transmission_ack([parsed["pdu_id"]])
             self._send(ack)
 
-    def _encode_header(self, msg_type: int, sender_id2: int = 0) -> bytes:
+    def _encode_header(self, msg_type: int) -> bytes:
         return struct.pack(
-            "!BBBBBQII",
+            "!BBBBBQ",
             RLS_COMPAT_MARKER,
             RLS_VERSION[0],
             RLS_VERSION[1],
             RLS_VERSION[2],
             msg_type,
             self._sti,
-            self._ue_id,
-            sender_id2,
         )
 
     def _encode_heartbeat(self, sim_pos: tuple[float, float, float]) -> bytes:
         return self._encode_header(MSG_HEARTBEAT) + struct.pack("!ddd", sim_pos[0], sim_pos[1], sim_pos[2])
 
     def _encode_pdu_transmission(self, payload: int, pdu_id: int, pdu: bytes) -> bytes:
-        body = struct.pack("!BIII", PDU_TYPE_RRC, pdu_id, payload, len(pdu))
+        # Wire: pduType(1B) + radioBearer|ackFlag(1B) + pduId(4B) + sdapByte(1B) + payloadType(4B) + pduLen(4B)
+        body = struct.pack("!BBIBII", PDU_TYPE_RRC, 0, pdu_id, 0, payload, len(pdu))
         return self._encode_header(MSG_PDU_TRANSMISSION) + body + pdu
 
     def _encode_pdu_transmission_ack(self, pdu_ids: list[int]) -> bytes:
+        # Wire: count(4B) + [radioBearer(1B) + pduId(4B)]×N
         body = struct.pack("!I", len(pdu_ids))
         for pid in pdu_ids:
-            body += struct.pack("!I", pid)
+            body += struct.pack("!BI", 0, pid)
         return self._encode_header(MSG_PDU_TRANSMISSION_ACK) + body
 
     def _decode_message(self, data: bytes) -> Optional[dict]:
-        if len(data) < 21:
+        if len(data) < 13:  # header(5) + sti(8)
             return None
 
-        marker, major, minor, patch, msg_type, sti, sender_id, sender_id2 = struct.unpack("!BBBBBQII", data[:21])
+        marker, major, minor, patch, msg_type = struct.unpack("!BBBBB", data[:5])
         if marker != RLS_COMPAT_MARKER:
             return None
-        if (major, minor, patch) != RLS_VERSION:
-            return None
+        sti = struct.unpack("!Q", data[5:13])[0]
 
-        offset = 21
+        offset = 13
         if msg_type == MSG_HEARTBEAT_ACK:
             if len(data) < offset + 4:
                 return None
             dbm = struct.unpack("!i", data[offset : offset + 4])[0]
-            return {
-                "msg_type": msg_type,
-                "sti": sti,
-                "sender_id": sender_id,
-                "sender_id2": sender_id2,
-                "dbm": dbm,
-            }
+            return {"msg_type": msg_type, "sti": sti, "dbm": dbm}
 
         if msg_type == MSG_PDU_TRANSMISSION:
-            if len(data) < offset + 13:
+            # pduType(1B) + radioBearer|ackFlag(1B) + pduId(4B) + sdapByte(1B) + payloadType(4B) + pduLen(4B) = 15B
+            if len(data) < offset + 15:
                 return None
-            pdu_type, pdu_id, payload, pdu_len = struct.unpack("!BIII", data[offset : offset + 13])
-            offset += 13
+            pdu_type, rb_byte, pdu_id, sdap_byte, payload, pdu_len = struct.unpack(
+                "!BBIBII", data[offset : offset + 15])
+            offset += 15
             if len(data) < offset + pdu_len:
                 return None
             return {
                 "msg_type": msg_type,
                 "sti": sti,
-                "sender_id": sender_id,
-                "sender_id2": sender_id2,
                 "pdu_type": pdu_type,
                 "pdu_id": pdu_id,
                 "payload": payload,
                 "pdu": data[offset : offset + pdu_len],
             }
 
-        return {
-            "msg_type": msg_type,
-            "sti": sti,
-            "sender_id": sender_id,
-            "sender_id2": sender_id2,
-        }
+        return {"msg_type": msg_type, "sti": sti}
 
     def _build_measurement_report(
         self,

@@ -4,35 +4,37 @@ import struct
 import time
 
 from .conftest import ue_binary_exists
-from .harness.rls_protocol import RrcChannel
+from harness.rls_protocol import RrcChannel
 
 
 def _build_sib19_multi_payload(entries: list[dict]) -> bytes:
     # Versioned multi-entry format used by gNB SIB19 broadcaster.
     # Header: [0]=version(2), [1]=ephemerisType(0), [2..3]=reserved, [4..7]=entryCount(u32)
-    payload = bytearray(8 + len(entries) * 96)
+    # Entry layout (100 bytes, PosVel/Orbital): NCI(int64,8) + ephemeris(48) + common(44)
+    payload = bytearray(8 + len(entries) * 100)
     payload[0] = 2
     payload[1] = 0
     struct.pack_into("<I", payload, 4, len(entries))
 
     for i, entry in enumerate(entries):
-        base = 8 + i * 96
-        struct.pack_into("<l", payload, base, int(entry["nci"]))
-        struct.pack_into("<d", payload, base + 4, float(entry["x"]))
-        struct.pack_into("<d", payload, base + 12, float(entry["y"]))
-        struct.pack_into("<d", payload, base + 20, float(entry["z"]))
-        struct.pack_into("<d", payload, base + 28, float(entry["vx"]))
-        struct.pack_into("<d", payload, base + 36, float(entry["vy"]))
-        struct.pack_into("<d", payload, base + 44, float(entry["vz"]))
-        struct.pack_into("<q", payload, base + 52, int(entry["epoch10ms"]))
-        struct.pack_into("<i", payload, base + 60, int(entry["kOffset"]))
-        struct.pack_into("<q", payload, base + 64, int(entry["taCommon"]))
-        struct.pack_into("<i", payload, base + 72, int(entry["taCommonDrift"]))
-        struct.pack_into("<i", payload, base + 76, int(entry["taCommonDriftVariation"]))
-        struct.pack_into("<i", payload, base + 80, int(entry["ulSyncValidity"]))
-        struct.pack_into("<i", payload, base + 84, int(entry["cellSpecificKoffset"]))
-        struct.pack_into("<i", payload, base + 88, int(entry["polarization"]))
-        struct.pack_into("<i", payload, base + 92, int(entry["taDrift"]))
+        base = 8 + i * 100
+        struct.pack_into("<q", payload, base, int(entry["nci"]))       # NCI: int64 (8 bytes)
+        struct.pack_into("<d", payload, base + 8, float(entry["x"]))   # positionX
+        struct.pack_into("<d", payload, base + 16, float(entry["y"]))  # positionY
+        struct.pack_into("<d", payload, base + 24, float(entry["z"]))  # positionZ
+        struct.pack_into("<d", payload, base + 32, float(entry["vx"])) # velocityVX
+        struct.pack_into("<d", payload, base + 40, float(entry["vy"])) # velocityVY
+        struct.pack_into("<d", payload, base + 48, float(entry["vz"])) # velocityVZ
+        # Common fields start at offset 56 (= 8 NCI + 48 ephemeris)
+        struct.pack_into("<q", payload, base + 56, int(entry["epoch10ms"]))
+        struct.pack_into("<i", payload, base + 64, int(entry["kOffset"]))
+        struct.pack_into("<q", payload, base + 68, int(entry["taCommon"]))
+        struct.pack_into("<i", payload, base + 76, int(entry["taCommonDrift"]))
+        struct.pack_into("<i", payload, base + 80, int(entry["taCommonDriftVariation"]))
+        struct.pack_into("<i", payload, base + 84, int(entry["ulSyncValidity"]))
+        struct.pack_into("<i", payload, base + 88, int(entry["cellSpecificKoffset"]))
+        struct.pack_into("<i", payload, base + 92, int(entry["polarization"]))
+        struct.pack_into("<i", payload, base + 96, int(entry["taDrift"]))
 
     return bytes(payload)
 

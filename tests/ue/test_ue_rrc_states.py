@@ -15,9 +15,9 @@ import time
 
 import pytest
 
-from .harness.fake_gnb import FakeGnb
-from .harness.ue_process import UeProcess
-from .harness.rls_protocol import RrcChannel
+from harness.fake_gnb import FakeGnb
+from harness.ue_process import UeProcess
+from harness.rls_protocol import RrcChannel
 from .conftest import ue_binary_exists, needs_asn1tools
 
 
@@ -113,10 +113,11 @@ class TestRrcIdleToConnected:
         time.sleep(2)
         ue_process.collect_output(timeout_s=1)
 
-        # Verify via log parsing
-        state = ue_process.parse_state()
-        assert state.rrc_state == "RRC_CONNECTED" or state.connected, \
-            f"Expected RRC_CONNECTED, got {state.rrc_state}"
+        # Verify that the UE reached RRC_CONNECTED at some point after setup.
+        # We check has_log rather than parse_state because subsequent NAS or RLF
+        # transitions may already have moved the UE back to RRC_IDLE by t=2s.
+        assert ue_process.has_log(r"RRC-CONNECTED"), \
+            f"UE never reached RRC_CONNECTED (last state: {ue_process.parse_state().rrc_state})"
         ue_process.cleanup()
 
 

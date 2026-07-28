@@ -15,11 +15,11 @@ import time
 
 import pytest
 
-from .harness.marks import gnb_binary_exists, needs_pysctp
-from .harness.fake_amf import FakeAmf
-from .harness.fake_ue import FakeUe
-from .harness.gnb_process import GnbProcess
-from .harness import ngap_codec as ngap
+from harness.marks import gnb_binary_exists, needs_pysctp
+from harness.fake_amf import FakeAmf
+from harness.fake_ue import FakeUe
+from harness.gnb_process import GnbProcess
+from harness import ngap_codec as ngap
 
 
 # =====================================================================
@@ -72,7 +72,7 @@ class TestInitialUeMessage:
         fake_ue.send_rrc_setup_request()
         time.sleep(0.5)
 
-        from .harness.fake_ue import RrcChannel
+        from harness.fake_ue import RrcChannel
         dl = fake_ue.wait_for_dl_rrc(RrcChannel.DL_CCCH, timeout_s=5)
         assert dl is not None, "Did not receive RRCSetup (DL-CCCH)"
 

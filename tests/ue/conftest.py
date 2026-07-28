@@ -6,8 +6,8 @@ from typing import Generator
 
 import pytest
 
-from .harness.fake_gnb import FakeGnb
-from .harness.ue_process import UeProcess
+from harness.fake_gnb import FakeGnb
+from harness.ue_process import UeProcess
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 UE_BINARY = PROJECT_ROOT / "build" / "nr-ue"

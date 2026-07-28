@@ -97,10 +97,10 @@ def f2345(k: bytes, opc: bytes, rand: bytes) -> Tuple[bytes, bytes, bytes, bytes
     out4 = _xor(_aes128_ecb(k, _xor(_rotate_left_bytes(_xor(temp, opc), _R4), _C4)), opc)
     out5 = _xor(_aes128_ecb(k, _xor(_rotate_left_bytes(_xor(temp, opc), _R5), _C5)), opc)
 
-    res = out2[8:16]   # 8 bytes
-    ck = out3           # 16 bytes
-    ik = out4           # 16 bytes
-    ak = out5[:6]       # 6 bytes
+    res = out2[8:16]   # 8 bytes  (f2)
+    ck = out3           # 16 bytes (f3)
+    ik = out4           # 16 bytes (f4)
+    ak = out2[:6]       # 6 bytes  (f5 — shares out2 with f2)
     return res, ck, ik, ak
 
 
@@ -223,10 +223,10 @@ def nas_encrypt_nea2(
 ) -> bytes:
     """Encrypt (or decrypt) a NAS PDU using 128-NEA2 (AES-CTR).
 
-    Counter block: COUNT(32) || BEARER(5) || DIRECTION(1) || 0…0(26) || 0(32)
+    Counter block: COUNT(32) || BEARER(5) || DIRECTION(1) || 0…0(26) || 0(64)
     """
     iv_upper = _build_eia2_input(count, bearer, direction)
-    iv = iv_upper + b"\x00\x00\x00\x00"   # 16 bytes total
+    iv = iv_upper + b"\x00\x00\x00\x00\x00\x00\x00\x00"   # 16 bytes total
     cipher = Cipher(algorithms.AES(key), modes.CTR(iv))
     enc = cipher.encryptor()
     return enc.update(plaintext) + enc.finalize()
@@ -239,7 +239,7 @@ def derive_full_key_set(
     mcc: str,
     mnc: str,
     supi: str,
-    sqn: bytes = b"\x00\x00\x00\x00\x00\x00",
+    sqn: bytes = b"\x00\x00\x00\x00\x00\x20",  # seq=1, ind=0 (indBitLen=5)
     amf_val: bytes = b"\x80\x00",
     rand: bytes | None = None,
     abba: bytes = b"\x00\x00",
@@ -255,7 +255,10 @@ def derive_full_key_set(
     sqn_xor_ak = _xor(av["sqn"], av["ak"])
     kausf = derive_kausf(av["ck"], av["ik"], sn_name, sqn_xor_ak)
     kseaf = derive_kseaf(kausf, sn_name)
-    kamf = derive_kamf(kseaf, supi.encode("utf-8"), abba)
+    # The UERANSIM C++ Supi::Parse strips the "imsi-" prefix, so the KDF
+    # input for KAMF uses only the numeric IMSI value.
+    supi_value = supi.split("-", 1)[-1] if "-" in supi else supi
+    kamf = derive_kamf(kseaf, supi_value.encode("utf-8"), abba)
     k_nas_int = derive_knas_int(kamf, algo_id=2)  # NIA2
     k_nas_enc = derive_knas_enc(kamf, algo_id=2)  # NEA2
     res_star = derive_res_star(av["ck"], av["ik"], sn_name, av["rand"], av["xres"])

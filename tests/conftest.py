@@ -1,8 +1,9 @@
 """
-pytest configuration and shared fixtures for UERANSIM UE tests.
+Root pytest configuration for the UERANSIM test suite.
 
-Fixtures provide managed instances of FakeGnb, UeProcess, and
-MeasurementInjector that are started/stopped per test (or per session).
+Provides shared skip marks and fixtures available to all tests under tests/.
+UE-specific fixtures are in tests/ue/conftest.py; gNB-specific in tests/gnb/conftest.py.
+All harness modules live in tests/harness/.
 """
 
 from __future__ import annotations

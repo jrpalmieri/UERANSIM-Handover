@@ -29,6 +29,7 @@
       "Bash(git status *)",
       "Bash(awk '{print $1}')",
       "Bash(./rrc_d1_probe)",
+      "Bash(python3 -m pytest *)",
       "Bash(./tools/check_asn1_runtime.sh)"
     ],
     "additionalDirectories": [

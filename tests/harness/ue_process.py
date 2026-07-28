@@ -40,7 +40,7 @@ class UeState:
     # Handover-related
     handover_completed: bool = False
     handover_failed: bool = False
-    handover_target_pci: int = 0
+    handover_target_nci: int = 0
     handover_source_cell: int = 0
     handover_target_cell: int = 0
 
@@ -65,6 +65,8 @@ class UeProcess:
         self._proc: Optional[subprocess.Popen] = None
         self._log_lines: List[str] = []
         self._tmp_dir: Optional[str] = None
+        self._master_fd: Optional[int] = None
+        self._pty_file = None
 
     @property
     def pid(self) -> Optional[int]:
@@ -91,8 +93,7 @@ class UeProcess:
         op: str = "E8ED289DEBA952E4283B54E88E6183CA",
         op_type: str = "OP",
         sessions: Optional[list] = None,
-        meas_source_type: str = "UDP",
-        meas_udp_port: int = 7200,
+        enable_handover_sim: bool = True,
     ) -> Path:
         """Create a temporary UE config YAML and return its path."""
         cfg = {
@@ -118,6 +119,7 @@ class UeProcess:
             "integrity": {"IA1": True, "IA2": True, "IA3": True},
             "ciphering": {"EA1": True, "EA2": True, "EA3": True},
             "integrityMaxRate": {"uplink": "full", "downlink": "full"},
+            "enableHandoverSim": enable_handover_sim,
         }
 
         # Sessions — empty by default to avoid TUN creation
@@ -127,13 +129,6 @@ class UeProcess:
         # NSSAI
         cfg["configured-nssai"] = [{"sst": 1, "sd": 1}]
         cfg["default-nssai"] = [{"sst": 1, "sd": 1}]
-
-        # OOB measurement source
-        if meas_source_type.upper() != "NONE":
-            cfg["measSource"] = {
-                "type": meas_source_type,
-                "udpPort": meas_udp_port,
-            }
 
         self._tmp_dir = tempfile.mkdtemp(prefix="ueransim_test_")
         config_path = Path(self._tmp_dir) / "test-ue.yaml"
@@ -182,6 +177,13 @@ class UeProcess:
             self._proc.wait(timeout=2)
         finally:
             self._proc = None
+            if self._pty_file is not None:
+                try:
+                    self._pty_file.close()
+                except OSError:
+                    pass
+                self._pty_file = None
+                self._master_fd = None
 
     def cleanup(self):
         """Stop process and remove temporary files."""
@@ -199,21 +201,52 @@ class UeProcess:
     # ------------------------------------------------------------------
 
     def collect_output(self, timeout_s: float = 0.5):
-        """Read available stdout lines (non-blocking) and append to log."""
+        """Read available stdout lines (non-blocking) and append to log.
+
+        Uses raw non-blocking reads on the underlying file descriptor to
+        avoid a subtle issue where ``select`` + ``readline()`` on a
+        ``TextIOWrapper`` can miss data that was already buffered inside
+        Python's I/O stack (select reports the OS pipe as not-ready while
+        the BufferedReader already consumed the bytes).
+        """
         if self._proc is None or self._proc.stdout is None:
             return
         import select
+        import fcntl
+
+        fd = self._proc.stdout.fileno()
+
+        # Set non-blocking on the raw FD
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+        partial = b""
         end = time.monotonic() + timeout_s
-        while time.monotonic() < end:
-            ready, _, _ = select.select([self._proc.stdout], [], [], 0.1)
-            if ready:
-                line = self._proc.stdout.readline()
-                if line:
-                    self._log_lines.append(line.rstrip("\n"))
-                else:
+        try:
+            while time.monotonic() < end:
+                remaining = end - time.monotonic()
+                if remaining <= 0:
                     break
-            else:
-                break
+                wait = min(remaining, 0.1)
+                ready, _, _ = select.select([fd], [], [], wait)
+                if ready:
+                    try:
+                        data = os.read(fd, 65536)
+                    except BlockingIOError:
+                        continue
+                    if not data:
+                        break  # EOF
+                    partial += data
+                    # Process complete lines
+                    while b"\n" in partial:
+                        line_bytes, partial = partial.split(b"\n", 1)
+                        line = line_bytes.decode("utf-8", errors="replace")
+                        clean = re.sub(r'\x1b\[[0-9;]*m', '', line)
+                        if clean:
+                            self._log_lines.append(clean)
+        finally:
+            # Restore blocking mode
+            fcntl.fcntl(fd, fcntl.F_SETFL, fl)
 
     def wait_for_log(self, pattern: str, timeout_s: float = 15.0) -> Optional[str]:
         """Wait until a log line matching *pattern* appears.
@@ -243,17 +276,25 @@ class UeProcess:
         self.collect_output(timeout_s=0.3)
         state = UeState()
 
-        for line in reversed(self._log_lines):
+        for line in self._log_lines:
             # RRC state changes
             if "RRC-IDLE" in line or "switched to RRC-IDLE" in line.upper():
                 state.rrc_state = "RRC_IDLE"
+                state.connected = False
+            elif "RRC Release received" in line:
+                # UE doesn't log "RRC-IDLE" explicitly, but RRC Release → IDLE
+                state.rrc_state = "RRC_IDLE"
+                state.connected = False
             elif "RRC-CONNECTED" in line or "switched to RRC-CONNECTED" in line.upper():
                 state.rrc_state = "RRC_CONNECTED"
                 state.connected = True
             elif "RRC-INACTIVE" in line:
                 state.rrc_state = "RRC_INACTIVE"
 
-            # RM state
+            # RM state — the UE doesn't log "RM-REGISTERED" directly,
+            # but RM state is implied by MM state:
+            #   MM_REGISTERED  → RM_REGISTERED
+            #   MM_DEREGISTERED → RM_DEREGISTERED
             if "RM-REGISTERED" in line:
                 state.rm_state = "RM_REGISTERED"
                 state.registered = True
@@ -269,10 +310,14 @@ class UeProcess:
             # MM state
             if "MM-DEREGISTERED" in line:
                 state.mm_state = "MM_DEREGISTERED"
-            elif "MM-REGISTERED-INITIATED" in line:
+                state.rm_state = "RM_DEREGISTERED"
+                state.registered = False
+            elif "MM-REGISTERED-INITIATED" in line or "MM-REGISTER-INITIATED" in line:
                 state.mm_state = "MM_REGISTERED_INITIATED"
             elif "MM-REGISTERED" in line and "INITIATED" not in line:
                 state.mm_state = "MM_REGISTERED"
+                state.rm_state = "RM_REGISTERED"
+                state.registered = True
 
             # MM sub-state
             m = re.search(r"MM state is (.+?)(?:\.|$)", line)
@@ -282,9 +327,9 @@ class UeProcess:
             # Handover
             if "Handover to cell" in line and "completed" in line:
                 state.handover_completed = True
-                m = re.search(r"PCI=(\d+)", line)
+                m = re.search(r"NCI=(\d+)", line)
                 if m:
-                    state.handover_target_pci = int(m.group(1))
+                    state.handover_target_nci = int(m.group(1))
             if "Handover failure" in line or "T304 expired" in line:
                 state.handover_failed = True
             m = re.search(r"Serving cell switched: cell\[(\d+)\].*cell\[(\d+)\]", line)
@@ -315,7 +360,7 @@ class UeProcess:
 
     def wait_for_handover_command(self, timeout_s: float = 15.0) -> Optional[str]:
         """Wait until the UE logs reception of a handover command."""
-        return self.wait_for_log(r"Handover command: targetPCI=", timeout_s)
+        return self.wait_for_log(r"Handover command: targetNCI=", timeout_s)
 
     def wait_for_cell_switch(self, timeout_s: float = 15.0) -> Optional[str]:
         """Wait until the UE logs a cell switch."""
@@ -332,7 +377,7 @@ class UeProcess:
           - command_received (bool)
           - completed (bool)
           - failed (bool)
-          - target_pci (int or None)
+          - target_nci (int or None)
           - source_cell (int or None)
           - target_cell (int or None)
           - t304_expired (bool)
@@ -343,7 +388,7 @@ class UeProcess:
             "command_received": False,
             "completed": False,
             "failed": False,
-            "target_pci": None,
+            "target_nci": None,
             "source_cell": None,
             "target_cell": None,
             "t304_expired": False,
@@ -351,11 +396,11 @@ class UeProcess:
         }
 
         for line in self._log_lines:
-            # "Handover command: targetPCI=X newC-RNTI=Y t304=Zms"
-            m = re.search(r"Handover command: targetPCI=(\d+)", line)
+            # "Handover command: targetNCI=X newC-RNTI=Y t304=Zms"
+            m = re.search(r"Handover command: targetNCI=(\d+)", line)
             if m:
                 info["command_received"] = True
-                info["target_pci"] = int(m.group(1))
+                info["target_nci"] = int(m.group(1))
 
             # "Serving cell switched: cell[X] → cell[Y]"
             m = re.search(r"Serving cell switched: cell\[(\d+)\].*cell\[(\d+)\]", line)
@@ -363,15 +408,15 @@ class UeProcess:
                 info["source_cell"] = int(m.group(1))
                 info["target_cell"] = int(m.group(2))
 
-            # "Handover to cell[X] completed (PCI=Y, newC-RNTI=Z)"
+            # "Handover to cell[X] completed (NCI=Y, newC-RNTI=Z)"
             if "Handover to cell" in line and "completed" in line:
                 info["completed"] = True
 
-            # "Handover failure: target PCI X not found"
+            # "Handover failure: target NCI X not found"
             if "Handover failure" in line:
                 info["failed"] = True
 
-            # "T304 expired – handover to PCI X failed"
+            # "T304 expired – handover to NCI X failed"
             if "T304 expired" in line:
                 info["t304_expired"] = True
                 info["failed"] = True
@@ -379,5 +424,126 @@ class UeProcess:
             # Radio link failure (triggered by HO failure or T304 expiry)
             if "Radio link failure" in line or "radio-link-failure" in line.lower():
                 info["rlf_triggered"] = True
+
+        return info
+
+    # ------------------------------------------------------------------
+    #  CHO-specific helpers
+    # ------------------------------------------------------------------
+
+    def wait_for_cho_candidate_added(self, timeout_s: float = 15.0) -> Optional[str]:
+        """Wait until the UE logs a CHO candidate being added."""
+        return self.wait_for_log(r"CHO candidate \d+ added|DL_CHO candidate \d+", timeout_s)
+
+    def wait_for_cho_t1_expired(self, timeout_s: float = 15.0) -> Optional[str]:
+        """Wait until the UE logs T1 timer expiry for any CHO candidate."""
+        return self.wait_for_log(r"CHO candidate \d+: T1 expired", timeout_s)
+
+    def wait_for_cho_execution(self, timeout_s: float = 15.0) -> Optional[str]:
+        """Wait until the UE logs execution of a CHO candidate."""
+        return self.wait_for_log(r"Executing CHO candidate \d+", timeout_s)
+
+    def wait_for_cho_condition_met(self, timeout_s: float = 15.0) -> Optional[str]:
+        """Wait until a CHO condition group is met."""
+        return self.wait_for_log(r"condition.*met.*executing handover", timeout_s)
+
+    def parse_cho_info(self) -> dict:
+        """Extract CHO-related info from log lines.
+
+        Returns a dict with keys:
+          - candidates_configured (int): number of CHO candidates configured
+          - t1_expired_ids (list[int]): candidate IDs with expired T1
+          - executed_id (int or None): ID of executed candidate
+          - cancelled (bool): whether candidates were cancelled
+                    - applied_added (int): total candidates added via apply summaries
+                    - applied_updated (int): total candidates updated via apply summaries
+                    - applied_removed (int): total candidates removed via apply summaries
+                    - applied_remove_miss (int): total remove misses via apply summaries
+                    - applied_skipped (int): total candidates skipped via apply summaries
+                    - active_candidates (int): last reported active CHO candidate count
+                    - runtime_resets (int): number of CHO runtime reset events observed
+        """
+        self.collect_output(timeout_s=0.3)
+        info: dict = {
+            "candidates_configured": 0,
+            "t1_expired_ids": [],
+            "executed_id": None,
+            "cancelled": False,
+                        "applied_added": 0,
+                        "applied_updated": 0,
+                        "applied_removed": 0,
+                        "applied_remove_miss": 0,
+                        "applied_skipped": 0,
+                        "active_candidates": 0,
+                        "runtime_resets": 0,
+        }
+
+        for line in self._log_lines:
+            # "CHO candidate X added: ..." or "DL_CHO candidate X: ..."
+            m = re.search(r"(?:CHO candidate|DL_CHO candidate) (\d+)", line)
+            if m and ("added" in line or "DL_CHO candidate" in line):
+                info["candidates_configured"] += 1
+
+            # "CHO candidate X: T1 expired"
+            m = re.search(r"CHO candidate (\d+): T1 expired", line)
+            if m:
+                info["t1_expired_ids"].append(int(m.group(1)))
+
+            # "Executing CHO candidate X"
+            m = re.search(r"Executing CHO candidate (\d+)", line)
+            if m:
+                info["executed_id"] = int(m.group(1))
+
+            # "Cancelling X CHO candidate(s)"
+            if "Cancelling" in line and "CHO candidate" in line:
+                info["cancelled"] = True
+
+            # "CHO runtime state reset for N candidate(s)"
+            m = re.search(r"CHO runtime state reset for (\d+) candidate\(s\)", line)
+            if m:
+                info["runtime_resets"] += 1
+                continue
+
+            #
+            # Apply summary logs:
+            #   ConditionalReconfiguration applied: removed=1 removeMiss=0 added=2
+            #       updated=1 skipped=0 activeCandidates=3
+            #   DL_CHO applied: total=2 added=1 updated=1 skipped=0 activeCandidates=2
+            #
+            m = re.search(
+                r"ConditionalReconfiguration applied: removed=(\d+) removeMiss=(\d+) "
+                r"added=(\d+) updated=(\d+) skipped=(\d+) activeCandidates=(\d+)",
+                line,
+            )
+            if m:
+                info["applied_removed"] += int(m.group(1))
+                info["applied_remove_miss"] += int(m.group(2))
+                info["applied_added"] += int(m.group(3))
+                info["applied_updated"] += int(m.group(4))
+                info["applied_skipped"] += int(m.group(5))
+                info["active_candidates"] = int(m.group(6))
+                continue
+
+            m = re.search(
+                r"ConditionalReconfiguration applied: removed=(\d+) removeMiss=(\d+) "
+                r"activeCandidates=(\d+)",
+                line,
+            )
+            if m:
+                info["applied_removed"] += int(m.group(1))
+                info["applied_remove_miss"] += int(m.group(2))
+                info["active_candidates"] = int(m.group(3))
+                continue
+
+            m = re.search(
+                r"DL_CHO applied: total=\d+ added=(\d+) updated=(\d+) skipped=(\d+) "
+                r"activeCandidates=(\d+)",
+                line,
+            )
+            if m:
+                info["applied_added"] += int(m.group(1))
+                info["applied_updated"] += int(m.group(2))
+                info["applied_skipped"] += int(m.group(3))
+                info["active_candidates"] = int(m.group(4))
 
         return info

@@ -25,7 +25,8 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Path to the RRC ASN.1 schema bundled with UERANSIM
-_ASN1_PATH = Path(__file__).resolve().parents[2] / "tests" / "data" / "asn1_specs" / "rrc-15.6.0.asn1"
+_ASN1_PATH = Path(__file__).resolve().parent.parent / "data" / "asn1_specs" / "rrc-15.6.0.asn1"
+_ASN1_EXPANDED_PATH = Path(__file__).resolve().parent.parent / "data" / "asn1_specs" / "rrc-15.6.0-expanded.asn1"
 
 
 def _try_compile_asn1():
@@ -39,15 +40,57 @@ def _try_compile_asn1():
         logger.info("asn1tools not installed — using pre-computed RRC bytes")
         return None
 
-    if not _ASN1_PATH.exists():
-        logger.warning("RRC ASN.1 file not found at %s", _ASN1_PATH)
-        return None
+    # Try expanded file first (parameterized types pre-expanded)
+    for path in (_ASN1_EXPANDED_PATH, _ASN1_PATH):
+        if not path.exists():
+            continue
+        try:
+            compiled = asn1tools.compile_files(str(path), "uper")
+            logger.info("Compiled RRC ASN.1 from %s (%d types)", path.name, len(compiled.types))
+            return compiled
+        except Exception as exc:
+            logger.debug("Failed to compile %s: %s", path.name, exc)
 
+    # If the expanded file doesn't exist, try generating it
+    if _ASN1_PATH.exists() and not _ASN1_EXPANDED_PATH.exists():
+        try:
+            expanded = _expand_setup_release(_ASN1_PATH)
+            if expanded is not None:
+                compiled = asn1tools.compile_files(str(_ASN1_EXPANDED_PATH), "uper")
+                logger.info("Compiled expanded RRC ASN.1 (%d types)", len(compiled.types))
+                return compiled
+        except Exception as exc:
+            logger.debug("Failed to compile expanded ASN.1: %s", exc)
+
+    logger.warning("Could not compile any RRC ASN.1 file")
+    return None
+
+
+def _expand_setup_release(asn1_path: Path) -> Optional[Path]:
+    """Preprocess ASN.1 to expand SetupRelease parameterized type inline."""
+    import re
     try:
-        compiled = asn1tools.compile_files(str(_ASN1_PATH), "uper")
-        return compiled
+        content = asn1_path.read_text()
+        # Remove the parameterized type definition
+        content = re.sub(
+            r'-- TAG-SETUPRELEASE-START.*?-- TAG-SETUPRELEASE-STOP',
+            '-- SetupRelease expanded inline',
+            content,
+            flags=re.DOTALL,
+        )
+        # Replace all usages with inline CHOICE
+        content = re.sub(
+            r'SetupRelease\s*\{\s*([^}]+?)\s*\}',
+            r'CHOICE { release NULL, setup \1 }',
+            content,
+        )
+        out_path = asn1_path.parent / "rrc-15.6.0-expanded.asn1"
+        out_path.write_text(content)
+        logger.info("Generated expanded ASN.1 at %s", out_path)
+        return out_path
     except Exception as exc:
-        logger.warning("Failed to compile RRC ASN.1: %s", exc)
+        logger.warning("Failed to expand SetupRelease: %s", exc)
+        return None
         return None
 
 
@@ -71,6 +114,81 @@ def t304_enum_to_ms(enum_val: int) -> int:
     return 1000
 
 
+# ------------------------------------------------------------------
+#  UPER bit-level helpers for fallback encoding
+# ------------------------------------------------------------------
+
+def _bits_to_bytes(bits: list) -> bytes:
+    """Convert a list of 0/1 bits to bytes, padding with trailing zeros."""
+    while len(bits) % 8 != 0:
+        bits.append(0)
+    result = bytearray()
+    for i in range(0, len(bits), 8):
+        val = 0
+        for j in range(8):
+            val = (val << 1) | bits[i + j]
+        result.append(val)
+    return bytes(result)
+
+
+def _push_int(bits: list, value: int, width: int):
+    """Append *width* bits of *value* (MSB first) to *bits*."""
+    for i in range(width - 1, -1, -1):
+        bits.append((value >> i) & 1)
+
+
+def _push_bytes(bits: list, data: bytes):
+    """Append all bytes of *data* to *bits*."""
+    for b in data:
+        _push_int(bits, b, 8)
+
+
+def _push_length_determinant(bits: list, length: int):
+    """Append a UPER unconstrained-length determinant."""
+    if length < 128:
+        _push_int(bits, length, 8)
+    elif length < 16384:
+        _push_int(bits, 0b10, 2)
+        _push_int(bits, length, 14)
+    else:
+        raise ValueError(f"Length {length} too large for fallback encoder")
+
+
+def _bit_string_from_int(value: int, bit_length: int) -> tuple[bytes, int]:
+    """Build an asn1tools BIT STRING tuple as (bytes, bit_length)."""
+    if bit_length <= 0:
+        return (b"", 0)
+    width = (bit_length + 7) // 8
+    return (int(value).to_bytes(width, "big"), bit_length)
+
+
+def _uper_dl_info_transfer(tid: int, nas_pdu: bytes) -> bytes:
+    """UPER-encode DL-DCCH-Message → c1 → dlInformationTransfer."""
+    bits: list = []
+    _push_int(bits, 0, 1)       # c1 (not messageClassExtension)
+    _push_int(bits, 5, 4)       # dlInformationTransfer = index 5
+    _push_int(bits, tid & 3, 2) # rrc-TransactionIdentifier
+    _push_int(bits, 0, 1)       # criticalExtensions = IEs
+    _push_int(bits, 1, 1)       # dedicatedNAS-Message PRESENT
+    _push_int(bits, 0, 1)       # lateNonCriticalExtension ABSENT
+    _push_int(bits, 0, 1)       # nonCriticalExtension ABSENT
+    _push_length_determinant(bits, len(nas_pdu))
+    _push_bytes(bits, nas_pdu)
+    return _bits_to_bytes(bits)
+
+
+def _uper_rrc_release(tid: int) -> bytes:
+    """UPER-encode DL-DCCH-Message → c1 → rrcRelease (empty IEs)."""
+    bits: list = []
+    _push_int(bits, 0, 1)       # c1
+    _push_int(bits, 2, 4)       # rrcRelease = index 2
+    _push_int(bits, tid & 3, 2) # rrc-TransactionIdentifier
+    _push_int(bits, 0, 1)       # criticalExtensions = IEs
+    _push_int(bits, 0, 1)       # extension marker (no extensions)
+    _push_int(bits, 0, 6)       # 6 OPTIONAL fields all ABSENT
+    return _bits_to_bytes(bits)
+
+
 class RrcCodec:
     """Encode & decode NR RRC PDUs.
 
@@ -83,6 +201,51 @@ class RrcCodec:
     @property
     def has_asn1(self) -> bool:
         return self._asn1 is not None
+
+    def supports_conditional_reconfiguration(self) -> bool:
+        """Return True when compiled ASN.1 includes Rel-16 CHO structures."""
+        if self._asn1 is None:
+            return False
+
+        required = {
+            "RRCReconfiguration-v1610-IEs",
+            "ConditionalReconfiguration-r16",
+        }
+        available = set(self._asn1.types.keys())
+        return required.issubset(available)
+
+    def conditional_reconfiguration_support_error(self) -> str:
+        """Return a deterministic diagnostics string for missing CHO schema support."""
+        if self._asn1 is None:
+            return (
+                "asn1tools codec is unavailable; cannot encode standards-based "
+                "ConditionalReconfiguration"
+            )
+
+        required = [
+            "RRCReconfiguration-v1610-IEs",
+            "ConditionalReconfiguration-r16",
+        ]
+        missing = [name for name in required if name not in self._asn1.types]
+        if not missing:
+            return ""
+
+        return (
+            "Compiled ASN.1 schema does not include Rel-16 CHO types: "
+            f"missing {', '.join(missing)}"
+        )
+
+    @staticmethod
+    def _normalize_txn_id(transaction_id: int) -> int:
+        """RRC transaction identifiers are 2-bit values (0..3)."""
+        normalized = int(transaction_id) & 0x3
+        if normalized != transaction_id:
+            logger.debug(
+                "Normalizing RRC transaction identifier %d -> %d (2-bit field)",
+                transaction_id,
+                normalized,
+            )
+        return normalized
 
     # ------------------------------------------------------------------
     #  DL message builders
@@ -100,9 +263,9 @@ class RrcCodec:
         """Encode a MIB (BCCH-BCH-Message)."""
         if self._asn1 is not None:
             mib_msg = {
-                "message": {
-                    "mib": {
-                        "systemFrameNumber": (sfn, 6),
+                "message": (
+                    "mib", {
+                        "systemFrameNumber": _bit_string_from_int(sfn, 6),
                         "subCarrierSpacingCommon": scs_common,
                         "ssb-SubcarrierOffset": ssb_offset,
                         "dmrs-TypeA-Position": dmrs_pos,
@@ -112,9 +275,9 @@ class RrcCodec:
                         },
                         "cellBarred": cell_barred,
                         "intraFreqReselection": intra_freq,
-                        "spare": (0, 1),
+                        "spare": _bit_string_from_int(0, 1),
                     }
-                }
+                )
             }
             try:
                 return self._asn1.encode("BCCH-BCH-Message", mib_msg)
@@ -122,7 +285,8 @@ class RrcCodec:
                 logger.debug("asn1tools MIB encode failed: %s", exc)
 
         # Fallback: minimal pre-computed MIB bytes (cell not barred, SCS 15kHz)
-        return bytes.fromhex("00000000")
+        # Generated by tools/gen_sib1_hex.cpp using UERANSIM's ASN.1 encoder
+        return bytes.fromhex("000004")
 
     def build_sib1(
         self,
@@ -146,32 +310,110 @@ class RrcCodec:
                     "plmn-IdentityList": [
                         {
                             "plmn-IdentityList": [plmn],
-                            "trackingAreaCode": (tac, 24),
-                            "cellIdentity": (cell_identity, 36),
+                            "trackingAreaCode": _bit_string_from_int(tac, 24),
+                            "cellIdentity": _bit_string_from_int(cell_identity, 36),
                             "cellReservedForOperatorUse": "notReserved",
                         }
                     ]
                 },
             }
-            sib1_msg = {"message": {"c1": ("systemInformationBlockType1", sib1_val)}}
+            sib1_msg = {"message": ("c1", ("systemInformationBlockType1", sib1_val))}
             try:
                 return self._asn1.encode("BCCH-DL-SCH-Message", sib1_msg)
             except Exception as exc:
                 logger.debug("asn1tools SIB1 encode failed: %s", exc)
 
-        # Fallback: minimal pre-computed SIB1 bytes
-        # This is a simplified encoding — may need updating per ASN.1 schema version
-        return bytes.fromhex(
-            "40 40 04 08 60 d6 00 80 00 44 02 80 00 00 01 00"
-            .replace(" ", "")
-        )
+        # Fallback: minimal pre-computed SIB1 bytes for PLMN 286/93, TAC=1, NCI=1
+        # Generated by tools/gen_sib1_hex.cpp using UERANSIM's ASN.1 encoder
+        return bytes.fromhex("400008250c930000010000000018")
+
+    @staticmethod
+    def build_sib19(
+        *,
+        ephemeris_type: int = 0,
+        position_x: float = 0.0,
+        position_y: float = 0.0,
+        position_z: float = 0.0,
+        velocity_vx: float = 0.0,
+        velocity_vy: float = 0.0,
+        velocity_vz: float = 0.0,
+        semi_major_axis: int = 0,
+        eccentricity: int = 0,
+        periapsis: int = 0,
+        longitude: int = 0,
+        inclination: int = 0,
+        mean_anomaly: int = 0,
+        epoch_time: int = 0,
+        k_offset: int = 0,
+        ta_common: int = 0,
+        ta_common_drift: int = 0,
+        ta_common_drift_variation: int = -1,
+        ul_sync_validity: int = -1,
+        cell_specific_koffset: int = -1,
+        ntn_polarization: int = -1,
+        ta_drift: int = -(2**31),
+    ) -> bytes:
+        """Build a binary SIB19 PDU for the DL_SIB19 custom channel.
+
+                Binary format (little-endian, 96 bytes total):
+          [0]     ephemeris_type (uint8: 0=posVel, 1=orbital)
+          [1..3]  reserved
+          [4..51] ephemeris block (48 bytes)
+                    [52..95] common fields
+
+        Parameters
+        ----------
+        ephemeris_type : 0 = position/velocity, 1 = orbital parameters.
+        position_x/y/z : ECEF meters (for ephemeris_type=0).
+        velocity_vx/vy/vz : m/s (for ephemeris_type=0).
+        semi_major_axis .. mean_anomaly : Keplerian (for ephemeris_type=1).
+        epoch_time : 10-ms steps (SFN-based).
+        k_offset : ms — scheduling offset.
+        ta_common : T_c units.
+        ta_common_drift : T_c/s.
+        ta_common_drift_variation : T_c/s²; -1 = not present.
+        ul_sync_validity : seconds; -1 = not present.
+        cell_specific_koffset : -1 = not present.
+        ntn_polarization : 0=RHCP, 1=LHCP, 2=LINEAR, -1=absent.
+        ta_drift : T_c/s; -(2**31) = not present.
+        """
+        import struct
+        buf = bytearray(96)
+
+        # Header
+        struct.pack_into("<B3x", buf, 0, ephemeris_type)
+
+        # Ephemeris block (48 bytes at offset 4)
+        if ephemeris_type == 0:
+            struct.pack_into("<6d", buf, 4,
+                             position_x, position_y, position_z,
+                             velocity_vx, velocity_vy, velocity_vz)
+        else:
+            struct.pack_into("<q5i", buf, 4,
+                             semi_major_axis, eccentricity, periapsis,
+                             longitude, inclination, mean_anomaly)
+            # remaining 20 bytes of the 48-byte block stay zero (padding)
+
+        # Common fields (offset 52)
+        struct.pack_into("<q", buf, 52, epoch_time)
+        struct.pack_into("<i", buf, 60, k_offset)
+        struct.pack_into("<q", buf, 64, ta_common)
+        struct.pack_into("<i", buf, 72, ta_common_drift)
+        struct.pack_into("<i", buf, 76, ta_common_drift_variation)
+        struct.pack_into("<i", buf, 80, ul_sync_validity)
+        struct.pack_into("<i", buf, 84, cell_specific_koffset)
+        struct.pack_into("<i", buf, 88, ntn_polarization)
+        struct.pack_into("<i", buf, 92, ta_drift)
+
+        return bytes(buf)
 
     def build_rrc_setup(self, transaction_id: int = 0) -> bytes:
         """Encode an RRCSetup (DL-CCCH-Message)."""
+        transaction_id = self._normalize_txn_id(transaction_id)
         if self._asn1 is not None:
             rrc_setup = {
-                "message": {
-                    "c1": (
+                "message": (
+                    "c1", (
                         "rrcSetup",
                         {
                             "rrc-TransactionIdentifier": transaction_id,
@@ -186,15 +428,16 @@ class RrcCodec:
                             ),
                         },
                     )
-                }
+                )
             }
             try:
                 return self._asn1.encode("DL-CCCH-Message", rrc_setup)
             except Exception as exc:
                 logger.debug("asn1tools RRCSetup encode failed: %s", exc)
 
-        # Fallback: minimal pre-computed RRCSetup
-        return bytes.fromhex("2000 0400".replace(" ", ""))
+        # Fallback: minimal pre-computed RRCSetup (transaction_id=0)
+        # Generated by tools/gen_sib1_hex.cpp using UERANSIM's ASN.1 encoder
+        return bytes.fromhex("2000080000")
 
     def build_dl_information_transfer(
         self,
@@ -202,10 +445,11 @@ class RrcCodec:
         transaction_id: int = 0,
     ) -> bytes:
         """Encode a DLInformationTransfer (DL-DCCH-Message) wrapping a NAS PDU."""
+        transaction_id = self._normalize_txn_id(transaction_id)
         if self._asn1 is not None:
             msg = {
-                "message": {
-                    "c1": (
+                "message": (
+                    "c1", (
                         "dlInformationTransfer",
                         {
                             "rrc-TransactionIdentifier": transaction_id,
@@ -215,24 +459,18 @@ class RrcCodec:
                             ),
                         },
                     )
-                }
+                )
             }
             try:
                 return self._asn1.encode("DL-DCCH-Message", msg)
             except Exception as exc:
                 logger.debug("asn1tools DLInformationTransfer encode failed: %s", exc)
 
-        # Fallback: manual construction (simplified DL-DCCH frame)
-        # DL-DCCH-Message → c1 → dlInformationTransfer
-        # This is a simplified byte representation; production use should use asn1tools
-        buf = bytearray()
-        buf += bytes([0x08])                       # message choice + transaction id
-        buf += bytes([transaction_id & 0x03])
-        buf += bytes([0x00])                       # criticalExtensions choice
-        nas_len = len(nas_pdu)
-        buf += nas_len.to_bytes(2, "big")
-        buf += nas_pdu
-        return bytes(buf)
+        # Fallback: UPER bit-level encoding of DL-DCCH-Message
+        # Structure: c1(0) | index=5(0101) | tid(2b) | critExt=IEs(0)
+        #            | NAS-present(1) | late-absent(0) | nonCrit-absent(0)
+        #            | length-determinant | NAS bytes | zero-padding
+        return _uper_dl_info_transfer(transaction_id, nas_pdu)
 
     def build_rrc_reconfiguration(
         self,
@@ -240,6 +478,7 @@ class RrcCodec:
         meas_objects: Optional[List[Dict]] = None,
         report_configs: Optional[List[Dict]] = None,
         meas_ids: Optional[List[Dict]] = None,
+        full_config: bool = False,
     ) -> bytes:
         """Encode an RRCReconfiguration (DL-DCCH-Message) with a measConfig.
 
@@ -265,10 +504,12 @@ class RrcCodec:
         if meas_ids is None:
             meas_ids = [{"measId": 1, "measObjectId": 1, "reportConfigId": 1}]
 
+        transaction_id = self._normalize_txn_id(transaction_id)
+
         if self._asn1 is not None:
             try:
                 return self._asn1_rrc_reconfig(
-                    transaction_id, meas_objects, report_configs, meas_ids
+                    transaction_id, meas_objects, report_configs, meas_ids, full_config
                 )
             except Exception as exc:
                 logger.debug("asn1tools RRCReconfiguration encode failed: %s", exc)
@@ -278,13 +519,116 @@ class RrcCodec:
             transaction_id, meas_objects, report_configs, meas_ids
         )
 
+    def build_conditional_reconfiguration_payload(
+        self,
+        candidates_to_add_mod: Optional[List[Dict]] = None,
+        candidate_ids_to_remove: Optional[List[int]] = None,
+    ) -> Dict[str, Any]:
+        """Build a ConditionalReconfiguration payload dict.
+
+        candidates_to_add_mod entries:
+          {
+            "candidateId": int,
+            "measIds": [int, ...],
+            "condRrcReconfig": bytes,
+                        "executionPriority": int,   # Optional, mapped to condExecutionPriority-r17
+          }
+
+        candidate_ids_to_remove is a list of CondReconfigId values.
+        """
+        payload: Dict[str, Any] = {}
+
+        if candidates_to_add_mod:
+            add_mod_list = []
+            for cand in candidates_to_add_mod:
+                item: Dict[str, Any] = {
+                    "condReconfigId": cand["candidateId"],
+                }
+
+                meas_ids = cand.get("measIds")
+                if meas_ids:
+                    item["condExecutionCond"] = list(meas_ids)
+
+                cond_rrc = cand.get("condRrcReconfig")
+                if cond_rrc is not None:
+                    item["condRRCReconfig"] = cond_rrc
+
+                execution_priority = cand.get("executionPriority")
+                if execution_priority is not None:
+                    item["condExecutionPriority-r17"] = int(execution_priority)
+
+                add_mod_list.append(item)
+
+            payload["condReconfigToAddModList"] = add_mod_list
+
+        if candidate_ids_to_remove:
+            payload["condReconfigToRemoveList"] = list(candidate_ids_to_remove)
+
+        return payload
+
+    def build_rrc_reconfiguration_conditional_handover(
+        self,
+        transaction_id: int = 0,
+        candidates_to_add_mod: Optional[List[Dict]] = None,
+        candidate_ids_to_remove: Optional[List[int]] = None,
+    ) -> bytes:
+        """Build an RRCReconfiguration carrying ConditionalReconfiguration.
+
+        This uses the v1530->v1540->v1560->v1610 nonCriticalExtension chain,
+        matching the UE parser path in `src/ue/rrc/reconfig.cpp`.
+        """
+        cond_payload = self.build_conditional_reconfiguration_payload(
+            candidates_to_add_mod=candidates_to_add_mod,
+            candidate_ids_to_remove=candidate_ids_to_remove,
+        )
+
+        transaction_id = self._normalize_txn_id(transaction_id)
+
+        if self._asn1 is not None:
+            msg = {
+                "message": (
+                    "c1", (
+                        "rrcReconfiguration",
+                        {
+                            "rrc-TransactionIdentifier": transaction_id,
+                            "criticalExtensions": (
+                                "rrcReconfiguration",
+                                {
+                                    "nonCriticalExtension": {
+                                        "nonCriticalExtension": {
+                                            "nonCriticalExtension": {
+                                                "nonCriticalExtension": {
+                                                    "conditionalReconfiguration": cond_payload,
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            ),
+                        },
+                    )
+                )
+            }
+            try:
+                return self._asn1.encode("DL-DCCH-Message", msg)
+            except Exception as exc:
+                logger.debug(
+                    "asn1tools ConditionalReconfiguration encode failed: %s",
+                    exc,
+                )
+
+        logger.warning(
+            "Using fallback ConditionalReconfiguration RRC message — install asn1tools"
+        )
+        return self._fallback_rrc_reconfig(transaction_id, [], [], [])
+
     # ------------------------------------------------------------------
     #  Handover: CellGroupConfig + RRCReconfiguration with sync
     # ------------------------------------------------------------------
 
     def build_cell_group_config_handover(
         self,
-        target_pci: int = 2,
+        target_nci: int = 2,
         new_crnti: int = 0x1234,
         t304_ms: int = 1000,
     ) -> bytes:
@@ -295,8 +639,8 @@ class RrcCodec:
 
         Parameters
         ----------
-        target_pci : int
-            Physical Cell Identity of the target cell (0-1007).
+        target_nci : int
+            Cell Identity of the target cell (36 bits).
         new_crnti : int
             The C-RNTI assigned by the target cell (0-65535).
         t304_ms : int
@@ -310,7 +654,9 @@ class RrcCodec:
                 "spCellConfig": {
                     "reconfigurationWithSync": {
                         "spCellConfigCommon": {
-                            "physCellId": target_pci,
+                            "physCellId": target_nci,
+                            "dmrs-TypeA-Position": "pos2",
+                            "ss-PBCH-BlockPower": 0,
                         },
                         "newUE-Identity": new_crnti,
                         "t304": t304_str,
@@ -332,7 +678,7 @@ class RrcCodec:
     def build_rrc_reconfiguration_with_sync(
         self,
         transaction_id: int = 0,
-        target_pci: int = 2,
+        target_nci: int = 2,
         new_crnti: int = 0x1234,
         t304_ms: int = 1000,
     ) -> bytes:
@@ -342,13 +688,15 @@ class RrcCodec:
         containing a CellGroupConfig with ReconfigurationWithSync.
         """
         mcg_bytes = self.build_cell_group_config_handover(
-            target_pci, new_crnti, t304_ms
+            target_nci, new_crnti, t304_ms
         )
+
+        transaction_id = self._normalize_txn_id(transaction_id)
 
         if self._asn1 is not None:
             msg = {
-                "message": {
-                    "c1": (
+                "message": (
+                    "c1", (
                         "rrcReconfiguration",
                         {
                             "rrc-TransactionIdentifier": transaction_id,
@@ -362,7 +710,7 @@ class RrcCodec:
                             ),
                         },
                     )
-                }
+                )
             }
             try:
                 return self._asn1.encode("DL-DCCH-Message", msg)
@@ -377,26 +725,65 @@ class RrcCodec:
         )
         return b"\x04\x00\x00"
 
+    def build_conditional_rrc_reconfiguration_with_sync(
+        self,
+        transaction_id: int = 0,
+        target_nci: int = 2,
+        new_crnti: int = 0x1234,
+        t304_ms: int = 1000,
+    ) -> bytes:
+        """Build inner `RRCReconfiguration` payload for condRRCReconfig.
+
+        `condRRCReconfig` in ConditionalReconfiguration carries the inner
+        `RRCReconfiguration` type, not the outer `DL-DCCH-Message` wrapper.
+        """
+        mcg_bytes = self.build_cell_group_config_handover(target_nci, new_crnti, t304_ms)
+        transaction_id = self._normalize_txn_id(transaction_id)
+
+        if self._asn1 is not None:
+            inner = {
+                "rrc-TransactionIdentifier": transaction_id,
+                "criticalExtensions": (
+                    "rrcReconfiguration",
+                    {
+                        "nonCriticalExtension": {
+                            "masterCellGroup": mcg_bytes,
+                        }
+                    },
+                ),
+            }
+            try:
+                return self._asn1.encode("RRCReconfiguration", inner)
+            except Exception as exc:
+                logger.debug("asn1tools inner RRCReconfiguration encode failed: %s", exc)
+
+        logger.warning(
+            "Using fallback condRRCReconfig payload — install asn1tools "
+            "for proper inner RRCReconfiguration encoding"
+        )
+        return b""
+
     def build_rrc_release(self, transaction_id: int = 0) -> bytes:
         """Encode an RRCRelease (DL-DCCH-Message)."""
+        transaction_id = self._normalize_txn_id(transaction_id)
         if self._asn1 is not None:
             msg = {
-                "message": {
-                    "c1": (
+                "message": (
+                    "c1", (
                         "rrcRelease",
                         {
                             "rrc-TransactionIdentifier": transaction_id,
                             "criticalExtensions": ("rrcRelease", {}),
                         },
                     )
-                }
+                )
             }
             try:
                 return self._asn1.encode("DL-DCCH-Message", msg)
             except Exception as exc:
                 logger.debug("asn1tools RRCRelease failed: %s", exc)
 
-        return bytes.fromhex("1000")
+        return _uper_rrc_release(transaction_id)
 
     # ------------------------------------------------------------------
     #  UL message decoders
@@ -437,61 +824,95 @@ class RrcCodec:
         return f"ms{self._TTT_TABLE[idx]}"
 
     def _event_to_asn1(self, cfg: Dict) -> Dict:
-        """Convert a report config dict to ASN.1 event trigger structure."""
+        """Convert a report config dict to ASN.1 EventTriggerConfig structure.
+
+        In the 3GPP ASN.1 (TS 38.331), hysteresis and timeToTrigger are
+        per-event fields inside each eventXxx SEQUENCE, not at the
+        EventTriggerConfig level.
+        """
         event = cfg.get("event", "a3")
         hyst = cfg.get("hysteresis", 2)
         ttt = cfg.get("timeToTrigger", 640)
+        ttt_str = self._ttt_to_enum(ttt)
+        hyst_val = hyst * 2  # ASN.1 uses 0.5 dB steps
 
         if event == "a2":
             threshold = cfg.get("a2Threshold", -110)
             rsrp_range = max(0, min(127, threshold + 156))
-            return {
-                "eventId": ("eventA2", {
-                    "a2-Threshold": ("rsrp", rsrp_range),
-                }),
-                "rsType": "ssb",
-                "reportInterval": "ms1024",
-                "reportAmount": "r1",
-                "reportQuantityCell": {"rsrp": True, "rsrq": False, "sinr": False},
-                "maxReportCells": cfg.get("maxReportCells", 8),
-                "hysteresis": hyst * 2,
-                "timeToTrigger": self._ttt_to_enum(ttt),
-            }
+            event_id = ("eventA2", {
+                "a2-Threshold": ("rsrp", rsrp_range),
+                "reportOnLeave": False,
+                "hysteresis": hyst_val,
+                "timeToTrigger": ttt_str,
+            })
+        elif event == "d1":
+            threshold_m = int(round(float(cfg.get("d1ThresholdM", 1000.0))))
+            threshold_m = max(0, min(20000, threshold_m))
+
+            ref_type = str(cfg.get("d1ReferenceType", "fixed")).lower()
+            if ref_type == "nadir":
+                ref_loc = ("nadirReferenceLocation-r17", None)
+            else:
+                lon_deg = float(cfg.get("d1LongitudeDeg", 0.0))
+                lat_deg = float(cfg.get("d1LatitudeDeg", 0.0))
+                h_m = int(round(float(cfg.get("d1HeightM", 0.0))))
+
+                lon_udeg = int(round(lon_deg * 1_000_000.0))
+                lat_udeg = int(round(lat_deg * 1_000_000.0))
+
+                lon_udeg = max(-180000000, min(180000000, lon_udeg))
+                lat_udeg = max(-90000000, min(90000000, lat_udeg))
+                h_m = max(-1000, min(10000, h_m))
+
+                ref_loc = (
+                    "fixedReferenceLocation-r17",
+                    {
+                        "longitude-r17": lon_udeg,
+                        "latitude-r17": lat_udeg,
+                        "height-r17": h_m,
+                    },
+                )
+
+            event_id = ("eventD1-r17", {
+                "distanceThresh-r17": threshold_m,
+                "referenceLocation-r17": ref_loc,
+                "hysteresis": hyst_val,
+                "timeToTrigger": ttt_str,
+            })
         elif event == "a5":
             t1 = cfg.get("a5Threshold1", -110)
             t2 = cfg.get("a5Threshold2", -100)
             r1 = max(0, min(127, t1 + 156))
             r2 = max(0, min(127, t2 + 156))
-            return {
-                "eventId": ("eventA5", {
-                    "a5-Threshold1": ("rsrp", r1),
-                    "a5-Threshold2": ("rsrp", r2),
-                }),
-                "rsType": "ssb",
-                "reportInterval": "ms1024",
-                "reportAmount": "r1",
-                "reportQuantityCell": {"rsrp": True, "rsrq": False, "sinr": False},
-                "maxReportCells": cfg.get("maxReportCells", 8),
-                "hysteresis": hyst * 2,
-                "timeToTrigger": self._ttt_to_enum(ttt),
-            }
+            event_id = ("eventA5", {
+                "a5-Threshold1": ("rsrp", r1),
+                "a5-Threshold2": ("rsrp", r2),
+                "reportOnLeave": False,
+                "hysteresis": hyst_val,
+                "timeToTrigger": ttt_str,
+                "useWhiteCellList": False,
+            })
         else:  # a3
             a3off = cfg.get("a3Offset", 6)
-            return {
-                "eventId": ("eventA3", {
-                    "a3-Offset": ("rsrp", a3off * 2),
-                    "reportOnLeave": False,
-                }),
-                "rsType": "ssb",
-                "reportInterval": "ms1024",
-                "reportAmount": "r1",
-                "reportQuantityCell": {"rsrp": True, "rsrq": False, "sinr": False},
-                "maxReportCells": cfg.get("maxReportCells", 8),
-                "hysteresis": hyst * 2,
-                "timeToTrigger": self._ttt_to_enum(ttt),
-            }
+            event_id = ("eventA3", {
+                "a3-Offset": ("rsrp", a3off * 2),
+                "reportOnLeave": False,
+                "hysteresis": hyst_val,
+                "timeToTrigger": ttt_str,
+                "useWhiteCellList": False,
+            })
 
-    def _asn1_rrc_reconfig(self, txn_id, meas_objs, report_cfgs, meas_ids_list):
+        return {
+            "eventId": event_id,
+            "rsType": "ssb",
+            "reportInterval": "ms1024",
+            "reportAmount": "r1",
+            "reportQuantityCell": {"rsrp": True, "rsrq": False, "sinr": False},
+            "maxReportCells": cfg.get("maxReportCells", 8),
+            "includeBeamMeasurements": False,
+        }
+
+    def _asn1_rrc_reconfig(self, txn_id, meas_objs, report_cfgs, meas_ids_list, full_config=False):
         meas_obj_list = []
         for mo in meas_objs:
             meas_obj_list.append({
@@ -503,6 +924,8 @@ class RrcCodec:
                         "periodicityAndOffset": ("sf20", 0),
                         "duration": "sf1",
                     },
+                    "referenceSignalConfig": {},
+                    "offsetMO": {},
                     "quantityConfigIndex": 1,
                 }),
             })
@@ -513,7 +936,12 @@ class RrcCodec:
                 "reportConfigId": rc["id"],
                 "reportConfig": (
                     "reportConfigNR",
-                    self._event_to_asn1(rc),
+                    {
+                        "reportType": (
+                            "eventTriggered",
+                            self._event_to_asn1(rc),
+                        ),
+                    },
                 ),
             })
 
@@ -533,19 +961,23 @@ class RrcCodec:
         if mid_list:
             meas_config["measIdToAddModList"] = mid_list
 
+        reconfig_ies = {"measConfig": meas_config}
+        if full_config:
+            reconfig_ies["nonCriticalExtension"] = {"fullConfig": "true"}
+
         msg = {
-            "message": {
-                "c1": (
+            "message": (
+                "c1", (
                     "rrcReconfiguration",
                     {
                         "rrc-TransactionIdentifier": txn_id,
                         "criticalExtensions": (
                             "rrcReconfiguration",
-                            {"measConfig": meas_config},
+                            reconfig_ies,
                         ),
                     },
                 )
-            }
+            )
         }
         return self._asn1.encode("DL-DCCH-Message", msg)
 

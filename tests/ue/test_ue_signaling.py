@@ -37,7 +37,7 @@ from harness.milenage import (
 )
 from harness.fake_gnb import FakeGnb
 from harness.ue_process import UeProcess
-from conftest import ue_binary_exists, needs_asn1tools
+from .conftest import ue_binary_exists, needs_asn1tools
 
 
 # ======================================================================
@@ -89,12 +89,12 @@ class TestRlsEncoding:
         assert decoded.pdu_ids == pdu_ids
 
     def test_header_format(self):
-        """First 5 bytes: 0x03, major=3, minor=2, patch=2, msgType."""
+        """First 5 bytes: 0x03, major=3, minor=4, patch=7, msgType."""
         encoded = encode_heartbeat_ack(0, -60)
         assert encoded[0] == 0x03
         assert encoded[1] == 3   # major
-        assert encoded[2] == 2   # minor
-        assert encoded[3] == 2   # patch
+        assert encoded[2] == 4   # minor
+        assert encoded[3] == 7   # patch
         assert encoded[4] == int(EMessageType.HEARTBEAT_ACK)
 
     def test_malformed_data_returns_none(self):
@@ -122,24 +122,24 @@ class TestRlsChannelHelpers:
 
     def test_is_ul_ccch(self):
         msg = RlsPduTransmission(
-            sti=0, pdu_type=EPduType.RRC,
-            pdu_id=1, payload=int(RrcChannel.UL_CCCH), pdu=b""
+            sti=0, pdu_type=EPduType.RRC, radio_bearer=0, ack_pdu=False,
+            pdu_id=1, sdap_byte=0, payload=int(RrcChannel.UL_CCCH), pdu=b""
         )
         assert is_ul_ccch(msg) is True
         assert is_ul_dcch(msg) is False
 
     def test_is_ul_dcch(self):
         msg = RlsPduTransmission(
-            sti=0, pdu_type=EPduType.RRC,
-            pdu_id=1, payload=int(RrcChannel.UL_DCCH), pdu=b""
+            sti=0, pdu_type=EPduType.RRC, radio_bearer=0, ack_pdu=False,
+            pdu_id=1, sdap_byte=0, payload=int(RrcChannel.UL_DCCH), pdu=b""
         )
         assert is_ul_dcch(msg) is True
         assert is_ul_ccch(msg) is False
 
     def test_data_pdu_not_rrc(self):
         msg = RlsPduTransmission(
-            sti=0, pdu_type=EPduType.DATA,
-            pdu_id=1, payload=0, pdu=b""
+            sti=0, pdu_type=EPduType.DATA, radio_bearer=0, ack_pdu=False,
+            pdu_id=1, sdap_byte=0, payload=0, pdu=b""
         )
         assert is_ul_ccch(msg) is False
         assert is_ul_dcch(msg) is False
@@ -266,9 +266,8 @@ class TestNasBuilder:
         protected = ctx.integrity_protect(plain, direction=0)
 
         assert protected[0] == nas.EPD_5GMM
-        # Security header should be SEC_INTEGRITY_NEW_CTX (0x03)
-        sec_header = (protected[1] >> 4) & 0x0F
-        assert sec_header == nas.SEC_INTEGRITY_NEW_CTX
+        # Security header type is the full byte (5G NAS TS 24.501)
+        assert protected[1] == nas.SEC_INTEGRITY_NEW_CTX
         # MAC is bytes 2-5 (4 bytes)
         mac = protected[2:6]
         assert len(mac) == 4

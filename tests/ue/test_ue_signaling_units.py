@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import random
 
-from .harness import nas_builder as nas
-from .harness.milenage import (
+from harness import nas_builder as nas
+from harness.milenage import (
     compute_opc,
     derive_full_key_set,
     f1,
@@ -17,7 +17,7 @@ from .harness.milenage import (
     generate_auth_vector,
     serving_network_name,
 )
-from .harness.rls_protocol import (
+from harness.rls_protocol import (
     EMessageType,
     EPduType,
     RlsHeartBeat,
@@ -39,42 +39,34 @@ class TestRlsEncoding:
     def test_heartbeat_round_trip(self):
         sti = random.getrandbits(64)
         pos = (100.0, -200.0, 300.0)
-        encoded = encode_heartbeat(sti, pos, sender_id=1, sender_id2=2)
+        encoded = encode_heartbeat(sti, pos)
         decoded = decode_rls_message(encoded)
         assert isinstance(decoded, RlsHeartBeat)
         assert decoded.sti == sti
-        assert decoded.sender_id == 1
-        assert decoded.sender_id2 == 2
         assert decoded.sim_pos == pos
 
     def test_heartbeat_ack_round_trip(self):
         sti = random.getrandbits(64)
-        encoded = encode_heartbeat_ack(sti, -72, sender_id=9, sender_id2=11)
+        encoded = encode_heartbeat_ack(sti, -72)
         decoded = decode_rls_message(encoded)
         assert isinstance(decoded, RlsHeartBeatAck)
         assert decoded.sti == sti
-        assert decoded.sender_id == 9
-        assert decoded.sender_id2 == 11
         assert decoded.dbm == -72
 
     def test_pdu_transmission_round_trip(self):
         sti = random.getrandbits(64)
         pdu = b"\x01\x02\x03\x04\x05"
         encoded = encode_pdu_transmission(
-            sti,
-            EPduType.RRC,
-            42,
-            int(RrcChannel.UL_CCCH),
-            pdu,
-            sender_id=3,
-            sender_id2=4,
+            sti, EPduType.RRC, 42, int(RrcChannel.UL_CCCH), pdu,
+            radio_bearer=3, ack_pdu=True, sdap_byte=7,
         )
         decoded = decode_rls_message(encoded)
         assert isinstance(decoded, RlsPduTransmission)
         assert decoded.sti == sti
-        assert decoded.sender_id == 3
-        assert decoded.sender_id2 == 4
         assert decoded.pdu_type == EPduType.RRC
+        assert decoded.radio_bearer == 3
+        assert decoded.ack_pdu is True
+        assert decoded.sdap_byte == 7
         assert decoded.pdu_id == 42
         assert decoded.payload == int(RrcChannel.UL_CCCH)
         assert decoded.pdu == pdu
@@ -82,46 +74,36 @@ class TestRlsEncoding:
     def test_pdu_transmission_ack_round_trip(self):
         sti = random.getrandbits(64)
         pdu_ids = [1, 2, 3, 99]
-        encoded = encode_pdu_transmission_ack(sti, pdu_ids, sender_id=3, sender_id2=4)
+        radio_bearers = [0, 1, 0, 2]
+        encoded = encode_pdu_transmission_ack(sti, pdu_ids, radio_bearers=radio_bearers)
         decoded = decode_rls_message(encoded)
         assert isinstance(decoded, RlsPduTransmissionAck)
         assert decoded.sti == sti
-        assert decoded.sender_id == 3
-        assert decoded.sender_id2 == 4
         assert decoded.pdu_ids == pdu_ids
+        assert decoded.radio_bearers == radio_bearers
 
     def test_header_format(self):
         encoded = encode_heartbeat_ack(0, -60)
         assert encoded[0] == 0x03
-        assert encoded[1] == 3
-        assert encoded[2] == 3
-        assert encoded[3] == 7
+        assert encoded[1] == 3  # major
+        assert encoded[2] == 4  # minor
+        assert encoded[3] == 7  # patch
         assert encoded[4] == int(EMessageType.HEARTBEAT_ACK)
 
 
 class TestRlsChannelHelpers:
     def test_is_ul_ccch(self):
         msg = RlsPduTransmission(
-            sti=0,
-            sender_id=0,
-            sender_id2=0,
-            pdu_type=EPduType.RRC,
-            pdu_id=1,
-            payload=int(RrcChannel.UL_CCCH),
-            pdu=b"",
+            sti=0, pdu_type=EPduType.RRC, radio_bearer=0, ack_pdu=False,
+            pdu_id=1, sdap_byte=0, payload=int(RrcChannel.UL_CCCH), pdu=b"",
         )
         assert is_ul_ccch(msg) is True
         assert is_ul_dcch(msg) is False
 
     def test_is_ul_dcch(self):
         msg = RlsPduTransmission(
-            sti=0,
-            sender_id=0,
-            sender_id2=0,
-            pdu_type=EPduType.RRC,
-            pdu_id=1,
-            payload=int(RrcChannel.UL_DCCH),
-            pdu=b"",
+            sti=0, pdu_type=EPduType.RRC, radio_bearer=0, ack_pdu=False,
+            pdu_id=1, sdap_byte=0, payload=int(RrcChannel.UL_DCCH), pdu=b"",
         )
         assert is_ul_dcch(msg) is True
         assert is_ul_ccch(msg) is False

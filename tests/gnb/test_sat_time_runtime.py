@@ -11,14 +11,10 @@ from typing import Dict, List
 import pytest
 import yaml
 
-from .harness.gnb_process import GnbProcess
+from harness.gnb_process import GnbProcess
+from harness.ue_process import UeProcess
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TESTS_ROOT = Path(__file__).resolve().parents[1]
-if str(TESTS_ROOT) not in sys.path:
-    sys.path.insert(0, str(TESTS_ROOT))
-
-from ue.harness.ue_process import UeProcess
 
 NR_CLI = PROJECT_ROOT / "build" / "nr-cli"
 GNB_CONFIG = PROJECT_ROOT / "config" / "custom-gnb.yaml"

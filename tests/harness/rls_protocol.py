@@ -1,27 +1,28 @@
 """
 RLS (Radio Link Simulation) binary protocol encoder / decoder.
 
-Wire format (all fields big-endian):
+Wire format (all fields big-endian) — matches src/lib/rls/rls_pdu.cpp v3.4.7:
 
   Offset  Size  Field
   ------  ----  -----
   0       1     0x03  (compat marker)
   1       1     major version (3)
-  2       1     minor version (2)
-  3       1     patch version (2)
+  2       1     minor version (4)
+  3       1     patch version (7)
   4       1     message type  (EMessageType)
   5       8     STI  – Session Temporary Identifier (uint64)
   13+     var   payload (depends on message type)
 
 Payload per message type:
 
-  HEARTBEAT (4):      simPos.x (4B int32), .y (4B), .z (4B)
-  HEARTBEAT_ACK (5):  dbm (4B int32)
-  PDU_TRANSMISSION (6):
-      pduType (1B), pduId (4B uint32), payload (4B uint32),
-      pduLen (4B uint32), pdu (pduLen bytes)
-  PDU_TRANSMISSION_ACK (7):
-      count (4B uint32), then count × pduId (4B each)
+    HEARTBEAT (4):      latitude (8B double), longitude (8B), altitude (8B)
+    HEARTBEAT_ACK (5):  dbm (4B int32)
+    PDU_TRANSMISSION (6):
+        pduType (1B), radioBearer|ackFlag (1B), pduId (4B uint32),
+        sdapByte (1B), payloadType (4B uint32),
+        pduLen (4B uint32), pdu (pduLen bytes)
+    PDU_TRANSMISSION_ACK (7):
+        count (4B uint32), then count × [radioBearer (1B) + pduId (4B)]
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from typing import List, Optional
 # ---------------------------------------------------------------------------
 
 RLS_COMPAT_MARKER = 0x03
-RLS_VERSION = (3, 2, 2)
+RLS_VERSION = (3, 4, 7)
 RLS_HEADER_FMT = "!BBBBB"          # marker, major, minor, patch, msgType
 RLS_HEADER_SIZE = struct.calcsize(RLS_HEADER_FMT)  # 5
 RLS_STI_FMT = "!Q"                 # uint64
@@ -71,6 +72,8 @@ class RrcChannel(IntEnum):
     UL_CCCH = 5
     UL_CCCH1 = 6
     UL_DCCH = 7
+    DL_CHO = 8
+    DL_SIB19 = 9
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +83,7 @@ class RrcChannel(IntEnum):
 @dataclass
 class RlsHeartBeat:
     sti: int
-    sim_pos: tuple  # (x, y, z) as ints
+    sim_pos: tuple  # (latitude, longitude, altitude) as floats
 
 
 @dataclass
@@ -93,7 +96,10 @@ class RlsHeartBeatAck:
 class RlsPduTransmission:
     sti: int
     pdu_type: EPduType
+    radio_bearer: int    # lower 7 bits: bearer ID
+    ack_pdu: bool        # true if receiver should send ACK
     pdu_id: int
+    sdap_byte: int       # SDAP header byte (0 for RRC; ignored by receiver)
     payload: int         # RrcChannel for RRC PDUs, PSI for DATA
     pdu: bytes
 
@@ -101,10 +107,12 @@ class RlsPduTransmission:
 @dataclass
 class RlsPduTransmissionAck:
     sti: int
+    radio_bearers: List[int]
     pdu_ids: List[int]
 
 
-RlsMessage = RlsHeartBeat | RlsHeartBeatAck | RlsPduTransmission | RlsPduTransmissionAck
+RlsMessage = (RlsHeartBeat | RlsHeartBeatAck
+              | RlsPduTransmission | RlsPduTransmissionAck)
 
 
 # ---------------------------------------------------------------------------
@@ -123,16 +131,22 @@ def _encode_header(msg_type: EMessageType, sti: int) -> bytes:
     return hdr + struct.pack(RLS_STI_FMT, sti)
 
 
-def encode_heartbeat(sti: int, sim_pos: tuple = (0, 0, 0)) -> bytes:
+def encode_heartbeat(
+    sti: int,
+    sim_pos: tuple = (0.0, 0.0, 0.0),
+) -> bytes:
     """Encode an RLS HeartBeat message."""
-    return _encode_header(EMessageType.HEARTBEAT, sti) + struct.pack(
-        "!iii", sim_pos[0], sim_pos[1], sim_pos[2]
-    )
+    return (_encode_header(EMessageType.HEARTBEAT, sti)
+            + struct.pack("!ddd", sim_pos[0], sim_pos[1], sim_pos[2]))
 
 
-def encode_heartbeat_ack(sti: int, dbm: int) -> bytes:
+def encode_heartbeat_ack(
+    sti: int,
+    dbm: int,
+) -> bytes:
     """Encode an RLS HeartBeatAck message."""
-    return _encode_header(EMessageType.HEARTBEAT_ACK, sti) + struct.pack("!i", dbm)
+    return (_encode_header(EMessageType.HEARTBEAT_ACK, sti)
+            + struct.pack("!i", dbm))
 
 
 def encode_pdu_transmission(
@@ -141,6 +155,9 @@ def encode_pdu_transmission(
     pdu_id: int,
     payload: int,
     pdu: bytes,
+    radio_bearer: int = 0,
+    ack_pdu: bool = False,
+    sdap_byte: int = 0,
 ) -> bytes:
     """Encode an RLS PduTransmission message.
 
@@ -151,16 +168,27 @@ def encode_pdu_transmission(
     pdu_id : monotonically increasing PDU identifier
     payload : RrcChannel (for RRC) or PSI (for DATA)
     pdu : raw PDU bytes (ASN.1 encoded RRC or IP packet)
+    radio_bearer : bearer ID (lower 7 bits)
+    ack_pdu : if True, receiver should send PDU_TRANSMISSION_ACK
+    sdap_byte : SDAP header byte (0 for RRC)
     """
-    body = struct.pack("!BIII", int(pdu_type), pdu_id, payload, len(pdu))
+    rb_byte = (radio_bearer & 0x7F) | (0x80 if ack_pdu else 0x00)
+    body = struct.pack("!BBIBII",
+                       int(pdu_type), rb_byte, pdu_id, sdap_byte, payload, len(pdu))
     return _encode_header(EMessageType.PDU_TRANSMISSION, sti) + body + pdu
 
 
-def encode_pdu_transmission_ack(sti: int, pdu_ids: List[int]) -> bytes:
+def encode_pdu_transmission_ack(
+    sti: int,
+    pdu_ids: List[int],
+    radio_bearers: Optional[List[int]] = None,
+) -> bytes:
     """Encode an RLS PduTransmissionAck message."""
+    if radio_bearers is None:
+        radio_bearers = [0] * len(pdu_ids)
     body = struct.pack("!I", len(pdu_ids))
-    for pid in pdu_ids:
-        body += struct.pack("!I", pid)
+    for rb, pid in zip(radio_bearers, pdu_ids):
+        body += struct.pack("!BI", rb & 0x7F, pid)
     return _encode_header(EMessageType.PDU_TRANSMISSION_ACK, sti) + body
 
 
@@ -173,15 +201,17 @@ def decode_rls_message(data: bytes) -> Optional[RlsMessage]:
 
     Returns None if the datagram is malformed or has an unknown type.
     """
-    if len(data) < RLS_HEADER_SIZE + RLS_STI_SIZE:
+    min_size = RLS_HEADER_SIZE + RLS_STI_SIZE  # 13 bytes
+    if len(data) < min_size:
         return None
 
-    marker, major, minor, patch, msg_type_raw = struct.unpack_from(RLS_HEADER_FMT, data, 0)
+    marker, major, minor, patch, msg_type_raw = struct.unpack_from(
+        RLS_HEADER_FMT, data, 0)
     if marker != RLS_COMPAT_MARKER:
         return None
 
     sti = struct.unpack_from(RLS_STI_FMT, data, RLS_HEADER_SIZE)[0]
-    offset = RLS_HEADER_SIZE + RLS_STI_SIZE          # 13
+    offset = RLS_HEADER_SIZE + RLS_STI_SIZE  # 13
 
     try:
         msg_type = EMessageType(msg_type_raw)
@@ -189,9 +219,9 @@ def decode_rls_message(data: bytes) -> Optional[RlsMessage]:
         return None
 
     if msg_type == EMessageType.HEARTBEAT:
-        if len(data) < offset + 12:
+        if len(data) < offset + 24:
             return None
-        x, y, z = struct.unpack_from("!iii", data, offset)
+        x, y, z = struct.unpack_from("!ddd", data, offset)
         return RlsHeartBeat(sti=sti, sim_pos=(x, y, z))
 
     if msg_type == EMessageType.HEARTBEAT_ACK:
@@ -201,10 +231,12 @@ def decode_rls_message(data: bytes) -> Optional[RlsMessage]:
         return RlsHeartBeatAck(sti=sti, dbm=dbm)
 
     if msg_type == EMessageType.PDU_TRANSMISSION:
-        if len(data) < offset + 13:
+        # pduType(1B) + radioBearer|ackFlag(1B) + pduId(4B) + sdapByte(1B) + payloadType(4B) + pduLen(4B)
+        if len(data) < offset + 15:
             return None
-        pdu_type_raw, pdu_id, payload, pdu_len = struct.unpack_from("!BIII", data, offset)
-        offset += 13
+        pdu_type_raw, rb_byte, pdu_id, sdap_byte, payload, pdu_len = struct.unpack_from(
+            "!BBIBII", data, offset)
+        offset += 15
         if len(data) < offset + pdu_len:
             return None
         pdu = data[offset : offset + pdu_len]
@@ -212,7 +244,11 @@ def decode_rls_message(data: bytes) -> Optional[RlsMessage]:
             pdu_type = EPduType(pdu_type_raw)
         except ValueError:
             pdu_type = EPduType.RESERVED
-        return RlsPduTransmission(sti=sti, pdu_type=pdu_type, pdu_id=pdu_id, payload=payload, pdu=pdu)
+        radio_bearer = rb_byte & 0x7F
+        ack_pdu = bool(rb_byte & 0x80)
+        return RlsPduTransmission(
+            sti=sti, pdu_type=pdu_type, radio_bearer=radio_bearer, ack_pdu=ack_pdu,
+            pdu_id=pdu_id, sdap_byte=sdap_byte, payload=payload, pdu=pdu)
 
     if msg_type == EMessageType.PDU_TRANSMISSION_ACK:
         if len(data) < offset + 4:
@@ -220,12 +256,16 @@ def decode_rls_message(data: bytes) -> Optional[RlsMessage]:
         count = struct.unpack_from("!I", data, offset)[0]
         offset += 4
         pdu_ids = []
+        radio_bearers = []
         for _ in range(count):
-            if len(data) < offset + 4:
+            if len(data) < offset + 5:
                 break
-            pdu_ids.append(struct.unpack_from("!I", data, offset)[0])
-            offset += 4
-        return RlsPduTransmissionAck(sti=sti, pdu_ids=pdu_ids)
+            rb = struct.unpack_from("!B", data, offset)[0] & 0x7F
+            pid = struct.unpack_from("!I", data, offset + 1)[0]
+            radio_bearers.append(rb)
+            pdu_ids.append(pid)
+            offset += 5
+        return RlsPduTransmissionAck(sti=sti, radio_bearers=radio_bearers, pdu_ids=pdu_ids)
 
     return None
 
