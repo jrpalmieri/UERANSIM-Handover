@@ -124,3 +124,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Windows WSL temp files
+*:Zone.Identifier

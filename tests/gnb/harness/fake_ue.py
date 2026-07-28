@@ -32,8 +32,8 @@ _FALLBACK_RRC_SETUP_COMPLETE = bytes.fromhex("1000059f80105e40034060bd8400000000
 _FALLBACK_RRC_RECONFIG_COMPLETE = bytes.fromhex("1000")
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_ASN1_PATH = _PROJECT_ROOT / "tools" / "rrc-15.6.0.asn1"
-_ASN1_EXPANDED = _PROJECT_ROOT / "tools" / "rrc-15.6.0-expanded.asn1"
+_ASN1_PATH = _PROJECT_ROOT / "tests" / "data" / "asn1_specs" / "rrc-15.6.0.asn1"
+_ASN1_EXPANDED = _PROJECT_ROOT / "tests" / "data" / "asn1_specs" / "rrc-15.6.0-expanded.asn1"
 
 
 def _try_compile_asn1():

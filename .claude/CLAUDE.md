@@ -13,3 +13,12 @@
 - tests: test harnesses and unit tests for UE and gNB
 - tle_data: two-line element data for testing satellite (NTN) operations
 - tools: utilities for testing and development
+
+## ASN.1 code is generated — never edit it
+
+Everything in `src/asn` is asn1c output from `asn1-definitions/`. Do not hand-edit it, and
+do not add files to it: regenerate with `tools/regen_asn1.sh` (all three protocols, or one
+by name). Running it without changing an input leaves the tree byte-identical, so
+`git status src/asn` after a run is how you check the code really matches the definitions.
+The compiler is a fork pinned by commit in that script. See `asn1-definitions/README.md`
+for the toolchain and `docs/ASN1_R18_Migration_Plan.md` for why the tree is the way it is.

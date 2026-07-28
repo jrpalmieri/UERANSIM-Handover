@@ -1,10 +1,10 @@
 # ASN.1 Release-18 Migration Plan (RRC / NGAP / XnAP)
 
-Status: **stages 0–3 complete** (2026-07-28). Stage 4 (consolidation) not started.
+Status: **complete** — stages 0–4 done (2026-07-28).
 Author: analysis of `UERANSIM-Handover` @ `xn` (a68a5fad) and `/home/joe/repos/asn1c-r18` @ e835ff87, 2026-07-27.
 
 Stage 0 results are in [§6](#6-stage-0-as-built), stage 1 in [§7](#7-stage-1-as-built),
-stage 2 in [§8](#8-stage-2-as-built), stage 3 in [§9](#9-stage-3-as-built).
+stage 2 in [§8](#8-stage-2-as-built), stage 3 in [§9](#9-stage-3-as-built), stage 4 in [§10](#10-stage-4-as-built).
 
 ---
 
@@ -228,7 +228,6 @@ Watch for:
   and never again archaeology from file headers.
 - Update `asn1-definitions/README.md` with spec versions, compiler commit, and commands.
 - Move or delete stale inputs in `tools/` (`ngap-15.8.0.asn1`, `ngap-17.9.asn`, `rrc-15.6.0*.asn1`).
-- Delete the `*:Zone.Identifier` files; add a `.gitignore` rule.
 - Commit the `asn1c-r18` changes in their own repo and record the commit hash here.
 
 ---
@@ -261,7 +260,9 @@ of a compound name (the leading one carries it), and output file names (already
 prefixed by `asn1c_prefixed_filename()`). `construct_base_name()` and
 `out_name_chain()` emit the prefix from their innermost recursion only.
 
-Verified against the one input that produces today's tree, `tools/rrc-15.6.0.asn1`:
+Verified against the one input that produced the tree at the time, `tools/rrc-15.6.0.asn1`
+(stage 4 moved that file to `tests/data/asn1_specs/`, where it now serves only the Python
+test harnesses — see §10.2):
 
 | Check | Result |
 | ----- | ------ |
@@ -694,16 +695,123 @@ hardcoded Python vector in `rrc_d1_probe` already failed to decode before this
 stage, and still does — identically. Bringing that harness onto the R18 field
 names is separate work.
 
-## 10. Open items for you
+## 10. Stage 4 as built
+
+Completed 2026-07-28. Regeneration is one command, and the migration's central claim —
+that everything under `src/asn` really is the output of the inputs in `asn1-definitions`
+— is now something anyone can check in three minutes.
+
+### 10.1 `tools/regen_asn1.sh`
+
+[tools/regen_asn1.sh](../tools/regen_asn1.sh) regenerates all three protocols, or any
+subset (`tools/regen_asn1.sh rrc`). It pins the compiler by commit and warns if
+`asn1c-r18` is at a different one or has uncommitted changes; the location is overridable
+with `ASN1C_REPO`.
+
+The reproducibility check is the point of the whole thing:
+
+```
+$ tools/regen_asn1.sh && git status --short src/asn | wc -l
+0
+```
+
+**All 10392 generated files come back byte-identical.** Getting there needed one
+non-obvious concession: asn1c writes its `argv` verbatim into the preamble of every file,
+so the *order* of the flags is part of the output. The first version of the script grouped
+the flags more tidily and rewrote all 10392 files with nothing but a reshuffled comment.
+The flag list is therefore deliberately split into `FLAGS_PRE` / `-D` / `-fprefix` /
+`FLAGS_POST` to reproduce the order already recorded in the tree, with a comment saying
+why not to "clean it up".
+
+Two smaller traps the script handles, both found by hitting them:
+
+- `yes y | asn1c …` — the compiler prompts before overwriting the shared runtime
+  directory, and `yes` then dies of `SIGPIPE` when it exits. Under `set -o pipefail` that
+  reports a successful generation as a failure, so the script reads the compiler's own
+  status out of `PIPESTATUS`.
+- Regeneration wipes the output directory, which also removes the one hand-written file in
+  it (`CMakeLists.txt`). An `EXIT` trap restores it however the script exits, so a failed
+  run cannot leave the tree unbuildable.
+
+It also refuses to finish if a protocol emitted any file without its prefix — that is
+exactly the shape of the XnAP shadowing bug from §1.3 — and notes it if `src/asn/asn1c`
+changed, which should only ever happen when the fork's skeletons do.
+
+### 10.2 Inputs sorted by what they actually are
+
+`tools/` held four ASN.1 files, and the plan's own §3 checklist called all four stale.
+Three-quarters of that was right:
+
+- `ngap-15.8.0.asn1`, `ngap-17.9.asn` — genuinely unreferenced (the Python NGAP codec in
+  `tests/gnb/harness/ngap_codec.py` is hand-written and reads no schema). **Deleted.**
+- `rrc-15.6.0.asn1`, `rrc-15.6.0-expanded.asn1` — **not stale at all.** Three Python
+  harnesses compile them with `asn1tools` at test time. Deleting them would have broken
+  `tests/ue` and `tests/gnb`. They are test fixtures rather than compiler inputs, so they
+  moved to [tests/data/asn1_specs/](../tests/data/asn1_specs/) next to the golden vectors,
+  and the five paths that referenced them were updated.
+
+That misclassification is worth recording, because the reason `tools/` was confusing is
+that it mixed the two kinds. It no longer does: compiler inputs live in
+`asn1-definitions/`, test fixtures in `tests/data/`, and `tools/` holds tools.
+
+The relocation makes the release skew visible rather than hidden: those fixtures are
+**Rel-15.6** while `src/asn/rrc` is now Rel-18.9. `tests/README.md` and
+[asn1-definitions/README.md](../asn1-definitions/README.md) both say so and point at §9.5.
+
+### 10.3 Toolchain pinned
+
+The `asn1c-r18` work is committed in its own repository on branch
+`prefix-identifiers-and-aper`:
+
+| Commit | What |
+| ------ | ---- |
+| `bb9a3ed3` | `skeletons: implement aligned PER (APER)` (stage 0) |
+| `cac637e0` | `-fprefix: prefix C identifiers, not just file names` (stage 0) |
+| `d5da2722` | `Name the instantiated parameterized type in recursion-safe names` (stage 1) |
+| `bd860515` | `Emit value assignments as constants of their type` (stage 2) |
+
+`bd8605150035729618dbc9ecd3fb90aaed63bd2a` is the pin, recorded in `regen_asn1.sh` and in
+`asn1-definitions/README.md`.
+
+### 10.4 Housekeeping
+
+The `*:Zone.Identifier` files are gone and `.gitignore` has a rule for them, so WSL cannot
+reintroduce them. `src/asn/rrc_backup_r15` went in stage 3.
+
+### 10.5 How it was verified
+
+| Gate | Result |
+| ---- | ------ |
+| `tools/regen_asn1.sh` then `git status src/asn` | **0 files changed** — all 10392 reproduce byte-for-byte |
+| `tools/regen_asn1.sh xnap` (single protocol) | 0 files changed |
+| failure path (`ASN1C_REPO=/nonexistent`) | exits 1, all three `CMakeLists.txt` intact |
+| build | 0 errors |
+| `tools/check_asn1_runtime.sh` | OK: one runtime, shims only |
+| three unit-test binaries | pass |
+| `tests/ngap_ngsetup.py`, `tests/xn_setup_handshake.py` | pass |
+| 1156 NGAP APER vectors, `rrc_d1_probe` | identical |
+| all five relocated harness spec paths | resolve |
+| `pytest tests/ue` | 45 passed, 14 skipped, 16 failed, 10 errors — same 26 failures by name |
+| `pytest tests/gnb` | 3 passed, 35 skipped, 2 errors — unchanged |
+
+The two Python suites are what actually cover the relocation, since they are the only
+things that read those files. Both land on their prior results, `tests/ue` down to the
+same 26 failures by name.
+
+## 11. Open items for you
 
 ~~1. **Rel-15 fallback**~~ — resolved in stage 3: `src/asn/rrc_backup_r15` is deleted.
 
 ~~2. **RRC hand-edits**~~ — resolved in stage 3: stock R18 supersedes all eight, and the C++ adapts (§9.1).
 
-3. **`asn1c-r18` ownership** — should the `-fprefix` and APER work land as commits in that repo (and be
-   pinned by hash here), or be carried as patches inside this repo?
-4. **Interop target** — which AMF/gNB versions must stay interoperable after the jump? That decides how
-   conservative Stage 2 has to be.
+~~3. **`asn1c-r18` ownership**~~ — resolved in stage 4: four commits in that repository, pinned by hash
+   in `tools/regen_asn1.sh` and `asn1-definitions/README.md` (§10.3). Still worth deciding whether that
+   fork should live somewhere less personal than `/home/joe/repos`; `ASN1C_REPO` overrides the path, but
+   nothing vendors it.
+
+4. **Interop target** — which AMF/gNB versions must stay interoperable after the jump? Still open, and
+   §9.2 sharpens it: `physCellId` is now knowingly non-conformant, so the honest answer today is "other
+   instances of this build, plus whatever open5gs accepts on N2".
 
 Carried forward out of stage 3:
 

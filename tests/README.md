@@ -344,7 +344,11 @@ byte constant.
 ## Protocol references
 
 - **RLS Protocol**: UERANSIM link-simulation protocol (`src/lib/rls/`)
-- **NR RRC**: 3GPP TS 38.331 v15.6.0 (`tools/rrc-15.6.0.asn1`)
+- **NR RRC**: the harnesses' Python encoder compiles 3GPP TS 38.331 **v15.6.0**
+  (`tests/data/asn1_specs/rrc-15.6.0.asn1`) with `asn1tools`. Note this is *not* the release
+  the simulator itself speaks — `src/asn/rrc` has been Release 18.9 since 2026-07-28. The two
+  agree on everything the passing tests exercise, but not on `eventD1-r17` or `physCellId`;
+  see `docs/ASN1_R18_Migration_Plan.md` §9.5.
 - **5G NAS**: 3GPP TS 24.501
 - **Milenage**: 3GPP TS 35.206
 - **5G-AKA**: 3GPP TS 33.501

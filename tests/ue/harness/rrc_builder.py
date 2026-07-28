@@ -25,8 +25,8 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Path to the RRC ASN.1 schema bundled with UERANSIM
-_ASN1_PATH = Path(__file__).resolve().parents[3] / "tools" / "rrc-15.6.0.asn1"
-_ASN1_EXPANDED_PATH = Path(__file__).resolve().parents[3] / "tools" / "rrc-15.6.0-expanded.asn1"
+_ASN1_PATH = Path(__file__).resolve().parents[3] / "tests" / "data" / "asn1_specs" / "rrc-15.6.0.asn1"
+_ASN1_EXPANDED_PATH = Path(__file__).resolve().parents[3] / "tests" / "data" / "asn1_specs" / "rrc-15.6.0-expanded.asn1"
 
 
 def _try_compile_asn1():
