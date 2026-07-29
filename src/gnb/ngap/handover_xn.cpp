@@ -235,8 +235,9 @@ void NgapTask::sendPathSwitchRequest(int64_t ueId)
     // The per-session data (target DL tunnels, accepted QoS flows) lives in the
     // GTP task's session tree, populated during prepareXnHandover().  Direct
     // cross-thread read — same unsynchronized-accessor pattern the Xn task uses
-    // (see Xn_summary issue 19).
-    std::vector<PduSessionResource *> sessions;
+    // (see Xn_summary issue 19) — but getPduSessions hands back copies, so
+    // nothing here points into GTP's tree.
+    std::vector<PduSessionResource> sessions;
     if (!m_base->gtpTask->getPduSessions(ueId, sessions) || sessions.empty())
     {
         m_logger->err("UE[%ld] PathSwitchRequest aborted: no PDU sessions found in GTP", ueId);
@@ -245,16 +246,16 @@ void NgapTask::sendPathSwitchRequest(int64_t ueId)
 
     // Encode all transfers before allocating any IEs so a failure aborts cleanly.
     std::vector<std::pair<int, OctetString>> transfers;
-    for (auto *resource : sessions)
+    for (const auto &resource : sessions)
     {
-        OctetString transfer = MakePathSwitchRequestTransfer(*resource);
+        OctetString transfer = MakePathSwitchRequestTransfer(resource);
         if (transfer.length() == 0)
         {
             m_logger->err("UE[%ld] PathSwitchRequest aborted: transfer encode failed for PSI[%d]", ueId,
-                          resource->psi);
+                          resource.psi);
             return;
         }
-        transfers.emplace_back(resource->psi, std::move(transfer));
+        transfers.emplace_back(resource.psi, std::move(transfer));
     }
 
     std::vector<ASN_NGAP_ProtocolIE_Field_13561P108 *> ies;

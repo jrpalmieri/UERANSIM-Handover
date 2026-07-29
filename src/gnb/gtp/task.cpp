@@ -627,18 +627,14 @@ PduSessionResource *GtpTask::getPduSession(int64_t ueId, int psi)
     return nullptr;
 }
 
-bool GtpTask::getPduSessions(int64_t ueId, std::vector<PduSessionResource *> &out)
+// Returns copies of the UE's PDU sessions. Copies rather than pointers into
+// m_sessionTree: the caller is another task's thread (XnTask, gathering the
+// handover context) and may hold these well past the point GTP could release
+// or reallocate the underlying session.
+bool GtpTask::getPduSessions(int64_t ueId, std::vector<PduSessionResource> &out)
 {
-    // get all PDU sessions for this UE
-    std::vector<PduSessionResource> pduSessions;
-    m_sessionTree.enumerateByUe(ueId, pduSessions);
-    if (pduSessions.empty())
-        return false;
-    for (auto &session : pduSessions)
-    {
-        out.emplace_back(&session);
-    }
-    return true;
+    m_sessionTree.enumerateByUe(ueId, out);
+    return !out.empty();
 }
 
 

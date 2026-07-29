@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GNB_BINARY = PROJECT_ROOT / "build" / "nr-gnb"
 
 gnb_binary_exists = pytest.mark.skipif(

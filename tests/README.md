@@ -1,9 +1,10 @@
-# UERANSIM UE Test Harness
+# UERANSIM Test Harness
 
 A Python-based test harness for integration- and unit-testing the
-**UERANSIM UE** (User Equipment emulator).  The harness simulates a
-gNB (base station) entirely in Python, supports optional UDP measurement
-injection for manual experiments, and verifies UE state transitions and signaling.
+**UERANSIM UE and gNB** (User Equipment and base station emulators).
+The harness simulates peer nodes entirely in Python — a fake gNB for UE tests
+and a fake AMF / fake UE for gNB tests — and drives the full 5G NR signaling
+stack through real subprocess binaries.
 
 ---
 
@@ -12,51 +13,36 @@ injection for manual experiments, and verifies UE state transitions and signalin
 ```
 ┌────────────┐  UDP :4997 (RLS)  ┌──────────────┐
 │  nr-ue     │ ◄────────────────►│  FakeGnb     │
-│ (C++ bin)  │                   │  (Python)     │
+│ (C++ bin)  │                   │  (Python)    │
 └────────────┘                   └──────┬───────┘
-      ▲                                 │
-      │ UDP :7200 (optional)    orchestrates
-      │                                 │
-┌─────┴──────┐        ┌────────────────┴──────────────┐
-│ MeasInject  │        │  rls_protocol / rrc_builder / │
-│ (Python)    │        │  nas_builder / milenage       │
-└────────────┘        └───────────────────────────────┘
+                                        │
+                               orchestrates / inspects
+                                        │
+               ┌────────────────────────┴──────────────────────┐
+               │  harness/                                      │
+               │  ├── fake_gnb.py      (RLS + RRC + NAS peer)  │
+               │  ├── rls_protocol.py  (RLS encode / decode)    │
+               │  ├── rrc_builder.py   (RRC ASN.1 encoding)     │
+               │  ├── nas_builder.py   (5GMM NAS encoding)      │
+               │  ├── milenage.py      (5G-AKA key derivation)  │
+               │  └── ue_process.py    (nr-ue lifecycle + logs) │
+               └───────────────────────────────────────────────┘
+
+┌────────────┐  SCTP NGAP  ┌──────────────┐  RLS  ┌──────────────┐
+│  nr-gnb    │◄───────────►│  FakeAmf     │       │  FakeUe      │
+│ (C++ bin)  │             │  (Python)    │       │  (Python)    │
+└────────────┘             └──────────────┘       └──────┬───────┘
+                                                         │ UDP (RLS)
+                                                   ◄─────┘
+               ┌────────────────────────────────────────────────┐
+               │  harness/                                       │
+               │  ├── fake_amf.py      (NGAP SCTP server)       │
+               │  ├── fake_ue.py       (RLS UE simulator)       │
+               │  ├── gnb_process.py   (nr-gnb lifecycle + logs)│
+               │  ├── ngap_codec.py    (minimal NGAP APER codec) │
+               │  └── marks.py         (shared pytest marks)    │
+               └────────────────────────────────────────────────┘
 ```
-
-| Component | Description |
-|---|---|
-| **FakeGnb** | Listens on UDP 4997, speaks the RLS binary protocol, drives RRC/NAS flows |
-| **MeasurementInjector** | Sends JSON cell measurements to the UE's optional UDP measurement port (7200) |
-| **UeProcess** | Starts/stops `nr-ue`, manages config YAML, captures stdout logs |
-| **rls_protocol** | Encode / decode RLS HeartBeat, HeartBeatAck, PduTransmission, … |
-| **rrc_builder** | RRC message encoding (MIB, SIB1, RRCSetup, Reconfiguration, …) via `asn1tools` with fallback |
-| **nas_builder** | 5GMM NAS message encoding (AuthReq, SecModeCmd, RegAccept, …) |
-| **milenage** | Milenage (TS 35.206) + full 5G-AKA key derivation chain |
-
----
-
-## Prerequisites
-
-| Requirement | Notes |
-|---|---|
-| Python ≥ 3.9 | f-strings, `dataclasses` |
-| `nr-ue` binary | Pre-built in `build/nr-ue` (run `make` in the project root first) |
-| Network access | Tests bind UDP ports 4997 and 7200 on localhost |
-| **No root required** | Tests avoid PDU sessions / TUN; measurement-only flows |
-
-### Python packages
-
-```bash
-cd tests
-pip install -r requirements.txt
-```
-
-Contents of `requirements.txt`:
-- pytest ≥ 7.0
-- pytest-timeout ≥ 2.1
-- pyyaml ≥ 6.0
-- cryptography ≥ 41.0
-- asn1tools ≥ 0.166 *(optional – enables full ASN.1 encoding/decoding)*
 
 ---
 
@@ -66,191 +52,227 @@ Contents of `requirements.txt`:
 tests/
 ├── README.md
 ├── requirements.txt
-├── open5gs-dbctl.py
-├── open5gs-dbctl.sh
+├── conftest.py                    # shared fixtures (fake_gnb, ue_process, meas_injector)
 ├── configs/
 │   ├── test-ue.yaml
 │   ├── test_ue1.yaml
 │   └── test_gnb2.yaml
-├── ue/
-│   ├── conftest.py
-│   ├── demo_handover_a3.py
-│   ├── manual_handover.py
-│   ├── harness/
-│   │   ├── fake_gnb.py
-│   │   ├── meas_injector.py
-│   │   ├── milenage.py
-│   │   ├── nas_builder.py
-│   │   ├── rls_protocol.py
-│   │   ├── rrc_builder.py
-│   │   └── ue_process.py
-│   ├── test_ue_cho.py
-│   ├── test_ue_execution.py
-│   ├── test_ue_handover.py
-│   ├── test_ue_nas_states.py
-│   ├── test_ue_rls.py
-│   ├── test_ue_rrc_states.py
-│   └── test_ue_signaling_units.py
+├── data/
+│   ├── asn1_specs/                # RRC ASN.1 schema used by rrc_builder
+│   └── asn1_vectors/              # NGAP golden encode/decode vectors
+├── harness/                       # shared test harness (UE + gNB tests)
+│   ├── fake_gnb.py                # FakeGnb: RLS + RRC + NAS peer for UE tests
+│   ├── fake_amf.py                # FakeAmf: NGAP SCTP server for gNB tests
+│   ├── fake_ue.py                 # FakeUe: RLS UE simulator for gNB tests
+│   ├── gnb_process.py             # GnbProcess: nr-gnb lifecycle manager
+│   ├── meas_injector.py           # MeasurementInjector: OOB measurement stub (unused)
+│   ├── marks.py                   # shared pytest marks (gnb_binary_exists, etc.)
+│   ├── milenage.py                # Milenage / 5G-AKA key derivation
+│   ├── nas_builder.py             # 5GMM NAS message encoder
+│   ├── ngap_codec.py              # Minimal NGAP APER IE-level codec
+│   ├── rls_protocol.py            # RLS binary protocol encode / decode
+│   ├── rrc_builder.py             # RRC message encoder (via asn1tools + fallbacks)
+│   └── ue_process.py              # UeProcess: nr-ue lifecycle + log capture
+├── ue/                            # UE integration and unit tests
+│   ├── conftest.py                # UE-specific fixtures
+│   ├── test_ue_cho.py             # Conditional Handover (CHO) evaluation logic
+│   ├── test_ue_execution.py       # UE binary smoke tests (startup, config)
+│   ├── test_ue_handover.py        # Signal- and distance-based handover flows
+│   ├── test_ue_handover_rrc.py    # RRC handover message handling (Phase 2)
+│   ├── test_ue_measurement.py     # Measurement events A2 / A3 / A5 / TTT
+│   ├── test_ue_nas_states.py      # NAS state machine (RM / CM / MM / PDU)
+│   ├── test_ue_rls.py             # RLS heartbeat and signal-strength tracking
+│   ├── test_ue_rrc_states.py      # RRC state transitions (IDLE / CONNECTED / INACTIVE)
+│   ├── test_ue_sib19_multi.py     # SIB19 multi-entry NCI map parsing
+│   ├── test_ue_signaling.py       # End-to-end RRC + NAS signaling sequences
+│   └── test_ue_signaling_units.py # Harness unit tests (RLS codec, crypto, NAS builder)
 └── gnb/
-  ├── conftest.py
-  ├── harness/
-  │   ├── fake_amf.py
-  │   ├── fake_ue.py
-  │   ├── gnb_process.py
-  │   ├── marks.py
-  │   └── ngap_codec.py
-  ├── test_gnb_handover.py
-  ├── test_gnb_health.py
-  ├── test_gnb_ngap.py
-  ├── test_gnb_registration.py
-  └── test_gnb_rrc.py
+    ├── conftest.py                # gNB-specific fixtures
+    ├── test_gnb_handover.py       # gNB-side handover (NGAP HandoverRequired)
+    ├── test_gnb_health.py         # gNB startup and CLI health checks
+    ├── test_gnb_neighbors_cli.py  # Xn neighbor list CLI operations
+    ├── test_gnb_ngap.py           # NGAP procedures (NGSetup, InitialUE, PathSwitch, …)
+    ├── test_gnb_ngap_ngsetup.py   # Cross-codec NGSetup round-trip test
+    ├── test_gnb_registration.py   # End-to-end UE registration through gNB + FakeAmf
+    ├── test_gnb_rrc.py            # gNB-side RRC setup and measurement config
+    ├── test_gnb_rsrp_models.py    # Distance/NTN RSRP model arithmetic
+    ├── test_gnb_sib19.py          # SIB19 NTN broadcast and TLE loading
+    ├── test_gnb_xn_handshake.py   # Two-gNB XnSetup handshake (XnAP)
+    └── test_sat_time_runtime.py   # Satellite time controls (pause / resume / offset)
 ```
+
+
+---
+
+## Prerequisites
+
+| Requirement | Notes |
+|---|---|
+| Python ≥ 3.9 | f-strings, `dataclasses` |
+| `nr-ue` binary | Pre-built in `build/nr-ue` — run `make` in the project root |
+| `nr-gnb` binary | Pre-built in `build/nr-gnb` — required for gNB tests |
+| Network access | Tests bind UDP 4997 (RLS) and SCTP on localhost |
+| **No root required** | Tests avoid PDU sessions / TUN |
+
+### Python packages
+
+```bash
+cd tests
+pip install -r requirements.txt
+```
+
+`requirements.txt` includes: `pytest`, `pytest-timeout`, `pyyaml`,
+`cryptography`, and `asn1tools` (optional — enables full ASN.1 RRC encoding).
 
 ---
 
 ## Running the tests
 
-### Run all tests (including integration)
+### Run all tests
 
 ```bash
 cd tests
 pytest -v --timeout=120
+# or from project root:
+python3 -m pytest tests/ue/ tests/gnb/ -v
 ```
 
-### Run only unit tests (no `nr-ue` binary needed)
+### Run only UE tests
 
 ```bash
-pytest -v -k "not integration" --timeout=60
+python3 -m pytest tests/ue/ -v
 ```
 
-The harness marks integration tests with `@ue_binary_exists` so they
-are automatically **skipped** when the binary is not present.
+### Run only gNB tests
+
+```bash
+python3 -m pytest tests/gnb/ -v
+```
 
 ### Run a single test file
 
 ```bash
-pytest -v ue/test_ue_cho.py
+python3 -m pytest tests/ue/test_ue_rrc_states.py -v
 ```
+
+### Skip binary-dependent tests
+
+Tests that require `nr-ue` or `nr-gnb` are decorated with
+`@ue_binary_exists` / `@gnb_binary_exists` and are **automatically
+skipped** when the binary is absent.  Pure harness unit tests always run.
 
 ### Run with extra debug output
 
 ```bash
-pytest -v -s --timeout=180
+python3 -m pytest tests/ue/ -v -s --timeout=180
 ```
 
 ---
 
-## Test categories
+## Test suites
 
-### CHO implementation status
+### UE tests (`tests/ue/`)
 
-- CHO evaluation is active in UE cycle processing (`evaluateChoCandidates`).
-- Candidate lifecycle semantics are covered:
-  - add/mod merge,
-  - explicit remove,
-  - remove-miss accounting,
-  - retention across non-CHO reconfiguration.
-- Arbitration tie-break is covered:
-  - lower execution priority first,
-  - greater trigger margin when priority ties.
-- Legacy fallback remains covered: without CHO config, standard A2/A3/A5
-  MeasurementReport flow is still expected and tested.
+| File | Scope | What it covers |
+|---|---|---|
+| `test_ue_execution.py` | Integration | Binary startup, config generation, process lifecycle |
+| `test_ue_rrc_states.py` | Unit + Integration | RRC state transitions: IDLE → CONNECTED → IDLE; RLF |
+| `test_ue_nas_states.py` | Unit + Integration | NAS state machine: RM / CM / MM substates; PDU sessions |
+| `test_ue_rls.py` | Integration | RLS heartbeat exchange; signal-strength tracking via `cellDbMeas` |
+| `test_ue_signaling_units.py` | Unit | RLS codec round trips; Milenage / 5G-AKA; NAS builder output |
+| `test_ue_signaling.py` | Integration | HeartBeat; RRCSetupRequest / Complete; NAS registration sequence |
+| `test_ue_measurement.py` | Integration | A2 / A3 / A5 event evaluation and MeasurementReport generation |
+| `test_ue_sib19_multi.py` | Integration | SIB19 multi-entry binary PDU parsing; NCI map storage |
+| `test_ue_cho.py` | Unit + Integration | CHO candidate lifecycle; condition evaluation; arbitration |
+| `test_ue_handover_rrc.py` | Unit + Integration | RRCReconfiguration-with-sync decoding; T304 timer; handover success / failure |
+| `test_ue_handover.py` | Integration | Signal-based (A3/A5) and distance-based (D1/CHO) handover flows |
 
-### Rel-15 compatibility gate (Phase 1)
+### gNB tests (`tests/gnb/`)
 
-Phase 1 freezes the legacy non-CHO behavior while Rel-17 CHO work evolves.
-All of the following must hold before progressing to later phases:
-
-- UE still emits MeasurementReport on legacy MeasConfig-only A2/A3/A5 paths.
-- gNB still performs measurement-report-driven handover decision and emits
-  NGAP HandoverRequired.
-- No new hard failures are introduced in active UE/gNB suites
-  (timing-sensitive cases may remain skip-safe).
-
-Recommended gate commands:
-
-```bash
-pytest -q tests/ue/test_ue_handover.py tests/gnb/test_gnb_handover.py --disable-warnings
-pytest -q tests/ue tests/gnb --disable-warnings
-```
-
-### 1. RRC State Tests (`test_ue_rrc_states.py`)
-
-| Test | What it verifies |
-|---|---|
-| Parses RRC_IDLE / CONNECTED / INACTIVE from log | Unit — no subprocess |
-| UE starts in RRC_IDLE | Integration — verifies initial state |
-| UE transitions to RRC_CONNECTED | Integration — full RRC setup |
-| UE returns to RRC_IDLE on release | Integration — RRCRelease flow |
-| Radio link failure on signal loss | Integration — catastrophic dBm drop |
-
-### 2. NAS State Tests (`test_ue_nas_states.py`)
-
-| Test | What it verifies |
-|---|---|
-| Parses RM / CM / MM states from log | Unit |
-| Initial RM_DEREGISTERED | Integration |
-| RM_REGISTERED after registration | Integration |
-| CM state follows RRC | Integration |
-| MM substates during registration | Integration |
-
-### 3. Signaling Tests (`test_ue_signaling_units.py`)
-
-| Test | What it verifies |
-|---|---|
-| RLS encode/decode round trips | Unit |
-| RLS header format (magic, version) | Unit |
-| Milenage key derivation | Unit |
-| NAS message format | Unit |
-| HeartBeat exchange | Integration |
-| RRCSetupRequest on UL-CCCH | Integration |
-| RRCSetupComplete on UL-DCCH | Integration |
-| MeasurementReport on UL-DCCH | Integration |
-| NAS registration message sequence | Integration |
+| File | Scope | What it covers |
+|---|---|---|
+| `test_gnb_health.py` | Integration | Binary startup, CLI responsiveness |
+| `test_gnb_rsrp_models.py` | Unit | Distance-based and NTN RSRP model arithmetic |
+| `test_gnb_ngap.py` | Integration | NGAP procedures: NGSetup, InitialUEMessage, HandoverRequired, PathSwitch |
+| `test_gnb_ngap_ngsetup.py` | Integration | Cross-codec NGSetup round-trip (gNB ASN.1 ↔ Python NGAP codec) |
+| `test_gnb_registration.py` | Integration | End-to-end UE registration: RLS → RRC → NAS → NGAP |
+| `test_gnb_rrc.py` | Integration | RRCSetup flow; MeasConfig delivery; MeasurementReport reception; handover command |
+| `test_gnb_handover.py` | Integration | gNB-side handover: NGAP HandoverRequired triggered by MeasurementReport |
+| `test_gnb_neighbors_cli.py` | Integration | Xn neighbor list: CLI add / remove / replace / deduplication |
+| `test_gnb_xn_handshake.py` | Integration | Two-gNB XnSetup handshake; field integrity across APER encode → decode |
+| `test_gnb_sib19.py` | Integration | SIB19 NTN broadcast; TLE loading from config; periodic position updates |
+| `test_sat_time_runtime.py` | Integration | Satellite time offset, pause/resume controls on gNB and UE |
 
 ---
 
-## How the fake gNB works
+## Key harness components
 
-### Registration flow
+| Module | Description |
+|---|---|
+| **`fake_gnb.py`** | Listens on UDP 4997, speaks RLS, drives full RRC + NAS flows for UE tests |
+| **`fake_amf.py`** | SCTP NGAP server; handles NGSetup, InitialUEMessage, and handover procedures for gNB tests |
+| **`fake_ue.py`** | RLS UE simulator; sends HeartBeats to the gNB and receives downlink RRC PDUs |
+| **`gnb_process.py`** | Starts/stops `nr-gnb`, captures log output, provides wait-for-log helpers |
+| **`ue_process.py`** | Starts/stops `nr-ue`, manages config YAML, captures stdout, parses RRC/NAS/CM states |
+| **`rls_protocol.py`** | Encode / decode RLS HeartBeat, HeartBeatAck, PduTransmission |
+| **`rrc_builder.py`** | RRC message encoding (MIB, SIB1, RRCSetup, RRCReconfiguration, SIB19, …) via `asn1tools` with pre-compiled fallbacks |
+| **`nas_builder.py`** | 5GMM NAS message encoding (AuthReq, SecModeCmd, RegAccept, …) |
+| **`milenage.py`** | Milenage (TS 35.206) and full 5G-AKA / NAS security key derivation chain |
+| **`ngap_codec.py`** | Minimal APER IE-level NGAP codec (no external ASN.1 dependency) |
+| **`marks.py`** | `gnb_binary_exists` / `ue_binary_exists` skip decorators |
+
+---
+
+## Signaling flows
+
+### UE registration
 
 ```
-UE                              FakeGnb
- │── HeartBeat ──────────────────►│
- │◄─────────── HeartBeatAck ──────│  (with cell dBm)
- │◄─────────── MIB (BCCH_BCH) ───│
- │◄─────────── SIB1 (BCCH_DL_SCH)│
+UE (nr-ue)                       FakeGnb (Python)
+ │── HeartBeat ─────────────────►│
+ │◄──────────── HeartBeatAck ────│  (with cell dBm)
+ │◄──────────── MIB (BCCH_BCH) ─│
+ │◄──────────── SIB1 (BCCH_DL_SCH)│
  │                                │  UE performs cell selection
- │── RRCSetupRequest (UL_CCCH) ──►│
+ │── RRCSetupRequest (UL_CCCH) ─►│
  │◄── RRCSetup (DL_CCCH) ────────│
- │── RRCSetupComplete (UL_DCCH) ─►│  contains NAS RegistrationRequest
+ │── RRCSetupComplete (UL_DCCH) ►│  NAS RegistrationRequest
  │◄── DLInfoTransfer ────────────│  NAS AuthenticationRequest
  │── ULInfoTransfer ─────────────►│  NAS AuthenticationResponse
  │◄── DLInfoTransfer ────────────│  NAS SecurityModeCommand
  │── ULInfoTransfer ─────────────►│  NAS SecurityModeComplete
  │◄── DLInfoTransfer ────────────│  NAS RegistrationAccept
+ │  UE: RRC_CONNECTED, RM_REGISTERED, CM_CONNECTED
+```
+
+### gNB registration (with FakeAmf)
+
+```
+nr-gnb                   FakeAmf (Python)
+ │── NGSetupRequest ─────────────►│
+ │◄── NGSetupResponse ────────────│
+ │── InitialUEMessage ────────────►│  (triggered by FakeUe attach)
+ │◄── DownlinkNASTransport ───────│  (NAS auth / security / reg accept)
+ │── UplinkNASTransport ──────────►│
+```
+
+### Measurement reporting
+
+```
+FakeGnb                          UE (nr-ue)
+ │── RRCReconfiguration ─────────►│  (measConfig: A2/A3/A5 event)
  │                                │
- │  UE is now RRC_CONNECTED,      │
- │  RM_REGISTERED, CM_CONNECTED   │
-```
-
-### Measurement config flow
-
-```
-FakeGnb                              UE
- │── RRCReconfiguration ──────────►│  (carries measConfig with A2/A3/A5)
- │                                  │
- │  [optional UDP measurement feed] │  (MeasurementInjector sends JSON)
- │                                  │
- │◄── MeasurementReport (UL_DCCH) ─│  (when event condition met)
+ │  UE evaluates measurements     │  (from RLS HeartBeatAck dBm values)
+ │                                │
+ │◄── MeasurementReport (UL_DCCH)─│  (when event + TTT satisfied)
 ```
 
 ---
 
 ## UE configuration
 
-The test UE config ([`configs/test-ue.yaml`](configs/test-ue.yaml))
-uses these credentials:
+Test configs live in [`configs/`](configs/).  The default UE
+(`configs/test-ue.yaml`) uses these credentials:
 
 | Parameter | Value |
 |---|---|
@@ -259,73 +281,8 @@ uses these credentials:
 | Key (K) | `465B5CE8B199B49FAA5F0A2EE238A6BC` |
 | OP | `E8ED289DEBA952E4283B54E88E6183CA` |
 | OP type | OP (not OPc) |
-| UDP measurement port | UDP 7200 |
 
-These match the default UERANSIM test credentials.  No real 5G core
-is required — the fake gNB handles all NAS messages.
-
----
-
-## Optional UDP measurement injection
-
-The `MeasurementInjector` sends JSON over UDP to port 7200.
-
-This path is kept for manual/debug scenarios; the primary automated
-handover direction in `tests` is heartbeat-ACK dbm steering.
-
-```python
-from ue.harness.meas_injector import MeasurementInjector, CellMeas
-
-inj = MeasurementInjector(port=7200)
-inj.set_cell(cell_id=1, rsrp=-85)   # Serving cell
-inj.set_cell(cell_id=2, rsrp=-75)   # Neighbour
-inj.send()                           # One-shot
-inj.send_repeatedly(interval_s=0.5, duration_s=5)  # Sustained
-inj.close()
-```
-
-JSON format:
-```json
-{
-  "measurements": [
-    {"cellId": 1, "rsrp": -85},
-    {"cellId": 2, "rsrp": -75}
-  ]
-}
-```
-
-RSRP values are in dBm.  The UERANSIM UE converts them to the
-3GPP-encoded 0–127 range internally (`value = rsrp_dBm + 156`).
-
----
-
-## Extending the harness
-
-### Adding a new measurement event test
-
-1. Add a report config dict in the test with the event type:
-   ```python
-   report_configs=[{
-       "id": 1, "event": "a3",
-       "a3Offset": 6,   # dB offset
-       "hysteresis": 2,
-       "timeToTrigger": 640,  # ms
-       "maxReportCells": 4,
-   }]
-   ```
-2. Inject appropriate serving and neighbour RSRP values.
-3. Use `fake_gnb.wait_for_measurement_report()`.
-
-### Adding a new NAS message
-
-Edit `harness/nas_builder.py` and add a `build_<message_name>()` function
-following the TLV encoding patterns in TS 24.501.
-
-### Adding a new RRC message
-
-Edit `harness/rrc_builder.py`.  If `asn1tools` is available, add an
-encoder using the compiled schema.  Otherwise, add a fallback pre-computed
-byte constant.
+No real 5G core is required — the fake gNB / fake AMF handle all NAS messages.
 
 ---
 
@@ -333,24 +290,21 @@ byte constant.
 
 | Problem | Solution |
 |---|---|
-| Tests skip with "nr-ue binary not found" | Run `make` in the project root to build `build/nr-ue` |
-| Port 4997 / 7200 in use | Kill other UERANSIM instances: `pkill nr-ue; pkill nr-gnb` |
-| `asn1tools` compilation slow | First run compiles the ASN.1 schema (~30s).  Subsequent runs use cached schema. |
-| TUN errors | Tests are configured without PDU sessions to avoid TUN.  If you add session tests, run with `sudo`. |
-| UE doesn't detect cell | Ensure `gnbSearchList: ["127.0.0.1"]` in the test config |
+| UE tests skip with "nr-ue binary not found" | Run `make nr-ue` in the project root |
+| gNB tests skip with "nr-gnb binary not found" | Run `make nr-gnb` in the project root |
+| Port 4997 in use | Kill stale processes: `pkill nr-ue; pkill nr-gnb` |
+| `asn1tools` compilation slow | First run compiles the RRC ASN.1 schema (~30 s); subsequent runs use the cached result |
+| TUN errors | Tests avoid PDU sessions.  If you add session tests, run with `sudo` |
 
 ---
 
 ## Protocol references
 
 - **RLS Protocol**: UERANSIM link-simulation protocol (`src/lib/rls/`)
-- **NR RRC**: the harnesses' Python encoder compiles 3GPP TS 38.331 **v15.6.0**
-  (`tests/data/asn1_specs/rrc-15.6.0.asn1`) with `asn1tools`. Note this is *not* the release
-  the simulator itself speaks — `src/asn/rrc` has been Release 18.9 since 2026-07-28. The two
-  agree on everything the passing tests exercise, but not on `eventD1-r17` or `physCellId`;
-  see `docs/ASN1_R18_Migration_Plan.md` §9.5.
+- **NR RRC**: harness and simulator encode using 3GPP TS 38.331
+  **Release 18.9** (`tests/data/asn1_specs/rrc-rel18-v18_9.asn1`) via
+  `asn1tools`.
 - **5G NAS**: 3GPP TS 24.501
-- **Milenage**: 3GPP TS 35.206
-- **5G-AKA**: 3GPP TS 33.501
-- **NIA2 / NEA2**: 3GPP TS 33.401 (EIA2 / EEA2, AES-based)
-- **UDP measurement provider**: UERANSIM custom extension (`src/ue/rls/measurement.cpp`)
+- **NGAP**: 3GPP TS 38.413
+- **Milenage / 5G-AKA**: 3GPP TS 35.206, TS 33.501
+- **XnAP**: 3GPP TS 38.423

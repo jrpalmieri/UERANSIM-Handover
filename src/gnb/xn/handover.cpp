@@ -217,6 +217,51 @@ XnTask::SourcePendingMap::iterator XnTask::findSourcePendingByNci(int64_t ueId, 
 }
 
 /**
+ * Maps this simulator's 64-bit ueId onto the 32-bit XnAP UE ID that goes on
+ * the wire.  NG-RANnodeUEXnAPID is INTEGER (0..4294967295) in TS 38.423, so
+ * the raw IMSI-derived ueId does not fit: the generated encoder rejects any
+ * value >= 2^32 outright, which is why the first live HandoverRequest failed
+ * to encode.  (An earlier note in docs/Xn_summary.md claimed the IE tolerated
+ * long values.  It does not -- that was never noticed because the whole XnAP
+ * layer was ABI-broken and had never actually run.)
+ *
+ * Current mapping is a plain truncation, which is sufficient for the
+ * simulator but is NOT collision-free: two UEs whose ueIds differ only above
+ * bit 32 map to the same XnAP ID.
+ *
+ * Contract any replacement must satisfy:
+ *   - the returned value must fit in 0..4294967295;
+ *   - it must be stable for the lifetime of a handover, because it is stored
+ *     in XnPendingHandover::sourceUeXnApId and every later message of that
+ *     handover (Ack, SN Status Transfer, Cancel, UE Context Release) is
+ *     correlated by comparing against that stored value;
+ *   - it must be unique per (peer, active handover) to be standard-correct.
+ * A per-peer allocator plus an id->ueId table satisfies all three; dropping it
+ * in here is the whole change, since no call site sees the mapping directly.
+ */
+uint32_t XnTask::xnApIdFromUeId(int64_t ueId) const
+{
+    return static_cast<uint32_t>(static_cast<uint64_t>(ueId) & 0xFFFFFFFFull);
+}
+
+/**
+ * Reverse of xnApIdFromUeId() for source-role entries: a peer's message carries
+ * only the 32-bit id, and truncation cannot be inverted arithmetically, so the
+ * full ueId is recovered from the pending entry that recorded what was sent.
+ * Callers must take ueId for any message they forward to RRC from
+ * ->second.ueId, never from the decoded wire value.
+ */
+XnTask::SourcePendingMap::iterator XnTask::findSourcePendingByXnApId(int64_t sourceXnApId, int gnbId)
+{
+    return std::find_if(m_pendingHandoversSourceByUeId.begin(), m_pendingHandoversSourceByUeId.end(),
+        [sourceXnApId, gnbId](const auto &pair) {
+            return pair.second.role == XnPendingHandover::Role::SOURCE &&
+                   pair.second.sourceUeXnApId == sourceXnApId &&
+                   pair.second.targetGnbId == gnbId;
+        });
+}
+
+/**
  * sendHandoverRequest (called from task.cpp - RrcToXn::HANDOVER_REQUEST_SEND)
  *
  * Builds and sends an XnAP HandoverRequest to the target gNB identified by
@@ -289,12 +334,14 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
     // -----------------------------------------------------------------------
     // IE 1 — sourceNG-RANnodeUEXnAPID  (id=73, mandatory, criticality=reject)
     //   Opaque 32-bit UE identifier at the source gNB on the Xn interface.
-    //   For the simulation, we use the full 64-bit UE ID to simplify tracking across 
-    //   multiple gNBs (the IE allows for long values).  This is not standard-compliant, 
-    //   but it is convenient for the simulation (avoids lookup operations).
+    //   Derived from the simulator's 64-bit ueId by xnApIdFromUeId(), which is
+    //   the single place that mapping is decided -- see its definition above.
+    //   The same derived value is stored in the pending entry below, so all
+    //   later correlation for this handover uses exactly what went on the wire.
     // -----------------------------------------------------------------------
+    const uint32_t sourceXnApId = xnApIdFromUeId(ueId);
     ASN_XNAP_NG_RANnodeUEXnAPID_t srcUeXnId =
-        static_cast<ASN_XNAP_NG_RANnodeUEXnAPID_t>(ueId);
+        static_cast<ASN_XNAP_NG_RANnodeUEXnAPID_t>(sourceXnApId);
 
     // Ownership note: every top-level allocation below is held in an asn::Unique
     // guard, so any early return frees everything built so far.  Ownership is
@@ -420,7 +467,16 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
     }
 
     // --- 5c. ueSecurityCapabilities ---
-    // Pulled from RRC context
+    // Pulled from RRC context. UEContextInfoHORequest::ueSecurityCapabilities
+    // is mandatory (a fixed 16-bit BIT STRING per algorithm field) -- unlike
+    // the securityInformation block just below, this had no else-branch
+    // fallback, so whenever ueSecurityInfoValid was false (always, until a
+    // real AS security procedure runs -- this harness never does) every
+    // BIT_STRING here stayed default-constructed (buf=nullptr, size=0),
+    // which the APER encoder rejects outright: this was the actual cause of
+    // "APER encoding failed" on the very first live HandoverRequest, not
+    // anything in the PDU session list. Falls back to all-zero (no
+    // supported algorithms) like securityInformation's KgNB* fallback does.
     {
         auto &sc = ueCtxInfo->ueSecurityCapabilities;
         if (rrcUe->ueSecurityInfoValid)
@@ -429,6 +485,13 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
             asn::SetBitStringInt<16>(rrcUe->ueSecInfo.nRintegrityProtectionAlgorithmsBitmap, sc.nr_IntegrityProtectionAlgorithms);
             asn::SetBitStringInt<16>(rrcUe->ueSecInfo.eUTRAencryptionAlgorithmsBitmap, sc.e_utra_EncyptionAlgorithms);
             asn::SetBitStringInt<16>(rrcUe->ueSecInfo.eUTRAintegrityProtectionAlgorithmsBitmap, sc.e_utra_IntegrityProtectionAlgorithms);
+        }
+        else
+        {
+            asn::SetBitStringInt<16>(0, sc.nr_EncyptionAlgorithms);
+            asn::SetBitStringInt<16>(0, sc.nr_IntegrityProtectionAlgorithms);
+            asn::SetBitStringInt<16>(0, sc.e_utra_EncyptionAlgorithms);
+            asn::SetBitStringInt<16>(0, sc.e_utra_IntegrityProtectionAlgorithms);
         }
     }
 
@@ -465,13 +528,13 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
 
     // --- 5f. pduSessionResourcesToBeSetup-List ---
     // Enumerate active PDU sessions from GTP PDU Sessions
-    for (auto *res : pduSessions)
+    for (const auto &res : pduSessions)
     {
         // A session with no QoS flows cannot be encoded (qosFlowsToBeSetup-List
         // has a lower bound of 1) — abort the whole request up front.
-        if (res->qosFlows.empty())
+        if (res.qosFlows.empty())
         {
-            m_logger->err("sendHandoverRequest: PSI=%d has no QoS flows; aborting", res->psi);
+            m_logger->err("sendHandoverRequest: PSI=%d has no QoS flows; aborting", res.psi);
             sendRRCAbort(ueId, targetNci, isCho, NmGnbXnToRrc::ABORT_REASON_XN_FAILURE, m_base);
             return;
         }
@@ -480,21 +543,21 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
                                        asn_DEF_ASN_XNAP_PDUSessionResourcesToBeSetup_Item);
 
         // pdu Session ID
-        pduItem->pduSessionId = static_cast<ASN_XNAP_PDUSession_ID_t>(res->psi);
+        pduItem->pduSessionId = static_cast<ASN_XNAP_PDUSession_ID_t>(res.psi);
 
         // S-NSSAI
-        asn::SetOctetString1(pduItem->s_NSSAI.sst, res->sNssai.sst);
-        if (res->sNssai.sd.has_value() )
+        asn::SetOctetString1(pduItem->s_NSSAI.sst, res.sNssai.sst);
+        if (res.sNssai.sd.has_value() )
         {
             pduItem->s_NSSAI.sd = asn::New<OCTET_STRING_t>();
-            asn::SetOctetString3(*pduItem->s_NSSAI.sd, res->sNssai.sd.value());
+            asn::SetOctetString3(*pduItem->s_NSSAI.sd, res.sNssai.sd.value());
         }
 
         // pduSession AMBR — from GTP PDU Session struct.
         {
             uint64_t dlAmbr = 0, ulAmbr = 0;
-            dlAmbr = res->sessionAmbr.dlAmbr;
-            ulAmbr = res->sessionAmbr.ulAmbr;
+            dlAmbr = res.sessionAmbr.dlAmbr;
+            ulAmbr = res.sessionAmbr.ulAmbr;
 
             auto *ambr = asn::New<ASN_XNAP_PDUSessionAggregateMaximumBitRate>();
             asn_uint642INTEGER(&ambr->downlink_session_AMBR, dlAmbr);
@@ -507,9 +570,9 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
         // UL GTP-U tunnel at UPF — from the GTP task's upTunnel record.
         {
             uint32_t upfIpBe = 0;
-            if (res->upTunnel.address.length() >= 4)
+            if (res.upTunnel.address.length() >= 4)
             {
-                const uint8_t *b = res->upTunnel.address.data();
+                const uint8_t *b = res.upTunnel.address.data();
                 upfIpBe = (static_cast<uint32_t>(b[0]) << 24) |
                           (static_cast<uint32_t>(b[1]) << 16) |
                           (static_cast<uint32_t>(b[2]) << 8)  |
@@ -517,7 +580,7 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
             }
             auto *gtpTunnel = asn::New<ASN_XNAP_GTPtunnelTransportLayerInformation_t>();
             asn::SetBitString(gtpTunnel->tnl_address, octet4{upfIpBe}, 32);
-            asn::SetOctetString4(gtpTunnel->gtp_teid, octet4{res->upTunnel.teid});
+            asn::SetOctetString4(gtpTunnel->gtp_teid, octet4{res.upTunnel.teid});
             pduItem->uL_NG_U_TNLatUPF.present =
                 ASN_XNAP_UPTransportLayerInformation_PR_gtpTunnel;
             pduItem->uL_NG_U_TNLatUPF.choice.gtpTunnel = gtpTunnel;
@@ -526,9 +589,9 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
         // Source-DL-NG-U-TNL-Information — optional transport info for the downlink path from source gNB to UPF.
         {
             uint32_t upfIpBe = 0;
-            if (res->downTunnel.address.length() >= 4)
+            if (res.downTunnel.address.length() >= 4)
             {
-                const uint8_t *b = res->downTunnel.address.data();
+                const uint8_t *b = res.downTunnel.address.data();
                 upfIpBe = (static_cast<uint32_t>(b[0]) << 24) |
                           (static_cast<uint32_t>(b[1]) << 16) |
                           (static_cast<uint32_t>(b[2]) << 8)  |
@@ -536,7 +599,7 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
             }
             auto *gtpTunnel = asn::New<ASN_XNAP_GTPtunnelTransportLayerInformation_t>();
             asn::SetBitString(gtpTunnel->tnl_address, octet4{upfIpBe}, 32);
-            asn::SetOctetString4(gtpTunnel->gtp_teid, octet4{res->downTunnel.teid});
+            asn::SetOctetString4(gtpTunnel->gtp_teid, octet4{res.downTunnel.teid});
 
             auto *upTnlInfo = asn::New<ASN_XNAP_UPTransportLayerInformation_t>();
             upTnlInfo->present = ASN_XNAP_UPTransportLayerInformation_PR_gtpTunnel;
@@ -549,7 +612,7 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
         // PDU session type — from GTP resource (set from NGAP SessionResourceSetup).
         {
             int xnType = 1;
-            switch (res->sessionType)
+            switch (res.sessionType)
             {
             case PduSessionType::IPv4:     xnType = 1; break;
             case PduSessionType::IPv6:     xnType = 2; break;
@@ -572,7 +635,7 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
         auto *dfInfo = asn::New<ASN_XNAP_DataforwardingandOffloadingInfofromSource>();
         pduItem->dataforwardinginfofromSource = dfInfo;
 
-        for (const auto &flow : res->qosFlows)
+        for (const auto &flow : res.qosFlows)
         {
             auto *xnNonDyn = asn::New<ASN_XNAP_NonDynamic5QIDescriptor_t>();
             xnNonDyn->fiveQI = flow.fiveQi;
@@ -808,7 +871,9 @@ void XnTask::sendHandoverRequest(int64_t ueId, int64_t targetNci,
 
     XnPendingHandover outgoing{};
     outgoing.ueId = ueId;
-    outgoing.sourceUeXnApId = ueId;
+    // Must be what actually went on the wire, not the raw ueId: every later
+    // message of this handover is correlated against this field.
+    outgoing.sourceUeXnApId = sourceXnApId;
     outgoing.targetNci = targetNci;
     outgoing.targetGnbId = targetPeer->gnbId;
     outgoing.isCho = isCho;
@@ -933,8 +998,12 @@ void XnTask::receiveHandoverRequest(int gnbId, uint16_t stream, ASN_XNAP_XnAP_PD
                 ngap_utils::PlmnFromAsn_Ref(
                     reinterpret_cast<const ASN_NGAP_PLMNIdentity_t &>(tgtCell->choice.nr->plmn_id),
                     plmn);
+                // nr_CI is a BIT_STRING_t, not an integer -- passing the struct
+                // itself to a %lx varargs slot printed a pointer and shifted
+                // every later argument (gnbId came out as garbage too).
                 m_logger->info("receiveHandoverRequest: target CGI PLMN=%d/%d NR Cell ID=0x%09lx from gnbId=%d",
-                               plmn.mcc, plmn.mnc, tgtCell->choice.nr->nr_CI, gnbId);
+                               plmn.mcc, plmn.mnc,
+                               asn::GetBitStringLong<36>(tgtCell->choice.nr->nr_CI), gnbId);
 
             }
             else
@@ -1292,10 +1361,14 @@ void XnTask::sendHandoverRequestAck(uint32_t xnTxId, uint64_t ueId,
     }
 
     int sourceGnbId      = pending->sourceGnbId;
-    int64_t targetUeId   = ueId;
+    // The target's own XnAP handle for this UE, derived from its local ueId by
+    // the same seam the source uses (NG-RANnodeUEXnAPID is only 32 bits).
+    // Stored derived, so the target-side lookups keyed on targetUeXnApId must
+    // derive too -- see receiveUeContextRelease / sendHandoverSuccess.
+    int64_t targetUeId   = static_cast<int64_t>(xnApIdFromUeId(ueId));
     int64_t srcUeXnApId  = pending->sourceUeXnApId;
     pending->ueId = ueId;
-    pending->targetUeXnApId = ueId;
+    pending->targetUeXnApId = targetUeId;
 
     // set ackSent flag to true so that the pending entry is not cleaned up by timeout
     pending->ackSent = true;
@@ -1500,9 +1573,12 @@ void XnTask::sendHandoverRequestAck(uint32_t xnTxId, uint64_t ueId,
     ieRrcContainer->id          = XNAP_IE_Target2SourceTranspContainer;
     ieRrcContainer->criticality = ASN_XNAP_Criticality_ignore;
     ieRrcContainer.get()->value.present = ASN_XNAP_ProtocolIE_Field_14202P82__value_PR_OCTET_STRING;
+    // Shallow struct copy: the IE now owns rrcOs.buf and frees it with the PDU.
+    // Do NOT free the contents here -- rrcOs is a stack shell, so there is no
+    // shell to reclaim, and freeing its buf would leave the IE holding a
+    // dangling pointer (the encoder then reads freed memory, and the PDU
+    // teardown frees it a second time).
     ieRrcContainer.get()->value.choice.OCTET_STRING = rrcOs;
-
-    ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_OCTET_STRING, &rrcOs);
 
     // -----------------------------------------------------------------------
     // Assemble HandoverRequestAcknowledge and wrap in SuccessfulOutcome
@@ -2439,7 +2515,9 @@ void XnTask::receiveHandoverRequestAck(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 
     // retrieve pending handover state for this UE and peer gNB (map is keyed by (ueId, targetGnbId))
 
-    auto pendingIt = m_pendingHandoversSourceByUeId.find(std::make_pair(sourceUeId, static_cast<int64_t>(gnbId)));
+    // sourceUeId is the 32-bit value off the wire, not the map key (the full
+    // ueId) -- resolve through the recorded XnAP id.
+    auto pendingIt = findSourcePendingByXnApId(sourceUeId, gnbId);
     if (pendingIt == m_pendingHandoversSourceByUeId.end())
     {
         m_logger->err("UE[%ld]: unmatched HandoverRequestAck from gnbId=%d", sourceUeId, gnbId);
@@ -2461,7 +2539,7 @@ void XnTask::receiveHandoverRequestAck(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     for (auto &[psi, tunnel] : forwardingTunnels)
     {
         auto gm = std::make_unique<NmGnbXnToGtp>(NmGnbXnToGtp::FORWARDING_TUNNEL_SETUP);
-        gm->ueId = sourceUeId;
+        gm->ueId = pendingHo->ueId;   // full 64-bit ueId, not the 32-bit wire id
         gm->psi = psi;
         gm->forwardingTunnel = std::move(tunnel);
         m_base->gtpTask->push(std::move(gm));
@@ -2469,7 +2547,7 @@ void XnTask::receiveHandoverRequestAck(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
 
     // send msg to RRC layer to indicate that the handover request has been acknowledged and the RRC container is available for processing.
     auto msg = std::make_unique<NmGnbXnToRrc>(NmGnbXnToRrc::HANDOVER_REQUEST_ACK_RECEIVED);
-    msg->ueId         = sourceUeId;
+    msg->ueId         = pendingHo->ueId;   // full 64-bit ueId, not the 32-bit wire id
     msg->targetNci    = pendingHo->targetNci;
     msg->isCho        = pendingHo->isCho;
     msg->rrcContainer = std::move(rrcContainer);
@@ -2616,7 +2694,9 @@ void XnTask::receiveUeContextRelease(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     // Validate the complete UE-ID pair and peer before 
     //    deleting source RLS/RRC/NGAP/GTP contexts.
     
-    auto outgoing = m_pendingHandoversSourceByUeId.find(std::make_pair(sourceUeId, static_cast<int64_t>(gnbId)));
+    // sourceUeId is the 32-bit wire value, not the map key -- see
+    // findSourcePendingByXnApId.
+    auto outgoing = findSourcePendingByXnApId(sourceUeId, gnbId);
     if (outgoing == m_pendingHandoversSourceByUeId.end() && m_completedSourceReleases.count(sourceUeId))
     {
         // only log a warning - possible that source has timed out the pending handover
@@ -2634,15 +2714,18 @@ void XnTask::receiveUeContextRelease(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     // send msg to RRC layer to indicate that the UEContextRelease has been received and validated.
 
     auto msg = std::make_unique<NmGnbXnToRrc>(NmGnbXnToRrc::UE_CONTEXT_RELEASE_RECEIVED);
-    msg->ueId = sourceUeId;
+    msg->ueId = outgoing->second.ueId;   // full 64-bit ueId, not the 32-bit wire id
     msg->targetNci = outgoing->second.targetNci;
     m_base->rrcTask->push(std::move(msg));
 
     // remove the pending handover request (and release its SCTP stream), as it has
-    // been completed
-    removeSourcePendingHandover(sourceUeId, gnbId);
+    // been completed.  Keyed by the full ueId, which only the pending entry has.
+    const int64_t fullUeId = outgoing->second.ueId;
+    removeSourcePendingHandover(fullUeId, gnbId);
 
-    // TODO: not sure what this is doing, but it seems to be tracking completed releases?
+    // Duplicate-release guard.  Keyed by the 32-bit wire id deliberately: on a
+    // duplicate the pending entry is already gone, so the wire id is the only
+    // thing a second UEContextRelease can be matched on (see the lookup above).
     m_completedSourceReleases.insert(sourceUeId);
 
     m_logger->info("UE[%ld] validated Xn UEContextRelease forwarded to source RRC", sourceUeId);
@@ -2720,7 +2803,9 @@ void XnTask::receiveHandoverSuccess(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     
     // Find the pending handover state
 
-    auto pending = m_pendingHandoversSourceByUeId.find(std::make_pair(sourceUeId, static_cast<int64_t>(gnbId)));
+    // sourceUeId is the 32-bit wire value, not the map key -- see
+    // findSourcePendingByXnApId.
+    auto pending = findSourcePendingByXnApId(sourceUeId, gnbId);
     if (pending == m_pendingHandoversSourceByUeId.end() ||
         pending->second.targetUeXnApId != targetUEId || pending->second.targetNci != requestedNci)
     { 
@@ -2732,7 +2817,7 @@ void XnTask::receiveHandoverSuccess(int gnbId, ASN_XNAP_XnAP_PDU *pdu)
     // send msg to RRC layer to indicate that the handover has succeeded.
     
     auto msg = std::make_unique<NmGnbXnToRrc>(NmGnbXnToRrc::HANDOVER_SUCCESS_RECEIVED);
-    msg->ueId = sourceUeId; 
+    msg->ueId = pending->second.ueId;   // full 64-bit ueId, not the 32-bit wire id
     msg->targetNci = requestedNci; 
     m_base->rrcTask->push(std::move(msg));
     
@@ -2756,10 +2841,12 @@ void XnTask::sendUeContextRelease(int64_t ueId, int64_t targetNci)
 {
     // retrieve the pending handover state for this UE.  If no pending handover is found, log an error and return.
 
+    // targetUeXnApId holds the derived 32-bit XnAP id, not the raw local ueId.
+    const int64_t localXnApId = static_cast<int64_t>(xnApIdFromUeId(ueId));
     XnPendingHandover *pending = nullptr;
     for (auto &[txId, candidate] : m_pendingHandoversTargetByTxId)
     {
-        if (candidate.role == XnPendingHandover::Role::TARGET && candidate.targetUeXnApId == ueId)
+        if (candidate.role == XnPendingHandover::Role::TARGET && candidate.targetUeXnApId == localXnApId)
         {
             pending = &candidate;
             break;
@@ -2864,9 +2951,11 @@ void XnTask::sendHandoverSuccess(int64_t ueId, int64_t targetNci)
 {
     
     // retrieve the pending handover state for this UE.  If no pending handover is found, log a warning and return.
+    // targetUeXnApId holds the derived 32-bit XnAP id, not the raw local ueId.
+    const int64_t localXnApId = static_cast<int64_t>(xnApIdFromUeId(ueId));
     XnPendingHandover *pending = nullptr;
     for (auto &[txId, candidate] : m_pendingHandoversTargetByTxId)
-        if (candidate.role == XnPendingHandover::Role::TARGET && candidate.targetUeXnApId == ueId) 
+        if (candidate.role == XnPendingHandover::Role::TARGET && candidate.targetUeXnApId == localXnApId) 
         { 
             pending = &candidate; 
             break;

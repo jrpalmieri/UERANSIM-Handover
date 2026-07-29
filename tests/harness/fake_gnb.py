@@ -319,6 +319,13 @@ class FakeGnb:
             time.sleep(0.2)
         return False
 
+    def send_heartbeat_ack(self):
+        """Proactively refresh the UE's measurement for this fake cell."""
+        if self._ue_addr is None:
+            raise RuntimeError("Cannot send HeartBeatAck before receiving a heartbeat")
+        ack = encode_heartbeat_ack(self._gnb_sti, self._cell_dbm)
+        self._send_raw(ack, self._ue_addr)
+
     def perform_cell_attach(self):
         """Send MIB + SIB1 to trigger cell selection at the UE.
 

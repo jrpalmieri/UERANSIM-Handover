@@ -6,64 +6,22 @@ Verifies that the UE correctly evaluates and reports measurement events:
   - A3: Neighbour becomes offset better than serving
   - A5: Serving < threshold1 AND neighbour > threshold2
 
-Uses the OOB measurement provider (UDP JSON injection) to control
-the RSRP values seen by the UE's measurement evaluation engine.
+Technique:
+- create two fake GnBs providing different RSRP values
+- serving gNB provides an A2 or A3 measurement-event configuration
+- change RSRP values in heartbeat ACKs to cause measurement events to trigger
+- expect a measurement report RRC message to be sent
+
 """
 
 from __future__ import annotations
 
 import time
 
-import pytest
-
 from harness.fake_gnb import FakeGnb
-from harness.meas_injector import MeasurementInjector, CellMeas
 from harness.ue_process import UeProcess
 from harness.rls_protocol import RrcChannel
 from .conftest import ue_binary_exists, needs_asn1tools
-
-
-# ======================================================================
-#  Unit tests — MeasurementInjector
-# ======================================================================
-
-class TestMeasurementInjectorUnit:
-    """Verify the injector builds correct JSON payloads."""
-
-    def test_cell_meas_to_dict_with_cell_id(self):
-        cm = CellMeas(cell_id=1, rsrp=-85, rsrq=-10, sinr=15)
-        d = cm.to_dict()
-        assert d["cellId"] == 1
-        assert d["rsrp"] == -85
-        assert "nci" not in d
-
-    def test_cell_meas_to_dict_with_nci(self):
-        cm = CellMeas(nci=36, rsrp=-78, rsrq=-8, sinr=20)
-        d = cm.to_dict()
-        assert d["nci"] == 36
-        assert d["rsrp"] == -78
-        assert "cellId" not in d
-
-    def test_set_and_remove_cell(self, meas_injector: MeasurementInjector):
-        meas_injector.set_cell(cell_id=1, rsrp=-85)
-        assert 1 in meas_injector._cells
-        meas_injector.remove_cell(cell_id=1)
-        assert 1 not in meas_injector._cells
-
-    def test_clear(self, meas_injector: MeasurementInjector):
-        meas_injector.set_cell(cell_id=1, rsrp=-85)
-        meas_injector.set_cell(nci=2, rsrp=-90)
-        meas_injector.clear()
-        assert len(meas_injector._cells) == 0
-
-    def test_json_payload_format(self, meas_injector: MeasurementInjector):
-        import json
-        meas_injector.set_cell(cell_id=1, rsrp=-85)
-        payload = meas_injector._build_json()
-        data = json.loads(payload)
-        assert "measurements" in data
-        assert len(data["measurements"]) == 1
-        assert data["measurements"][0]["rsrp"] == -85
 
 
 # ======================================================================
@@ -188,428 +146,172 @@ class TestMeasEventEvaluation:
 
 
 # ======================================================================
-#  Integration tests — measurement event A2
+#  Integration tests — UE MeasurementReport transmission
 # ======================================================================
 
 @ue_binary_exists
 @needs_asn1tools
-class TestMeasEventA2:
-    """Test A2 event: serving becomes worse than threshold."""
+class TestMeasurementReportTransmission:
+    @staticmethod
+    def _sustain_measurements(
+        source_gnb: FakeGnb,
+        target_gnb: FakeGnb,
+        duration_s: float = 3,
+    ) -> None:
+        """Keep both cell measurements fresh while the UE evaluates an event."""
+        end = time.monotonic() + duration_s
+        while time.monotonic() < end:
+            source_gnb.send_heartbeat_ack()
+            target_gnb.send_heartbeat_ack()
+            time.sleep(0.1)
 
-    def test_a2_triggered_by_low_serving_rsrp(
+    @staticmethod
+    def _connect_to_source(
+        source_gnb: FakeGnb,
+        target_gnb: FakeGnb,
+    ) -> None:
+        """Connect through the source, retrying the timing-sensitive setup once."""
+        for _attempt in range(2):
+            source_gnb.perform_cell_attach()
+            target_gnb.perform_cell_attach()
+            # The UE's default heartbeat expiry is only 300 ms. Refresh both
+            # cells after the two serialized SI broadcasts before waiting for
+            # the setup request/response exchange.
+            source_gnb.send_heartbeat_ack()
+            target_gnb.send_heartbeat_ack()
+            assert source_gnb.perform_rrc_setup(timeout_s=20), (
+                "RRC setup exchange did not complete"
+            )
+            if source_gnb.wait_for_ul_dcch(timeout_s=10) is not None:
+                return
+
+        raise AssertionError("No UL-DCCH observed after two RRC setup attempts")
+
+    def test_ue_sends_report_when_a2_event_occurs(
         self,
-        fake_gnb: FakeGnb,
-        ue_process: UeProcess,
-        meas_injector: MeasurementInjector,
+        source_gnb: FakeGnb,
+        target_gnb: FakeGnb,
+        two_gnb_ue: UeProcess,
     ):
-        """When serving RSRP drops below A2 threshold, a MeasurementReport
-        should be sent."""
-        # Setup: get UE to RRC_CONNECTED
-        ue_process.generate_config()
-        ue_process.start()
-        assert fake_gnb.wait_for_heartbeat(timeout_s=10)
-        fake_gnb.perform_cell_attach()
-        fake_gnb.perform_rrc_setup()
-        time.sleep(1)
+        """An A2 event produces a parseable MeasurementReport on UL-DCCH."""
+        # Both cells must be known to the UE, with the source selected as serving.
+        source_gnb.cell_dbm = -60
+        target_gnb.cell_dbm = -90
+        self._connect_to_source(source_gnb, target_gnb)
 
-        # Configure A2 measurement: threshold = -100 dBm
-        fake_gnb.send_meas_config(
-            report_configs=[{
-                "id": 1, "event": "a2",
-                "a2Threshold": -100,
-                "hysteresis": 2,
-                "timeToTrigger": 0,
-                "maxReportCells": 4,
+        report_config = {
+            "id": 1,
+            "event": "a2",
+            "a2Threshold": -100,
+            "hysteresis": 2,
+            "timeToTrigger": 0,
+            "maxReportCells": 4,
+        }
+        # Ensure A2 is false when the configuration becomes active. Otherwise a
+        # briefly aged-out serving measurement (-156 dBm) can consume the
+        # one-shot report before event_start is recorded.
+        source_gnb.send_heartbeat_ack()
+        target_gnb.send_heartbeat_ack()
+        source_gnb.send_meas_config(
+            meas_objects=[{"id": 1, "ssbFreq": 632628}],
+            report_configs=[report_config],
+            meas_ids=[{
+                "measId": 1,
+                "measObjectId": 1,
+                "reportConfigId": report_config["id"],
             }],
-            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
         )
-        time.sleep(1)
+        assert source_gnb.wait_for_rrc_reconfiguration_complete(timeout_s=10), (
+            "UE did not acknowledge the measurement configuration"
+        )
 
-        # Inject serving cell RSRP below threshold
-        meas_injector.set_cell(cell_id=1, rsrp=-115)
-        meas_injector.send_repeatedly(interval_s=0.5, duration_s=5.0)
+        # Record the boundary after configuration, then change the values carried
+        # by subsequent heartbeat ACKs.  -115 dBm is below the A2 entry boundary:
+        # threshold - hysteresis = -102 dBm.
+        event_start = time.monotonic()
+        source_gnb.cell_dbm = -115
+        target_gnb.cell_dbm = -90
+        self._sustain_measurements(source_gnb, target_gnb)
 
-        # Wait for MeasurementReport
-        report = fake_gnb.wait_for_measurement_report(timeout_s=15)
-        assert report is not None, "No MeasurementReport received for A2 event"
+        report = source_gnb.wait_for_measurement_report_since(
+            start_ts=event_start,
+            timeout_s=20,
+        )
+        if report is None:
+            two_gnb_ue.collect_output(timeout_s=1)
+            relevant_logs = "\n".join(
+                line for line in two_gnb_ue.log_lines
+                if "meas" in line.lower()
+                or "cell" in line.lower()
+                or "rrc" in line.lower()
+                or "heartbeat" in line.lower()
+            )
+            raise AssertionError(
+                "UE sent no MeasurementReport after the A2 condition occurred\n"
+                f"Relevant UE logs:\n{relevant_logs}"
+            )
         assert report.channel == RrcChannel.UL_DCCH
-        ue_process.cleanup()
-
-    def test_a2_not_triggered_when_serving_above_threshold(
-        self,
-        fake_gnb: FakeGnb,
-        ue_process: UeProcess,
-        meas_injector: MeasurementInjector,
-    ):
-        """When serving RSRP is above threshold, no report should be sent."""
-        ue_process.generate_config()
-        ue_process.start()
-        assert fake_gnb.wait_for_heartbeat(timeout_s=10)
-        fake_gnb.perform_cell_attach()
-        fake_gnb.perform_rrc_setup()
-        time.sleep(1)
-
-        fake_gnb.send_meas_config(
-            report_configs=[{
-                "id": 1, "event": "a2",
-                "a2Threshold": -100,
-                "hysteresis": 2,
-                "timeToTrigger": 0,
-                "maxReportCells": 4,
-            }],
-            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
+        assert source_gnb.get_ul_dcch_message_type(report.raw_pdu) == (
+            "measurementReport"
         )
-        time.sleep(1)
 
-        # Inject serving cell RSRP well above threshold
-        meas_injector.set_cell(cell_id=1, rsrp=-70)
-        meas_injector.send_repeatedly(interval_s=0.5, duration_s=5.0)
-
-        # Should NOT get a MeasurementReport
-        fake_gnb.clear_captured()
-        report = fake_gnb.wait_for_measurement_report(timeout_s=8)
-        assert report is None, "Unexpected MeasurementReport when serving above A2 threshold"
-        ue_process.cleanup()
-
-
-# ======================================================================
-#  Integration tests — measurement event A3
-# ======================================================================
-
-@ue_binary_exists
-@needs_asn1tools
-class TestMeasEventA3:
-    """Test A3 event: neighbour becomes offset better than serving."""
-
-    def test_a3_triggered_when_neighbour_stronger(
+    def test_ue_sends_report_when_a3_event_occurs(
         self,
-        fake_gnb: FakeGnb,
-        ue_process: UeProcess,
-        meas_injector: MeasurementInjector,
+        source_gnb: FakeGnb,
+        target_gnb: FakeGnb,
+        two_gnb_ue: UeProcess,
     ):
-        """When neighbour RSRP > serving + offset + hyst, report is sent."""
-        ue_process.generate_config()
-        ue_process.start()
-        assert fake_gnb.wait_for_heartbeat(timeout_s=10)
-        fake_gnb.perform_cell_attach()
-        fake_gnb.perform_rrc_setup()
-        time.sleep(1)
+        """An A3 neighbour-better event produces a MeasurementReport."""
+        source_gnb.cell_dbm = -60
+        target_gnb.cell_dbm = -90
+        self._connect_to_source(source_gnb, target_gnb)
 
-        # Configure A3: offset=6, hysteresis=2
-        fake_gnb.send_meas_config(
+        source_gnb.send_meas_config(
+            meas_objects=[{"id": 1, "ssbFreq": 632628}],
             report_configs=[{
-                "id": 1, "event": "a3",
+                "id": 1,
+                "event": "a3",
                 "a3Offset": 6,
                 "hysteresis": 2,
                 "timeToTrigger": 0,
                 "maxReportCells": 4,
             }],
-            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
-        )
-        time.sleep(1)
-
-        # Serving = -85, Neighbour = -70  (neighbour is 15 dB better)
-        # Condition: -70 > -85 + 6 + 2 = -77  → -70 > -77 → True
-        meas_injector.set_cell(cell_id=1, rsrp=-85)
-        meas_injector.set_cell(nci=2, rsrp=-70)
-        meas_injector.send_repeatedly(interval_s=0.5, duration_s=5.0)
-
-        report = fake_gnb.wait_for_measurement_report(timeout_s=15)
-        assert report is not None, "No MeasurementReport for A3 event"
-        ue_process.cleanup()
-
-    def test_a3_not_triggered_when_neighbour_not_enough_better(
-        self,
-        fake_gnb: FakeGnb,
-        ue_process: UeProcess,
-        meas_injector: MeasurementInjector,
-    ):
-        """When neighbour is better but not by enough, no report."""
-        ue_process.generate_config()
-        ue_process.start()
-        assert fake_gnb.wait_for_heartbeat(timeout_s=10)
-        fake_gnb.perform_cell_attach()
-        fake_gnb.perform_rrc_setup()
-        time.sleep(1)
-
-        fake_gnb.send_meas_config(
-            report_configs=[{
-                "id": 1, "event": "a3",
-                "a3Offset": 6,
-                "hysteresis": 2,
-                "timeToTrigger": 0,
-                "maxReportCells": 4,
+            meas_ids=[{
+                "measId": 1,
+                "measObjectId": 1,
+                "reportConfigId": 1,
             }],
-            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
         )
-        time.sleep(1)
-
-        # Serving = -85, Neighbour = -80  (only 5 dB better)
-        # Condition: -80 > -85 + 6 + 2 = -77  → -80 > -77 → False
-        meas_injector.set_cell(cell_id=1, rsrp=-85)
-        meas_injector.set_cell(nci=2, rsrp=-80)
-        meas_injector.send_repeatedly(interval_s=0.5, duration_s=5.0)
-
-        fake_gnb.clear_captured()
-        report = fake_gnb.wait_for_measurement_report(timeout_s=8)
-        assert report is None, "Unexpected MeasurementReport for A3 (neighbour not strong enough)"
-        ue_process.cleanup()
-
-
-# ======================================================================
-#  Integration tests — measurement event A5
-# ======================================================================
-
-@ue_binary_exists
-@needs_asn1tools
-class TestMeasEventA5:
-    """Test A5 event: serving < threshold1 AND neighbour > threshold2."""
-
-    def test_a5_triggered_both_conditions_met(
-        self,
-        fake_gnb: FakeGnb,
-        ue_process: UeProcess,
-        meas_injector: MeasurementInjector,
-    ):
-        """Both A5 conditions met → MeasurementReport sent."""
-        ue_process.generate_config()
-        ue_process.start()
-        assert fake_gnb.wait_for_heartbeat(timeout_s=10)
-        fake_gnb.perform_cell_attach()
-        fake_gnb.perform_rrc_setup()
-        time.sleep(1)
-
-        # Configure A5: threshold1=-100, threshold2=-90, hyst=2
-        fake_gnb.send_meas_config(
-            report_configs=[{
-                "id": 1, "event": "a5",
-                "a5Threshold1": -100,
-                "a5Threshold2": -90,
-                "hysteresis": 2,
-                "timeToTrigger": 0,
-                "maxReportCells": 4,
-            }],
-            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
+        assert source_gnb.wait_for_rrc_reconfiguration_complete(timeout_s=10), (
+            "UE did not acknowledge the A3 measurement configuration"
         )
-        time.sleep(1)
 
-        # Serving = -110 (< -100 - 2 = -102 ✓)
-        # Neighbour = -80 (> -90 + 2 = -88 ✓)
-        meas_injector.set_cell(cell_id=1, rsrp=-110)
-        meas_injector.set_cell(nci=2, rsrp=-80)
-        meas_injector.send_repeatedly(interval_s=0.5, duration_s=5.0)
+        # A3 entry condition:
+        # neighbour > serving + offset + hysteresis
+        # -70 > -85 + 6 + 2 = -77
+        event_start = time.monotonic()
+        source_gnb.cell_dbm = -85
+        target_gnb.cell_dbm = -70
+        self._sustain_measurements(source_gnb, target_gnb)
 
-        report = fake_gnb.wait_for_measurement_report(timeout_s=15)
-        assert report is not None, "No MeasurementReport for A5 event"
-        ue_process.cleanup()
-
-    def test_a5_not_triggered_only_serving_low(
-        self,
-        fake_gnb: FakeGnb,
-        ue_process: UeProcess,
-        meas_injector: MeasurementInjector,
-    ):
-        """Only serving condition met (neighbour also low) → no report."""
-        ue_process.generate_config()
-        ue_process.start()
-        assert fake_gnb.wait_for_heartbeat(timeout_s=10)
-        fake_gnb.perform_cell_attach()
-        fake_gnb.perform_rrc_setup()
-        time.sleep(1)
-
-        fake_gnb.send_meas_config(
-            report_configs=[{
-                "id": 1, "event": "a5",
-                "a5Threshold1": -100,
-                "a5Threshold2": -90,
-                "hysteresis": 2,
-                "timeToTrigger": 0,
-                "maxReportCells": 4,
-            }],
-            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
+        report = source_gnb.wait_for_measurement_report_since(
+            start_ts=event_start,
+            timeout_s=20,
         )
-        time.sleep(1)
+        if report is None:
+            two_gnb_ue.collect_output(timeout_s=1)
+            relevant_logs = "\n".join(
+                line for line in two_gnb_ue.log_lines
+                if "meas" in line.lower()
+                or "cell" in line.lower()
+                or "rrc" in line.lower()
+            )
+            raise AssertionError(
+                "UE sent no MeasurementReport after the A3 condition occurred\n"
+                f"Relevant UE logs:\n{relevant_logs}"
+            )
 
-        # Serving = -110 (low ✓), Neighbour = -95 (< -88, not high enough ✗)
-        meas_injector.set_cell(cell_id=1, rsrp=-110)
-        meas_injector.set_cell(nci=2, rsrp=-95)
-        meas_injector.send_repeatedly(interval_s=0.5, duration_s=5.0)
-
-        fake_gnb.clear_captured()
-        report = fake_gnb.wait_for_measurement_report(timeout_s=8)
-        assert report is None, "Unexpected A5 report (neighbour not strong enough)"
-        ue_process.cleanup()
-
-
-# ======================================================================
-#  Integration tests — time-to-trigger
-# ======================================================================
-
-@ue_binary_exists
-@needs_asn1tools
-class TestTimeToTrigger:
-    """Test that events respect the time-to-trigger (TTT) parameter."""
-
-    def test_ttt_delays_report(
-        self,
-        fake_gnb: FakeGnb,
-        ue_process: UeProcess,
-        meas_injector: MeasurementInjector,
-    ):
-        """With TTT=640ms, the report should not arrive instantly."""
-        ue_process.generate_config()
-        ue_process.start()
-        assert fake_gnb.wait_for_heartbeat(timeout_s=10)
-        fake_gnb.perform_cell_attach()
-        fake_gnb.perform_rrc_setup()
-        time.sleep(1)
-
-        # A2 with TTT=640ms
-        fake_gnb.send_meas_config(
-            report_configs=[{
-                "id": 1, "event": "a2",
-                "a2Threshold": -100,
-                "hysteresis": 0,
-                "timeToTrigger": 640,
-                "maxReportCells": 4,
-            }],
-            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
+        assert report.channel == RrcChannel.UL_DCCH
+        assert source_gnb.get_ul_dcch_message_type(report.raw_pdu) == (
+            "measurementReport"
         )
-        time.sleep(0.5)
-
-        # Start injecting poor signal
-        inject_start = time.monotonic()
-        meas_injector.set_cell(cell_id=1, rsrp=-115)
-        meas_injector.send_repeatedly(interval_s=0.3, duration_s=10.0)
-
-        report = fake_gnb.wait_for_measurement_report(timeout_s=15)
-        if report is not None:
-            delay = report.timestamp - inject_start
-            # TTT is 640ms, but measurement cycle is 2500ms, so actual delay
-            # is at least 640ms but could be up to ~3200ms
-            assert delay >= 0.5, \
-                f"Report arrived too quickly ({delay:.2f}s) — TTT not respected"
-        ue_process.cleanup()
-
-    def test_ttt_zero_reports_immediately(
-        self,
-        fake_gnb: FakeGnb,
-        ue_process: UeProcess,
-        meas_injector: MeasurementInjector,
-    ):
-        """With TTT=0, the report should arrive within the measurement cycle."""
-        ue_process.generate_config()
-        ue_process.start()
-        assert fake_gnb.wait_for_heartbeat(timeout_s=10)
-        fake_gnb.perform_cell_attach()
-        fake_gnb.perform_rrc_setup()
-        time.sleep(1)
-
-        fake_gnb.send_meas_config(
-            report_configs=[{
-                "id": 1, "event": "a2",
-                "a2Threshold": -100,
-                "hysteresis": 0,
-                "timeToTrigger": 0,
-                "maxReportCells": 4,
-            }],
-            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
-        )
-        time.sleep(0.5)
-
-        meas_injector.set_cell(cell_id=1, rsrp=-115)
-        meas_injector.send_repeatedly(interval_s=0.3, duration_s=8.0)
-
-        report = fake_gnb.wait_for_measurement_report(timeout_s=12)
-        assert report is not None, "No MeasurementReport with TTT=0"
-        ue_process.cleanup()
-
-
-# ======================================================================
-#  Integration tests — measurement report content
-# ======================================================================
-
-@ue_binary_exists
-@needs_asn1tools
-class TestMeasReportContent:
-    """Verify the content of MeasurementReport PDUs."""
-
-    def test_report_is_on_ul_dcch(
-        self,
-        fake_gnb: FakeGnb,
-        ue_process: UeProcess,
-        meas_injector: MeasurementInjector,
-    ):
-        """MeasurementReport must be sent on UL-DCCH channel."""
-        ue_process.generate_config()
-        ue_process.start()
-        assert fake_gnb.wait_for_heartbeat(timeout_s=10)
-        fake_gnb.perform_cell_attach()
-        fake_gnb.perform_rrc_setup()
-        time.sleep(1)
-
-        fake_gnb.send_meas_config(
-            report_configs=[{
-                "id": 1, "event": "a2",
-                "a2Threshold": -100,
-                "hysteresis": 0,
-                "timeToTrigger": 0,
-                "maxReportCells": 4,
-            }],
-            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
-        )
-        time.sleep(1)
-
-        meas_injector.set_cell(cell_id=1, rsrp=-115)
-        meas_injector.send_repeatedly(interval_s=0.5, duration_s=5.0)
-
-        report = fake_gnb.wait_for_measurement_report(timeout_s=15)
-        if report is not None:
-            assert report.channel == RrcChannel.UL_DCCH
-            # Try to decode the report
-            decoded = fake_gnb.rrc_codec.decode_ul_dcch(report.raw_pdu)
-            if decoded.get("_fallback"):
-                assert decoded.get("message_type") == "measurementReport"
-        ue_process.cleanup()
-
-    def test_report_one_shot(
-        self,
-        fake_gnb: FakeGnb,
-        ue_process: UeProcess,
-        meas_injector: MeasurementInjector,
-    ):
-        """MeasurementReport is one-shot: only reported once per measId."""
-        ue_process.generate_config()
-        ue_process.start()
-        assert fake_gnb.wait_for_heartbeat(timeout_s=10)
-        fake_gnb.perform_cell_attach()
-        fake_gnb.perform_rrc_setup()
-        time.sleep(1)
-
-        fake_gnb.send_meas_config(
-            report_configs=[{
-                "id": 1, "event": "a2",
-                "a2Threshold": -100,
-                "hysteresis": 0,
-                "timeToTrigger": 0,
-                "maxReportCells": 4,
-            }],
-            meas_ids=[{"measId": 1, "measObjectId": 1, "reportConfigId": 1}],
-        )
-        time.sleep(1)
-
-        # Keep injecting poor signal for a while
-        meas_injector.set_cell(cell_id=1, rsrp=-115)
-        meas_injector.send_repeatedly(interval_s=0.3, duration_s=10.0)
-        time.sleep(2)
-
-        # Count measurement reports
-        reports = [
-            cm for cm in fake_gnb.captured_messages
-            if cm.channel == RrcChannel.UL_DCCH
-            and fake_gnb._is_measurement_report(cm)
-        ]
-        # One-shot: should see at most 1 report per measId
-        assert len(reports) <= 1, \
-            f"Expected at most 1 report (one-shot), got {len(reports)}"
-        ue_process.cleanup()

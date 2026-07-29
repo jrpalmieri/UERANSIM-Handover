@@ -9,8 +9,9 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from enum import IntEnum
-from pathlib import Path
 from typing import Deque, List, Optional, Sequence
+
+from .rrc_builder import compile_rrc_asn1
 
 logger = logging.getLogger(__name__)
 
@@ -31,25 +32,8 @@ _DEFAULT_NAS_REG_REQUEST = bytes.fromhex("7e004179000d0182f61000000000000000102f
 _FALLBACK_RRC_SETUP_COMPLETE = bytes.fromhex("1000059f80105e40034060bd8400000000000000040bc0804040")
 _FALLBACK_RRC_RECONFIG_COMPLETE = bytes.fromhex("1000")
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_ASN1_PATH = _PROJECT_ROOT / "tests" / "data" / "asn1_specs" / "rrc-15.6.0.asn1"
-_ASN1_EXPANDED = _PROJECT_ROOT / "tests" / "data" / "asn1_specs" / "rrc-15.6.0-expanded.asn1"
-
-
 def _try_compile_asn1():
-    try:
-        import asn1tools  # type: ignore
-    except ImportError:
-        return None
-
-    for path in (_ASN1_EXPANDED, _ASN1_PATH):
-        if not path.exists():
-            continue
-        try:
-            return asn1tools.compile_files(str(path), "uper")
-        except Exception:
-            continue
-    return None
+    return compile_rrc_asn1()
 
 
 _ASN1 = None

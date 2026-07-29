@@ -838,7 +838,7 @@ struct GnbHandoverUeContexts {
     std::optional<NgapUeContext> ngapUeContext;
     std::optional<RrcUeContext> rrcUeContext;
     std::optional<GtpUeContext> gtpUeContext;
-    std::vector<PduSessionResource*> pduSessions;
+    std::vector<PduSessionResource> pduSessions;
 
 };
 

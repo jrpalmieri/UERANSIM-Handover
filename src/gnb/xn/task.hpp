@@ -231,6 +231,19 @@ class XnTask : public NtsTask
     // Locate a source-role pending entry by the requested cell's NCI (RRC addresses
     // the Xn task by NCI; the map itself is keyed by target gnbId).
     SourcePendingMap::iterator findSourcePendingByNci(int64_t ueId, int64_t targetNci);
+
+    // Maps the simulator's 64-bit ueId onto the wire's 32-bit XnAP UE ID.
+    // THE single place that mapping is decided -- swap the body to introduce a
+    // real per-peer allocator + lookup table without touching any call site.
+    // See the definition in handover.cpp for the contract it must satisfy.
+    uint32_t xnApIdFromUeId(int64_t ueId) const;
+
+    // The reverse direction: recover a source-role pending entry (and with it
+    // the full 64-bit ueId) from the 32-bit id a peer put on the wire. The
+    // mapping is not invertible arithmetically, so this resolves through the
+    // pending entries; an allocator-based xnApIdFromUeId() would resolve
+    // through its table here instead.
+    SourcePendingMap::iterator findSourcePendingByXnApId(int64_t sourceXnApId, int gnbId);
 };
 
 } // namespace nr::gnb

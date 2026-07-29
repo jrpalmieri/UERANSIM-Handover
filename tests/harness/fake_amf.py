@@ -201,6 +201,36 @@ class FakeAmf:
         self.send_ngap(data, stream=ctx.get("stream", 1))
         logger.info("Sent HandoverCommand for RAN-UE=%d", ran_ue_id)
 
+    def send_pdu_session_resource_setup_request(
+        self,
+        ran_ue_id: int,
+        psi: int = 5,
+        upf_ip: str = "10.45.0.1",
+        upf_teid: int = 1,
+    ):
+        """Send PDUSessionResourceSetupRequest for a UE.
+
+        No NAS-PDU IE is included, so the real gNB treats this as a
+        core-network-initiated session add (NgapTask::deliverPDUSessionSetupRequest,
+        src/gnb/ngap/session.cpp) rather than requiring a real NAS PDU Session
+        Establishment Accept -- the GTP session is created synchronously as
+        soon as the gNB processes this message, with no RRC round-trip to the
+        UE required.
+        """
+        ctx = self._ue_contexts.get(ran_ue_id)
+        if ctx is None:
+            logger.warning("No UE context for RAN-UE-NGAP-ID=%d", ran_ue_id)
+            return
+        data = ngap.build_pdu_session_resource_setup_request(
+            amf_ue_ngap_id=ctx["amf_ue_id"],
+            ran_ue_ngap_id=ran_ue_id,
+            psi=psi,
+            upf_ip=upf_ip,
+            upf_teid=upf_teid,
+        )
+        self.send_ngap(data, stream=ctx.get("stream", 1))
+        logger.info("Sent PDUSessionResourceSetupRequest for RAN-UE=%d PSI=%d", ran_ue_id, psi)
+
     def send_handover_request(self, amf_ue_ngap_id: int, stream: int = 1):
         """Send HandoverRequest (initiatingMessage) to target gNB."""
         data = ngap.build_handover_request(amf_ue_ngap_id=amf_ue_ngap_id)

@@ -9,7 +9,7 @@ Usage::
     gnb = GnbProcess()
     gnb.generate_config(amf_addr="127.0.0.5", amf_port=38412)
     gnb.start()
-    gnb.wait_for_log("NG Setup procedure is successful")
+    gnb.wait_for_log(r"NG Setup procedure with AMF \d+ is successful")
     # … interact …
     gnb.cleanup()
 """
@@ -251,7 +251,7 @@ class GnbProcess:
 
     def wait_for_ng_setup(self, timeout_s: float = 15.0) -> bool:
         """Wait until NG Setup succeeds."""
-        return self.wait_for_log(r"NG Setup procedure is successful", timeout_s) is not None
+        return self.wait_for_log(r"NG Setup procedure with AMF \d+ is successful", timeout_s) is not None
 
     def has_log(self, pattern: str) -> bool:
         """Check if any log line matches *pattern*."""
@@ -269,7 +269,7 @@ class GnbProcess:
         state = GnbState()
 
         for line in self._log_lines:
-            if "NG Setup procedure is successful" in line:
+            if re.search(r"NG Setup procedure with AMF \d+ is successful", line):
                 state.ng_setup_done = True
                 state.amf_connected = True
 

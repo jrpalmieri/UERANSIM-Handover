@@ -6,6 +6,24 @@ byte manipulation.  Does NOT require asn1tools or a compiled ASN.1
 schema — only handles the outer NGAP-PDU structure and individual IE
 value construction for the specific types used by the gNB test harness.
 
+Exception: build_pdu_session_resource_setup_request() below hand-rolls the
+two protocol-IE containers (the outer message and its Transfer) exactly as
+everywhere else in this module, but leans on asn1tools + the purpose-built
+tests/data/asn1_specs/ngap-pdu-session-setup.asn1 module for the "leaf" IE
+values (S-NSSAI, the UL tunnel endpoint, the QoS flow list) since those are
+too deeply nested to hand-roll safely. asn1tools cannot compile the real
+ngap-rel18-v18_9.asn1 at all: besides `(CONTAINING X)` syntax it doesn't
+parse, its PER compiler has a genuine bug in resolving the information-
+object-class open-type pattern that NGAP's own ProtocolIE-Container /
+ProtocolIE-Field rely on (`NGAP-PROTOCOL-IES.&Value ({IEsSetParam}{@id})` —
+a plain TypeError in
+asn1tools.codecs.compiler.Compiler.pre_process_parameterization_step_1_dummy_to_actual_type,
+independent of which types populate the object set). That's exactly why
+this module hand-rolls containers instead of using asn1tools for them, and
+why the trimmed .asn1 file retypes every iE-Extensions/choice-Extensions
+field to NULL rather than defining ProtocolExtensionContainer for real.
+Any future NGAP message built via asn1tools needs the same two workarounds.
+
 Wire format reference (APER encoding of NGAP-PDU):
 
   Outer PDU:
@@ -28,8 +46,10 @@ Wire format reference (APER encoding of NGAP-PDU):
 
 from __future__ import annotations
 
+import socket
 import struct
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 # ======================================================================
@@ -56,10 +76,12 @@ PROC_INITIAL_CONTEXT_SETUP   = 14
 PROC_INITIAL_UE_MESSAGE      = 15
 PROC_NG_SETUP                = 21
 PROC_PATH_SWITCH_REQUEST     = 25
+PROC_PDU_SESSION_RESOURCE_SETUP = 29
 PROC_UE_CONTEXT_RELEASE_COMMAND = 41
 PROC_UPLINK_NAS_TRANSPORT    = 46
 
 # -- Protocol IE IDs (TS 38.413 §9.3) ---------------------------------
+IE_ALLOWED_NSSAI              = 0
 IE_AMF_NAME                   = 1
 IE_AMF_OVERLOAD_RESPONSE      = 2
 IE_AMF_UE_NGAP_ID             = 10
@@ -68,9 +90,13 @@ IE_CORE_NETWORK_ASSISTANCE_INFO = 18
 IE_GUAMI                      = 28
 IE_HANDOVER_TYPE               = 29
 IE_NAS_PDU                    = 38
+IE_PDU_SESSION_RESOURCE_SETUP_LIST_SU_REQ = 74
+IE_PDU_SESSION_TYPE           = 134
 IE_PLMN_SUPPORT_LIST          = 80
+IE_QOS_FLOW_SETUP_REQUEST_LIST = 136
 IE_RAN_UE_NGAP_ID             = 85
 IE_RELATIVE_AMF_CAPACITY      = 86
+IE_UL_NGU_UP_TNL_INFORMATION  = 139
 IE_RRC_ESTABLISHMENT_CAUSE    = 90
 IE_SECURITY_KEY                = 94
 IE_SERVED_GUAMI_LIST           = 96
@@ -247,10 +273,15 @@ def _encode_ies(ies: List[NgapIE]) -> bytes:
 # ======================================================================
 
 def _encode_aper_integer(value: int) -> bytes:
-    """Encode an unconstrained/semi-constrained non-negative INTEGER.
+    """Encode a semi-constrained/extensible non-negative INTEGER (e.g. the
+    BitRate fields of UEAggregateMaximumBitRate) using the APER "normally
+    small length" + minimum-octets form.
 
-    Uses the APER "normally small length" + minimum octets form seen
-    in asn1c output for AMF-UE-NGAP-ID and RAN-UE-NGAP-ID.
+    Not to be confused with _encode_aper_wide_constrained_integer below,
+    which is for fully-constrained non-extensible ranges like the
+    UE-NGAP-ID types and uses a different, empirically-verified wire form.
+    This generic form is unverified against a live decode (unlike the
+    UE-NGAP-ID path) -- treat it as best-effort should it ever misbehave.
     """
     if value < 0:
         raise ValueError("Only non-negative integers supported")
@@ -265,14 +296,48 @@ def _encode_aper_integer(value: int) -> bytes:
     return bytes([nsl]) + val_bytes
 
 
+def _encode_aper_wide_constrained_integer(value: int, max_octets: int) -> bytes:
+    """Encode a non-negative INTEGER whose fully-constrained range needs more
+    than 2 octets to represent (e.g. RAN-UE-NGAP-ID 0..2^32-1, max_octets=4;
+    AMF-UE-NGAP-ID 0..2^40-1, max_octets=5).
+
+    Empirically reverse-engineered from asn1c's own aper_encode_to_buffer()
+    output (see the ngap_codec module docstring): aligned PER does NOT emit
+    these as a raw fixed-width field, nor with the "normally small length"
+    form. Instead the octet-count needed for the *value* (1..max_octets) is
+    itself packed as a small constrained whole number into the leftmost bits
+    of a single prefix octet -- using exactly ceil(log2(max_octets)) bits,
+    left-aligned and zero-padded to the octet boundary -- followed by that
+    many big-endian value octets. E.g. for RAN-UE-NGAP-ID (max_octets=4, so
+    a 2-bit count field), value 1049576 needs 3 octets, encoding as
+    prefix=(3-1)<<6=0x80 followed by 10 03 e8 -- confirmed byte-for-byte
+    against a live gNB's InitialUEMessage and against aper_encode_to_buffer()
+    called directly on ASN_NGAP_RAN_UE_NGAP_ID_t/ASN_NGAP_AMF_UE_NGAP_ID_t.
+    """
+    if value < 0 or value >= (1 << (8 * max_octets)):
+        raise ValueError(f"value {value} does not fit in {max_octets} octets")
+    count_bits = (max_octets - 1).bit_length()
+    n = max(1, (value.bit_length() + 7) // 8)
+    prefix = (n - 1) << (8 - count_bits)
+    return bytes([prefix]) + value.to_bytes(n, 'big')
+
+
+def _decode_aper_wide_constrained_integer(data: bytes, max_octets: int) -> int:
+    """Inverse of _encode_aper_wide_constrained_integer (see its docstring)."""
+    count_bits = (max_octets - 1).bit_length()
+    shift = 8 - count_bits
+    n = (data[0] >> shift) + 1
+    return int.from_bytes(data[1:1 + n], 'big')
+
+
 def _encode_aper_integer32(value: int) -> bytes:
-    """Encode RAN-UE-NGAP-ID (INTEGER 0..2^32-1) — same as generic."""
-    return _encode_aper_integer(value)
+    """Encode RAN-UE-NGAP-ID (INTEGER 0..2^32-1, max 4 value octets)."""
+    return _encode_aper_wide_constrained_integer(value, 4)
 
 
 def _encode_aper_integer40(value: int) -> bytes:
-    """Encode AMF-UE-NGAP-ID (INTEGER 0..2^40-1) — same as generic."""
-    return _encode_aper_integer(value)
+    """Encode AMF-UE-NGAP-ID (INTEGER 0..2^40-1, max 5 value octets)."""
+    return _encode_aper_wide_constrained_integer(value, 5)
 
 
 def _encode_octet_string(data: bytes) -> bytes:
@@ -405,49 +470,51 @@ def build_initial_context_setup_request(
 ) -> bytes:
     """Build an InitialContextSetupRequest NGAP PDU.
 
-    This is a simplified version containing only the mandatory IEs plus
-    the NAS PDU and security key needed to establish the UE context in
-    the gNB.
+    Contains the mandatory IEs (GUAMI, AllowedNSSAI, UESecurityCapabilities,
+    SecurityKey) plus the NAS PDU needed to establish the UE context in the
+    gNB. UEAggregateMaximumBitRate is omitted: it is CONDITIONAL only on
+    PDUSessionResourceSetupListCxtReq being present (which this harness
+    never sends here), and NgapTask::receiveInitialContextSetup has its
+    read of that IE commented out regardless (src/gnb/ngap/context.cpp) --
+    it unconditionally pushes UE_CONTEXT_UPDATE to GTP with whatever AMBR
+    the UE context already has.
+
+    GUAMI/AllowedNSSAI/UESecurityCapabilities/SecurityKey are built via
+    asn1tools + the trimmed ngap-pdu-session-setup.asn1 module (see that
+    module's docstring and _get_ngap_leaf_asn1 above) rather than hand-
+    rolled bytes: an earlier hand-rolled version of this function produced
+    bytes the real gNB's asn1c decoder rejected outright (APER decoding
+    failed), the same class of bug fixed for AMF/RAN-UE-NGAP-ID above.
     """
+    asn1 = _get_ngap_leaf_asn1()
     plmn = encode_plmn(mcc, mnc)
 
-    # GUAMI encoding (simplified)
-    guami_enc = (
-        b'\x00'   # extension preamble
-        + plmn
-        + b'\x02'                       # AMFRegionID (8 bits)
-        + b'\x01\x00'                   # AMFSetID (10 bits, left-aligned)
-        + b'\x00'                       # AMFPointer (6 bits)
-    )
+    guami_enc = asn1.encode("GUAMI", {
+        "pLMNIdentity": plmn,
+        "aMFRegionID": (bytes([2]), 8),
+        "aMFSetID": (bytes([0x40, 0x00]), 10),
+        "aMFPointer": (bytes([0x00]), 6),
+    })
 
-    # AllowedNSSAI: 1 slice (SST=1)
-    allowed_nssai = (
-        b'\x00\x01'  # 1 item (constrained to 1..8)
-        + b'\x00'     # S-NSSAI extension preamble
-        + b'\x01'     # SST = 1
-    )
+    allowed_nssai_enc = asn1.encode("AllowedNSSAI", [{"s-NSSAI": {"sST": bytes([1])}}])
 
-    # UESecurityCapabilities: NREncryption(16 bits) + NRIntegrity(16 bits)
-    # + EUTRAEncryption(16 bits) + EUTRAIntegrity(16 bits)
-    ue_sec_cap = b'\xf0\x00\xf0\x00\xf0\x00\xf0\x00'
+    ue_sec_cap_enc = asn1.encode("UESecurityCapabilities", {
+        "nRencryptionAlgorithms": (bytes([0xf0, 0x00]), 16),
+        "nRintegrityProtectionAlgorithms": (bytes([0xf0, 0x00]), 16),
+        "eUTRAencryptionAlgorithms": (bytes([0xf0, 0x00]), 16),
+        "eUTRAintegrityProtectionAlgorithms": (bytes([0xf0, 0x00]), 16),
+    })
 
-    # SecurityKey: BIT STRING SIZE(256) = 32 bytes
-    sec_key_enc = security_key
-
-    # UEAggregateMaximumBitRate: DL(INTEGER) + UL(INTEGER)
-    ue_ambr = (
-        _encode_aper_integer(100000000)  # DL bitrate
-        + _encode_aper_integer(50000000)  # UL bitrate
-    )
+    sec_key_enc = asn1.encode("SecurityKey", (security_key, 256))
 
     ies = [
         NgapIE(IE_AMF_UE_NGAP_ID, CRIT_REJECT, _encode_aper_integer40(amf_ue_ngap_id)),
         NgapIE(IE_RAN_UE_NGAP_ID, CRIT_REJECT, _encode_aper_integer32(ran_ue_ngap_id)),
         NgapIE(IE_GUAMI, CRIT_REJECT, guami_enc),
-        NgapIE(IE_NAS_PDU, CRIT_REJECT, _encode_octet_string(nas_pdu)),
-        NgapIE(IE_UE_SECURITY_CAPABILITIES, CRIT_REJECT, ue_sec_cap),
+        NgapIE(IE_ALLOWED_NSSAI, CRIT_REJECT, allowed_nssai_enc),
+        NgapIE(IE_NAS_PDU, CRIT_IGNORE, _encode_octet_string(nas_pdu)),
+        NgapIE(IE_UE_SECURITY_CAPABILITIES, CRIT_REJECT, ue_sec_cap_enc),
         NgapIE(IE_SECURITY_KEY, CRIT_REJECT, sec_key_enc),
-        NgapIE(IE_UE_AGGREGATE_MAX_BITRATE, CRIT_REJECT, ue_ambr),
     ]
     return encode_ngap_pdu(NgapPdu(
         pdu_type=PDU_INITIATING_MESSAGE,
@@ -480,6 +547,93 @@ def build_handover_command(
     return encode_ngap_pdu(NgapPdu(
         pdu_type=PDU_SUCCESSFUL_OUTCOME,
         procedure_code=PROC_HANDOVER_PREPARATION,
+        criticality=CRIT_REJECT,
+        ies=ies,
+    ))
+
+
+_PDU_SESSION_ASN1_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "data" / "asn1_specs" / "ngap-pdu-session-setup.asn1"
+)
+_pdu_session_asn1 = None
+
+
+def _get_ngap_leaf_asn1():
+    """Compile (once) the purpose-built ASN.1 module for the "leaf" IE
+    values used by build_pdu_session_resource_setup_request() and
+    build_initial_context_setup_request() (S-NSSAI, GUAMI, security
+    capabilities, QoS structures, ...). See the module docstring for why
+    this is a trimmed module rather than the real spec."""
+    global _pdu_session_asn1
+    if _pdu_session_asn1 is None:
+        import asn1tools
+        _pdu_session_asn1 = asn1tools.compile_files(str(_PDU_SESSION_ASN1_PATH), "per")
+    return _pdu_session_asn1
+
+
+def build_pdu_session_resource_setup_request(
+    amf_ue_ngap_id: int,
+    ran_ue_ngap_id: int,
+    psi: int,
+    upf_ip: str,
+    upf_teid: int,
+    sst: int = 1,
+    five_qi: int = 9,
+) -> bytes:
+    """Build a PDUSessionResourceSetupRequest (TS 38.413 §9.2.1.4/§9.3.4.2).
+
+    Establishes a single PDU session with one non-GBR QoS flow and a dummy
+    UPF-side DL tunnel endpoint, with no NAS-PDU IE. Deliberately omitting
+    the NAS-PDU IE routes the real gNB straight to
+    NgapTask::deliverPDUSessionSetupRequest() (src/gnb/ngap/session.cpp)
+    instead of requiring a real 5GSM PDU Session Establishment Accept: the
+    gNB creates the GTP session and adds the PSI to the UE's NGAP context
+    synchronously either way, with no NAS content inspected and no RRC
+    round-trip to the UE required for the session to become visible to
+    GtpTask::getPduSessions() — see gNB/xn/task.cpp's GetUeContexts().
+    """
+    asn1 = _get_ngap_leaf_asn1()
+
+    transfer_value = _encode_ies([
+        NgapIE(IE_UL_NGU_UP_TNL_INFORMATION, CRIT_REJECT, asn1.encode(
+            "UPTransportLayerInformation",
+            ("gTPTunnel", {
+                "transportLayerAddress": (socket.inet_aton(upf_ip), 32),
+                "gTP-TEID": upf_teid.to_bytes(4, "big"),
+            }),
+        )),
+        NgapIE(IE_PDU_SESSION_TYPE, CRIT_REJECT, asn1.encode("PDUSessionType", "ipv4")),
+        NgapIE(IE_QOS_FLOW_SETUP_REQUEST_LIST, CRIT_REJECT, asn1.encode(
+            "QosFlowSetupRequestList",
+            [{
+                "qosFlowIdentifier": 1,
+                "qosFlowLevelQosParameters": {
+                    "qosCharacteristics": ("nonDynamic5QI", {"fiveQI": five_qi}),
+                    "allocationAndRetentionPriority": {
+                        "priorityLevelARP": 8,
+                        "pre-emptionCapability": "shall-not-trigger-pre-emption",
+                        "pre-emptionVulnerability": "not-pre-emptable",
+                    },
+                },
+            }],
+        )),
+    ])
+
+    session_list = asn1.encode("PDUSessionResourceSetupListSUReq", [{
+        "pDUSessionID": psi,
+        "s-NSSAI": {"sST": bytes([sst])},
+        "pDUSessionResourceSetupRequestTransfer": transfer_value,
+    }])
+
+    ies = [
+        NgapIE(IE_AMF_UE_NGAP_ID, CRIT_REJECT, _encode_aper_integer40(amf_ue_ngap_id)),
+        NgapIE(IE_RAN_UE_NGAP_ID, CRIT_REJECT, _encode_aper_integer32(ran_ue_ngap_id)),
+        NgapIE(IE_PDU_SESSION_RESOURCE_SETUP_LIST_SU_REQ, CRIT_REJECT, session_list),
+    ]
+    return encode_ngap_pdu(NgapPdu(
+        pdu_type=PDU_INITIATING_MESSAGE,
+        procedure_code=PROC_PDU_SESSION_RESOURCE_SETUP,
         criticality=CRIT_REJECT,
         ies=ies,
     ))
@@ -565,30 +719,26 @@ def build_handover_preparation_failure(
 # ======================================================================
 
 def extract_ran_ue_ngap_id(pdu: NgapPdu) -> Optional[int]:
-    """Extract RAN-UE-NGAP-ID from a decoded PDU."""
+    """Extract RAN-UE-NGAP-ID from a decoded PDU.
+
+    See _encode_aper_wide_constrained_integer's docstring for the wire
+    format (a bit-packed octet-count prefix, not a plain fixed-width value
+    or a "normally small length" byte).
+    """
     ie = pdu.find_ie(IE_RAN_UE_NGAP_ID)
-    if ie is None or len(ie.value) < 2:
+    if ie is None or len(ie.value) == 0:
         return None
-    # Normally-small-length encoding: first byte = (n-1)<<1, then value bytes
-    nsl = ie.value[0]
-    n_bytes = (nsl >> 1) + 1
-    if len(ie.value) < 1 + n_bytes:
-        return None
-    val = int.from_bytes(ie.value[1 : 1 + n_bytes], 'big')
-    return val
+    return _decode_aper_wide_constrained_integer(ie.value, 4)
 
 
 def extract_amf_ue_ngap_id(pdu: NgapPdu) -> Optional[int]:
-    """Extract AMF-UE-NGAP-ID from a decoded PDU."""
+    """Extract AMF-UE-NGAP-ID from a decoded PDU (INTEGER(0..2^40-1), same
+    encoding scheme as RAN-UE-NGAP-ID but with a 5-octet max width -- see
+    extract_ran_ue_ngap_id / _encode_aper_wide_constrained_integer)."""
     ie = pdu.find_ie(IE_AMF_UE_NGAP_ID)
-    if ie is None or len(ie.value) < 2:
+    if ie is None or len(ie.value) == 0:
         return None
-    nsl = ie.value[0]
-    n_bytes = (nsl >> 1) + 1
-    if len(ie.value) < 1 + n_bytes:
-        return None
-    val = int.from_bytes(ie.value[1 : 1 + n_bytes], 'big')
-    return val
+    return _decode_aper_wide_constrained_integer(ie.value, 5)
 
 
 def extract_nas_pdu(pdu: NgapPdu) -> Optional[bytes]:

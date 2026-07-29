@@ -127,7 +127,6 @@ struct XnPeerInfo
     std::vector<int> amfRegionList;   // 8-bit AMF region IDs from AMF-Region-Information
 
     SctpAssociation sctpAssoc{};    // SCTP association with this peer, or nullptr if not connected
-    int nonUeStream{0};             // SCTP stream for sending/receiving non-UE-Associated messages (should be 0)
     StreamIdManager streamIdManager; // Manager for allocating SCTP stream IDs for UE-associated messages
 
     EXnConnectionState connectionState{EXnConnectionState::DISCONNECTED};
@@ -165,7 +164,7 @@ public:
     
     std::vector<XnPeerInfo>& getAllPeers();
 
-    bool updatePeerSctpInfo(int gnbId, SctpAssociation *assoc, int nonUeStreamUplink, int nonUeStreamDownlink);
+
 };
 
 

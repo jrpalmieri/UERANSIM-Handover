@@ -28,4 +28,4 @@ class TestGnbHealth:
 
     def test_gnb_completes_ng_setup(self, started_gnb):
         assert started_gnb.wait_for_ng_setup(timeout_s=3)
-        assert started_gnb.has_log("NG Setup procedure is successful")
+        assert started_gnb.has_log(r"NG Setup procedure with AMF \d+ is successful")

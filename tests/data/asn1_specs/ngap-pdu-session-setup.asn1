@@ -1,0 +1,209 @@
+-- Purpose-built ASN.1 module for the gNB test harness.
+--
+-- asn1tools cannot compile ngap-rel18-v18_9.asn1's generic protocol-IE
+-- container machinery (ProtocolIE-Container / ProtocolIE-Field): it relies
+-- on an information-object-class open-type selected by an "at" constraint
+-- ({IEsSetParam}{@id}), a combination of parameterization and object
+-- classes that asn1tools' compiler hits a real internal bug on (a plain
+-- TypeError inside pre_process_parameterization_step_1_dummy_to_actual_type,
+-- independent of which types populate the object set).
+--
+-- That container layer does not need a real ASN.1 compiler anyway: on the
+-- wire it is just an extension-preamble byte, a 2-octet IE count, then that
+-- many self-describing (id, criticality, open-type value) tuples, exactly
+-- what tests/harness/ngap_codec.py already hand-encodes correctly (proven
+-- against the real gNB for NGSetupRequest/Response and InitialUEMessage).
+--
+-- So this module only defines the plain leaf types actually needed as IE
+-- *values* for PDUSessionResourceSetupRequest and its Transfer: S-NSSAI,
+-- the UL tunnel endpoint, and the QoS flow list. None of these use the
+-- object-class container pattern themselves. Every type is copied verbatim
+-- (field order, OPTIONAL markers, and ellipsis extensibility markers
+-- intact) from ngap-rel18-v18_9.asn1, because APER's presence-bitmap is
+-- positional: dropping an unused OPTIONAL field would silently shift bits
+-- and desync from what the real gNB's asn1c decoder expects. The one
+-- deliberate change is that every "iE-Extensions"/"choice-Extensions" field
+-- (always an unpopulated OPTIONAL, or an alternative this harness never
+-- selects) is retyped to NULL in place of the container types this harness
+-- has no use for; that changes nothing about the encoded bits, since an
+-- absent OPTIONAL field contributes only its presence bit, and an
+-- unselected CHOICE alternative's type never gets encoded at all.
+
+NGAP-PDU-Session-Setup-Test DEFINITIONS AUTOMATIC TAGS ::=
+BEGIN
+
+PDUSessionID ::= INTEGER (0..255)
+
+SST ::= OCTET STRING (SIZE(1))
+SD ::= OCTET STRING (SIZE(3))
+
+S-NSSAI ::= SEQUENCE {
+	sST					SST,
+	sD					SD		OPTIONAL,
+	iE-Extensions		NULL	OPTIONAL,
+	...
+}
+
+NAS-PDU ::= OCTET STRING
+
+TransportLayerAddress ::= BIT STRING (SIZE(1..160, ...))
+GTP-TEID ::= OCTET STRING (SIZE(4))
+
+GTPTunnel ::= SEQUENCE {
+	transportLayerAddress		TransportLayerAddress,
+	gTP-TEID					GTP-TEID,
+	iE-Extensions				NULL	OPTIONAL,
+	...
+}
+
+UPTransportLayerInformation ::= CHOICE {
+	gTPTunnel				GTPTunnel,
+	choice-Extensions		NULL
+}
+
+PDUSessionType ::= ENUMERATED {
+	ipv4,
+	ipv6,
+	ipv4v6,
+	ethernet,
+	unstructured,
+	...
+}
+
+QosFlowIdentifier ::= INTEGER (0..63, ...)
+FiveQI ::= INTEGER (0..255, ...)
+PriorityLevelQos ::= INTEGER (1..127, ...)
+AveragingWindow ::= INTEGER (0..4095, ...)
+MaximumDataBurstVolume ::= INTEGER (0..4095, ..., 4096..2000000)
+
+NonDynamic5QIDescriptor ::= SEQUENCE {
+	fiveQI						FiveQI,
+	priorityLevelQos			PriorityLevelQos			OPTIONAL,
+	averagingWindow				AveragingWindow				OPTIONAL,
+	maximumDataBurstVolume		MaximumDataBurstVolume		OPTIONAL,
+	iE-Extensions				NULL						OPTIONAL,
+	...
+}
+
+-- Dynamic5QIDescriptor is a real alternative of QosCharacteristics below,
+-- but this harness only ever builds/selects the nonDynamic5QI branch,
+-- so it is retyped to NULL along with choice-Extensions (see module note).
+QosCharacteristics ::= CHOICE {
+	nonDynamic5QI		NonDynamic5QIDescriptor,
+	dynamic5QI			NULL,
+	choice-Extensions	NULL
+}
+
+PriorityLevelARP ::= INTEGER (1..15)
+Pre-emptionCapability ::= ENUMERATED { shall-not-trigger-pre-emption, may-trigger-pre-emption, ... }
+Pre-emptionVulnerability ::= ENUMERATED { not-pre-emptable, pre-emptable, ... }
+
+AllocationAndRetentionPriority ::= SEQUENCE {
+	priorityLevelARP				PriorityLevelARP,
+	pre-emptionCapability			Pre-emptionCapability,
+	pre-emptionVulnerability		Pre-emptionVulnerability,
+	iE-Extensions					NULL	OPTIONAL,
+	...
+}
+
+BitRate ::= INTEGER (0..4000000000000, ...)
+NotificationControl ::= ENUMERATED { notification-requested, ... }
+PacketLossRate ::= INTEGER (0..1000, ...)
+
+GBR-QosInformation ::= SEQUENCE {
+	maximumFlowBitRateDL		BitRate,
+	maximumFlowBitRateUL		BitRate,
+	guaranteedFlowBitRateDL		BitRate,
+	guaranteedFlowBitRateUL		BitRate,
+	notificationControl			NotificationControl		OPTIONAL,
+	maximumPacketLossRateDL		PacketLossRate				OPTIONAL,
+	maximumPacketLossRateUL		PacketLossRate				OPTIONAL,
+	iE-Extensions				NULL						OPTIONAL,
+	...
+}
+
+ReflectiveQosAttribute ::= ENUMERATED { subject-to, ... }
+AdditionalQosFlowInformation ::= ENUMERATED { more-likely, ... }
+
+QosFlowLevelQosParameters ::= SEQUENCE {
+	qosCharacteristics					QosCharacteristics,
+	allocationAndRetentionPriority		AllocationAndRetentionPriority,
+	gBR-QosInformation					GBR-QosInformation				OPTIONAL,
+	reflectiveQosAttribute				ReflectiveQosAttribute			OPTIONAL,
+	additionalQosFlowInformation		AdditionalQosFlowInformation	OPTIONAL,
+	iE-Extensions						NULL							OPTIONAL,
+	...
+}
+
+E-RAB-ID ::= INTEGER (0..15, ...)
+
+QosFlowSetupRequestItem ::= SEQUENCE {
+	qosFlowIdentifier				QosFlowIdentifier,
+	qosFlowLevelQosParameters		QosFlowLevelQosParameters,
+	e-RAB-ID						E-RAB-ID	OPTIONAL,
+	iE-Extensions					NULL		OPTIONAL,
+	...
+}
+
+QosFlowSetupRequestList ::= SEQUENCE (SIZE(1..64)) OF QosFlowSetupRequestItem
+
+-- Per-session item inside PDUSessionResourceSetupListSUReq. This is a plain
+-- SEQUENCE (not itself a protocol-IE container), so it is the one message
+-- structure from the real spec compiled directly rather than hand-rolled;
+-- the Transfer it references is built separately by ngap_codec.py and
+-- embedded here as an opaque OCTET STRING (the CONTAINING annotation is
+-- dropped, which does not change the encoded bits; see module note).
+PDUSessionResourceSetupItemSUReq ::= SEQUENCE {
+	pDUSessionID								PDUSessionID,
+	pDUSessionNAS-PDU							NAS-PDU			OPTIONAL,
+	s-NSSAI										S-NSSAI,
+	pDUSessionResourceSetupRequestTransfer		OCTET STRING,
+	iE-Extensions								NULL			OPTIONAL,
+	...
+}
+
+PDUSessionResourceSetupListSUReq ::= SEQUENCE (SIZE(1..256)) OF PDUSessionResourceSetupItemSUReq
+
+-- ============================================================
+-- InitialContextSetupRequest leaf types (verbatim, trimmed as above)
+-- ============================================================
+
+PLMNIdentity ::= OCTET STRING (SIZE(3))
+AMFRegionID ::= BIT STRING (SIZE(8))
+AMFSetID ::= BIT STRING (SIZE(10))
+AMFPointer ::= BIT STRING (SIZE(6))
+
+GUAMI ::= SEQUENCE {
+	pLMNIdentity		PLMNIdentity,
+	aMFRegionID			AMFRegionID,
+	aMFSetID			AMFSetID,
+	aMFPointer			AMFPointer,
+	iE-Extensions		NULL	OPTIONAL,
+	...
+}
+
+AllowedNSSAI-Item ::= SEQUENCE {
+	s-NSSAI				S-NSSAI,
+	iE-Extensions		NULL	OPTIONAL,
+	...
+}
+
+AllowedNSSAI ::= SEQUENCE (SIZE(1..8)) OF AllowedNSSAI-Item
+
+NRencryptionAlgorithms ::= BIT STRING (SIZE(16, ...))
+NRintegrityProtectionAlgorithms ::= BIT STRING (SIZE(16, ...))
+EUTRAencryptionAlgorithms ::= BIT STRING (SIZE(16, ...))
+EUTRAintegrityProtectionAlgorithms ::= BIT STRING (SIZE(16, ...))
+
+UESecurityCapabilities ::= SEQUENCE {
+	nRencryptionAlgorithms					NRencryptionAlgorithms,
+	nRintegrityProtectionAlgorithms			NRintegrityProtectionAlgorithms,
+	eUTRAencryptionAlgorithms				EUTRAencryptionAlgorithms,
+	eUTRAintegrityProtectionAlgorithms		EUTRAintegrityProtectionAlgorithms,
+	iE-Extensions							NULL	OPTIONAL,
+	...
+}
+
+SecurityKey ::= BIT STRING (SIZE(256))
+
+END

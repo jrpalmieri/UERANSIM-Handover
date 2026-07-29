@@ -18,7 +18,6 @@ from typing import Generator
 import pytest
 
 from harness.fake_gnb import FakeGnb
-from harness.meas_injector import MeasurementInjector
 from harness.ue_process import UeProcess
 from harness.rrc_builder import RrcCodec
 
@@ -82,14 +81,6 @@ def fake_gnb() -> Generator[FakeGnb, None, None]:
     gnb.start()
     yield gnb
     gnb.stop()
-
-
-@pytest.fixture
-def meas_injector() -> Generator[MeasurementInjector, None, None]:
-    """Per-test MeasurementInjector instance."""
-    inj = MeasurementInjector()
-    yield inj
-    inj.close()
 
 
 @pytest.fixture

@@ -18,18 +18,22 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Path to the RRC ASN.1 schema bundled with UERANSIM
-_ASN1_PATH = Path(__file__).resolve().parent.parent / "data" / "asn1_specs" / "rrc-15.6.0.asn1"
-_ASN1_EXPANDED_PATH = Path(__file__).resolve().parent.parent / "data" / "asn1_specs" / "rrc-15.6.0-expanded.asn1"
+# Release 18.9 RRC ASN.1 used by the simulator and test harness.
+_ASN1_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "data"
+    / "asn1_specs"
+    / "rrc-rel18-v18_9.asn1"
+)
 
 
-def _try_compile_asn1():
+def compile_rrc_asn1():
     """Attempt to compile the NR RRC ASN.1 module via asn1tools.
 
     Returns the compiled module or *None* on failure.
@@ -40,58 +44,42 @@ def _try_compile_asn1():
         logger.info("asn1tools not installed — using pre-computed RRC bytes")
         return None
 
-    # Try expanded file first (parameterized types pre-expanded)
-    for path in (_ASN1_EXPANDED_PATH, _ASN1_PATH):
-        if not path.exists():
-            continue
-        try:
-            compiled = asn1tools.compile_files(str(path), "uper")
-            logger.info("Compiled RRC ASN.1 from %s (%d types)", path.name, len(compiled.types))
-            return compiled
-        except Exception as exc:
-            logger.debug("Failed to compile %s: %s", path.name, exc)
+    if not _ASN1_PATH.exists():
+        logger.warning("RRC ASN.1 file not found: %s", _ASN1_PATH)
+        return None
 
-    # If the expanded file doesn't exist, try generating it
-    if _ASN1_PATH.exists() and not _ASN1_EXPANDED_PATH.exists():
-        try:
-            expanded = _expand_setup_release(_ASN1_PATH)
-            if expanded is not None:
-                compiled = asn1tools.compile_files(str(_ASN1_EXPANDED_PATH), "uper")
-                logger.info("Compiled expanded RRC ASN.1 (%d types)", len(compiled.types))
-                return compiled
-        except Exception as exc:
-            logger.debug("Failed to compile expanded ASN.1: %s", exc)
-
-    logger.warning("Could not compile any RRC ASN.1 file")
-    return None
-
-
-def _expand_setup_release(asn1_path: Path) -> Optional[Path]:
-    """Preprocess ASN.1 to expand SetupRelease parameterized type inline."""
-    import re
     try:
-        content = asn1_path.read_text()
-        # Remove the parameterized type definition
-        content = re.sub(
-            r'-- TAG-SETUPRELEASE-START.*?-- TAG-SETUPRELEASE-STOP',
-            '-- SetupRelease expanded inline',
-            content,
-            flags=re.DOTALL,
+        content = _expand_setup_release(_ASN1_PATH.read_text())
+        compiled = asn1tools.compile_string(content, "uper")
+        logger.info(
+            "Compiled Release 18 RRC ASN.1 from %s (%d types)",
+            _ASN1_PATH.name,
+            len(compiled.types),
         )
-        # Replace all usages with inline CHOICE
-        content = re.sub(
-            r'SetupRelease\s*\{\s*([^}]+?)\s*\}',
-            r'CHOICE { release NULL, setup \1 }',
-            content,
-        )
-        out_path = asn1_path.parent / "rrc-15.6.0-expanded.asn1"
-        out_path.write_text(content)
-        logger.info("Generated expanded ASN.1 at %s", out_path)
-        return out_path
+        return compiled
     except Exception as exc:
-        logger.warning("Failed to expand SetupRelease: %s", exc)
+        logger.warning("Could not compile %s: %s", _ASN1_PATH.name, exc)
         return None
-        return None
+
+
+def _expand_setup_release(content: str) -> str:
+    """Expand the parameterized SetupRelease type unsupported by asn1tools."""
+    content = re.sub(
+        r"-- TAG-SETUPRELEASE-START.*?-- TAG-SETUPRELEASE-STOP",
+        "-- SetupRelease expanded inline",
+        content,
+        flags=re.DOTALL,
+    )
+    return re.sub(
+        r"SetupRelease\s*\{\s*([^}]+?)\s*\}",
+        r"CHOICE { release NULL, setup \1 }",
+        content,
+    )
+
+
+def _try_compile_asn1():
+    """Backward-compatible internal alias."""
+    return compile_rrc_asn1()
 
 
 # T304 timer mapping (TS 38.331 §6.3.2)
@@ -159,7 +147,8 @@ def _bit_string_from_int(value: int, bit_length: int) -> tuple[bytes, int]:
     if bit_length <= 0:
         return (b"", 0)
     width = (bit_length + 7) // 8
-    return (int(value).to_bytes(width, "big"), bit_length)
+    unused_bits = width * 8 - bit_length
+    return (int(value << unused_bits).to_bytes(width, "big"), bit_length)
 
 
 def _uper_dl_info_transfer(tid: int, nas_pdu: bytes) -> bytes:
@@ -307,7 +296,7 @@ class RrcCodec:
                     "q-RxLevMin": -70,
                 },
                 "cellAccessRelatedInfo": {
-                    "plmn-IdentityList": [
+                    "plmn-IdentityInfoList": [
                         {
                             "plmn-IdentityList": [plmn],
                             "trackingAreaCode": _bit_string_from_int(tac, 24),
@@ -890,7 +879,7 @@ class RrcCodec:
                 "reportOnLeave": False,
                 "hysteresis": hyst_val,
                 "timeToTrigger": ttt_str,
-                "useWhiteCellList": False,
+                "useAllowedCellList": False,
             })
         else:  # a3
             a3off = cfg.get("a3Offset", 6)
@@ -899,7 +888,7 @@ class RrcCodec:
                 "reportOnLeave": False,
                 "hysteresis": hyst_val,
                 "timeToTrigger": ttt_str,
-                "useWhiteCellList": False,
+                "useAllowedCellList": False,
             })
 
         return {

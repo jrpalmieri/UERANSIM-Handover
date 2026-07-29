@@ -44,7 +44,7 @@ class TestNgSetup:
 
     def test_ng_setup_successful(self, started_gnb: GnbProcess):
         """After receiving NGSetupResponse, gNB should log success."""
-        assert started_gnb.has_log("NG Setup procedure is successful")
+        assert started_gnb.has_log(r"NG Setup procedure with AMF \d+ is successful")
 
 
 # =====================================================================

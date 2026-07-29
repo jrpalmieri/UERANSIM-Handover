@@ -24,13 +24,16 @@
       "Write(//tmp/claude-*/**)",
       "Bash(mkdir -p /tmp/claude-*/**)",
       "Bash(rm -rf /tmp/claude-*/**)",
+      "bash(cmake --build . --target nr-gnb -j$(nproc) *)",
+      "bash(cmake --build . --target nr-ue -j$(nproc) *)",
       "Bash(/home/joe/repos/asn1c-r18/asn1c/asn1c *)",
       "Bash(git add *)",
       "Bash(git status *)",
       "Bash(awk '{print $1}')",
       "Bash(./rrc_d1_probe)",
       "Bash(python3 -m pytest *)",
-      "Bash(./tools/check_asn1_runtime.sh)"
+      "Bash(./tools/check_asn1_runtime.sh)",
+      "Bash(/tmp/claude-1000/-home-joe-repos-GT-cs8903-UERANSIM-Handover/167d3989-8f5d-45d8-9f1c-2371354d3b8f/scratchpad/scratch_ngap_probe 000f404700000500550004801003e800260017167e004179000d0182f61000000000000000102f020101007900135082f610000000010082f610000001ee147bb8005a4001200070400100)"
     ],
     "additionalDirectories": [
       "/tmp/claude-1000"

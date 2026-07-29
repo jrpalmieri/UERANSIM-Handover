@@ -105,6 +105,8 @@ namespace nr::gnb
 {
 
 static RrcUeContext *DecodeCustomRrcContext(const OctetString &data);
+static bool UnwrapSourceToTargetContainer(const OctetString &container, OctetString &rrcContextOut,
+                                          bool *choIndicationOut = nullptr);
 
 using HandoverEventType = nr::rrc::common::HandoverEventType;
 using nr::sat::EcefPosition;
@@ -623,8 +625,16 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
 {
     (void)xnChoRequest;
 
-    // Decode the RRC Container to extract the UE context
-    auto *ue = DecodeCustomRrcContext(*rrcContainer);
+    // Strip the transparent-container wrapper before decoding: the payload
+    // DecodeCustomRrcContext expects starts 16 bytes in (see
+    // UnwrapSourceToTargetContainer).
+    OctetString innerContext{};
+    RrcUeContext *ue = nullptr;
+    if (UnwrapSourceToTargetContainer(*rrcContainer, innerContext))
+        ue = DecodeCustomRrcContext(innerContext);
+    else
+        m_logger->err("handleHandoverRequest: malformed source-to-target container (transactionId=%u)",
+                      transactionId);
 
     // GUARD 1: container decode failure → reject with a protocol/ASN-error cause
     //  (previously returned silently, leaving the source waiting for an ACK)
@@ -1797,6 +1807,43 @@ std::unique_ptr<OctetString> GnbRrcTask::makeSourceToTargetTransparentContainerS
     encoded.append(blob);
 
     return std::make_unique<OctetString>(std::move(encoded));
+}
+
+/**
+ * Inverse of makeSourceToTargetTransparentContainerSimulated(): strips the
+ * 16-byte wrapper (magic, version, flags, reserved, rrcContext length, blob
+ * length) and yields just the EncodeCustomRrcContext() payload.
+ *
+ * Without this the target fed the whole wrapped container straight into
+ * DecodeCustomRrcContext(), which reads a ueId from offset 0 and so parsed the
+ * ASCII magic "S2TC" as the UE identity. Nothing caught it because the
+ * target-side container decode had never actually executed.
+ */
+static bool UnwrapSourceToTargetContainer(const OctetString &container, OctetString &rrcContextOut,
+                                          bool *choIndicationOut)
+{
+    static constexpr int HEADER_SIZE = 16;
+    if (container.length() < HEADER_SIZE)
+        return false;
+
+    if (static_cast<uint32_t>(container.get4I(0)) != CUSTOM_S2T_MAGIC)
+        return false;
+    if (static_cast<uint8_t>(container.getI(4)) != CUSTOM_S2T_VERSION)
+        return false;
+
+    const uint8_t flags = static_cast<uint8_t>(container.getI(5));
+    // octets 6..7 are reserved
+    const int contextLen = container.get4I(8);
+    // octets 12..15 hold the trailing blob length, which the target ignores.
+
+    if (contextLen < 0 || HEADER_SIZE + contextLen > container.length())
+        return false;
+
+    if (choIndicationOut)
+        *choIndicationOut = (flags & CUSTOM_S2T_FLAG_CHO_INDICATION) != 0;
+
+    rrcContextOut = container.subCopy(HEADER_SIZE, contextLen);
+    return true;
 }
 
 
