@@ -1,9 +1,22 @@
-demo_name: Single UE to single gNB connection
+demo_name: Test of single UE to 2 GNB Handover
+
+#
+# Demo of a single UE connecting to a single gNB, then performing a handover to a second gNB.
+#
+# The configs for each gNB are in config/gnb1_fixed_A3.yaml and config/gnb2_fixed.yaml.
+# GNB2 starts at a low RSRP value, so the UE will connect to GNB1 first.  
+# GNB1 sends the A3 event to the UE, which will trigger a handover to GNB2 when its RSRP rises above GNB1's RSRP.
+# After 20 seconds, the RSRP for GNB2 is increased to cause it to be recognized by UE1.
+# After 30 seconds, the RSRP for GNB2 rises above the RSRP of GNB1, which should trigger a handover to GNB2.
+#  The UE config is in config/ue1.yaml.
+
 command_cli: ./build/nr-cli
+
 ui:
   poll_interval_sec: 1.0
   max_log_lines: 400
   command_timeout_sec: 3.0
+
 core:
   name: Open5GS - Docker Deployed
   dir: /home/joe/repos/GT/cs8903/docker_open5gs
@@ -26,6 +39,7 @@ core:
   address_check_command_args:
   - status
   - --gnb-address=172.22.0.202
+
   amf:
     host: 172.22.0.10
     port: 38412
@@ -33,7 +47,8 @@ core:
     active_probe: false
     connect_timeout_sec: 1.0
     source_log_file: '%core/log/amf.log'
-    local_log_file: amf.log_%i
+    amf_log_file: amf_%i.log
+
   user_plane:
     upf_ip: 172.22.0.8
     upf_port: 5000
@@ -49,12 +64,14 @@ core:
     host_route_gateway: 172.22.0.8
     host_route_subnet: 172.22.0.0/24
     max_log_lines: 400
+
   core_db:
     warn_missing_subscribers: true
     dbctl_script: ./tools/open5gs-dbctl.py
     db_uri: mongodb://localhost/open5gs
     check_timeout_sec: 10.0
     python: python3
+
 ue:
   node: UE1
   count: 1
@@ -73,56 +90,82 @@ ue:
   latitude: ''
   longitude: ''
   altitude: ''
+  # latitude: 40.00
+  # longitude: -72.00
+  # altitude: 0.0
+
 gnb:
   gnb_command: ./build/nr-gnb
   gnbs:
   - node: GNB1
     nci: '0x000000011'
-    config: ./config/gnb1.yaml
+    config: ./config/gnb1_fixed_A3.yaml
     gnb_log_file: gnb1_%i.log
     args: []
+  - node: GNB2
+    nci: '0x000000022'
+    config: ./config/gnb2_fixed.yaml
+    gnb_log_file: gnb2_%i.log
+    args: []
+
 user_plane_test:
   enabled: true
+  # ue name or "all"
   ue_source: all
+  # "tun-up", "immediate" 
   start_trigger: tun-up
+  # start delay in seconds after the trigger condition is met
   start_delay_sec: 0.0
+  # repeat period in seconds for sending test messages (if 0, only send once)
   cycle_time_sec: 1.0
+  # end time in seconds after the start trigger (for cyclic sending))
   end_time_sec: 60.0
+  # end count for number of messages to send (for cyclic sending, if 0, ignore count and only use end_time_sec)
   end_count: 0
-  message_text: Hello, World!
+  message_text: "Hello, World!"
   message_size_bytes: 100
-  pad_byte_value: 32
+  pad_byte_value: 0x20
+
 pcap:
   core:
     enabled: true
+    # interface to capture on (e.g. "amf" for interface connected to AMF, "ue1-tun", "ue1-ran")
     interface: amf
+    # output pcap file (stored in log directory)
     output_file: core_trace_%i.pcap
+    # whether to use sudo for tcpdump (often required to capture on interfaces)
     use_sudo: true
+    # whether to use non-interactive sudo (i.e. assume passwordless sudo) for tcpdump
     sudo_non_interactive: true
   ran:
     enabled: true
+    # interface to capture on (e.g. "amf" for interface connected to AMF, "ue1-tun", "ue1-ran")
     interface: lo
+    # output pcap file (stored in log directory)
     output_file: ran_trace_%i.pcap
+    # whether to use sudo for tcpdump (often required to capture on interfaces)
     use_sudo: true
+    # whether to use non-interactive sudo (i.e. assume passwordless sudo) for tcpdump
     sudo_non_interactive: true
+
 run:
   stop_after_sec: 60
   iterations: 1
-  reset_core: true
+  reset_core: false
   run_log: demorun.log
   logging:
     log_dir: ./tools/dashboard/logs
-    run_log_dir_name: demo-simple-%u-%t
+    run_log_dir_name: demo-test-handover-%u-%t
     copy_core_logs: true
+
 script:
-- time: 10.0
+- time: 20
   commands:
-  - node: GNB1
+  - node: GNB2
     command: set-rsrp
-    args:
-    - -90
-satellite:
-  tle_source_file: ''
-  tick_scaling: ''
-  gnbs: []
-  epoch_base: latest
+    args: [-90]
+- time: 30
+  commands:
+  - node: GNB2
+    command: set-rsrp
+    args: [-70]

@@ -168,7 +168,7 @@ void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
                 return;
             }
 
-            m_logger->debug("Downlink Data transmission.  PduID=%ud, Radio Bearer=%02x, SDAP Byte=%02x, Ack PDU=%s, size=%zu",  m.pduId, m.radioBearer, m.sdapByte, m.ackPdu ? "true" : "false", m.pdu.length());
+            m_logger->debug("Downlink Data transmission.  PduID=%u, Radio Bearer=0x%02x, SDAP Byte=%02x, Ack PDU=%s, size=%zu",  m.pduId, m.radioBearer, m.sdapByte, m.ackPdu ? "true" : "false", m.pdu.length());
 
             auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::DOWNLINK_DATA);
             w->psi = static_cast<int>(m.payloadType);
@@ -178,7 +178,8 @@ void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
         // for RRC messages, forward to main task as a DOWNLINK_RRC message
         else if (m.pduType == rls::EPduType::RRC)
         {
-            m_logger->debug("Downlink RRC transmission.  PduID=%ud, Radio Bearer=%02x, RRC Channel=%d, Ack PDU=%s, size=%zu", m.pduId, m.radioBearer, static_cast<int>(m.payloadType), m.ackPdu ? "true" : "false", m.pdu.length());
+            m_logger->debug("Downlink RRC transmission. RRC Channel=%d - %s, PduID=%u, Radio Bearer=0x%02x, Ack PDU=%s, size=%zu", 
+                static_cast<int>(m.payloadType), nr::rrc::common::RrcChannelToString(static_cast<nr::rrc::common::RrcChannel>(m.payloadType)).c_str(), m.pduId, m.radioBearer, m.ackPdu ? "true" : "false", m.pdu.length());
             auto w = std::make_unique<NmUeRlsToRls>(NmUeRlsToRls::DOWNLINK_RRC);
             w->cellId = cellId;
             w->rrcChannel = static_cast<rrc::RrcChannel>(m.payloadType);
@@ -187,7 +188,8 @@ void RlsControlTask::handleRlsMessage(int64_t cellId, rls::RlsMessage &msg)
         }
         else
         {
-            m_logger->debug("Downlink UNKNOWN transmission. PDUTypeValue=%u, PduID=%ud, Radio Bearer=%02x, SDAP Byte=%02x, Ack PDU=%s, size=%zu", m.pduType,  m.pduId, m.radioBearer, m.sdapByte, m.ackPdu ? "true" : "false", m.pdu.length());
+            m_logger->debug("Downlink UNKNOWN transmission. PDUTypeValue=%u, PduID=%u, PayloadType=%d, Radio Bearer=0x%02x, SDAP Byte=%02x, Ack PDU=%s, size=%zu", 
+                m.pduType,  m.pduId, m.payloadType, m.radioBearer, m.sdapByte, m.ackPdu ? "true" : "false", m.pdu.length());
         }
     }
     else
@@ -266,7 +268,7 @@ void RlsControlTask::handleUplinkRrcDelivery(int64_t nci, rrc::RrcChannel channe
         info.sentTime = utils::CurrentTimeMillis();
     }
     
-    m_logger->debug("Uplink RRC delivery.  NCI=%ld, Channel=%d, PduID=%uu, Radio Bearer=%02x, Ack PDU=%s, size=%zu", nci, static_cast<int>(channel), pduId, radioBearer, ackPdu ? "true" : "false", data.length());
+    m_logger->debug("Uplink RRC delivery.  NCI=%ld, Channel=%d, PduID=%u, Radio Bearer=%02x, Ack PDU=%s, size=%zu", nci, static_cast<int>(channel), pduId, radioBearer, ackPdu ? "true" : "false", data.length());
 
     // create a new RlsPduTransmission message with the provided RRC payload and 
     //  send it to the UDP task to be forwarded to the gnb
@@ -290,7 +292,6 @@ void RlsControlTask::handleUplinkRrcDelivery(int64_t nci, rrc::RrcChannel channe
  */
 void RlsControlTask::handleUplinkDataDelivery(int pduSessionId, OctetString &&data)
 {
-
 
     uint8_t radioBearer = 0X41; // DRB1
     uint32_t pduId = 0;

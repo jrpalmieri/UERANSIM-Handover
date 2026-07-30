@@ -164,7 +164,7 @@ class NgapTask : public NtsTask
     /* PDU session management */
     void receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSessionResourceSetupRequest *msg);
     void receiveSessionResourceReleaseCommand(int amfId, ASN_NGAP_PDUSessionResourceReleaseCommand *msg);
-    std::optional<NgapCause> setupPduSessionResource(NgapUeContext *ue, PduSessionResource *resource);
+    std::optional<NgapCause> setupPduSessionResource(NgapUeContext *ue, PduSessionResource &resource);
     void prepareXnHandover(int64_t ueId, std::unique_ptr<XnHandoverCoreContext> core,
                            std::unique_ptr<std::vector<PduSessionResource>> sessions);
     bool activateXnHandover(int64_t ueId);

@@ -59,7 +59,7 @@ class GtpTask : public NtsTask
   private:
     void handleUdpReceive(const udp::NwUdpServerReceive &msg);
     void handleUeContextUpdate(const GtpUeContextUpdate &msg);
-    void handleSessionCreate(PduSessionResource *session);
+    void handleSessionCreate(std::unique_ptr<PduSessionResource> session);
     void handleSessionRelease(int64_t ueId, int psi);
     void handleUeContextDelete(int64_t ueId);
     void handleUplinkData(int64_t ueId, int psi, int qfi, OctetString &&data);

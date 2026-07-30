@@ -521,14 +521,25 @@ void GnbRrcTask::handleUeContextRelease(int64_t ueId, NgapCause cause)
 
 void GnbRrcTask::handleRadioLinkFailure(int64_t ueId)
 {
-    // Notify NGAP task
+
+    // TODO: Implement more advanced RLF handling logic.  Right now we simply clear all UE contexts.
+    //   A more advanced implementation would set a timer to allow the UE to reconnect or await a 
+    //   handover notification from a peer gNB.
+
+    // Notify NGAP task of the RLF event so it can inform the AMF and clear its context
     auto w = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::RADIO_LINK_FAILURE);
     w->ueId = ueId;
     m_base->ngapTask->push(std::move(w));
 
+    // Notify RLS task of the RLF event so it can clear its context (radio bearers, SDAP mappings, etc.)
+    auto m = std::make_unique<NmGnbRrcToRls>(NmGnbRrcToRls::REMOVE_UE_CONTEXT);
+    m->ueId = ueId;
+    m_base->rlsTask->push(std::move(m));
+
     // erase UE RRC Context
     ueContextRelease(ueId);
 }
+
 
 void GnbRrcTask::handlePaging(const asn::Unique<ASN_NGAP_FiveG_S_TMSI> &tmsi,
                               const asn::Unique<ASN_NGAP_TAIListForPaging> &taiList)
@@ -567,6 +578,8 @@ void GnbRrcTask::handleNgapSecurityInfo(int64_t ueId, std::unique_ptr<UeSecurity
     if (!ue)
         return;
 
+    int txId = ue->getNextTid();
+
     // set UE context with the received security information
     ue->ueSecInfo = *secInfo;
 
@@ -585,7 +598,9 @@ void GnbRrcTask::handleNgapSecurityInfo(int64_t ueId, std::unique_ptr<UeSecurity
     pdu->message.choice.c1 = asn::NewFor(pdu->message.choice.c1);
     pdu->message.choice.c1->present = ASN_RRC_DL_DCCH_MessageType__c1_PR_securityModeCommand;
     auto &secModeCmd = pdu->message.choice.c1->choice.securityModeCommand = asn::New<ASN_RRC_SecurityModeCommand>();
-    secModeCmd->rrc_TransactionIdentifier = ue->getNextTid();
+
+    // attach the RRC TransactionId
+    secModeCmd->rrc_TransactionIdentifier = static_cast<ASN_RRC_RRC_TransactionIdentifier_t>(txId);
     secModeCmd->criticalExtensions.present = ASN_RRC_SecurityModeCommand__criticalExtensions_PR_securityModeCommand;
     secModeCmd->criticalExtensions.choice.securityModeCommand = asn::New<ASN_RRC_SecurityModeCommand_IEs>();
 
@@ -599,6 +614,7 @@ void GnbRrcTask::handleNgapSecurityInfo(int64_t ueId, std::unique_ptr<UeSecurity
     sendRrcMessage(ueId, pdu);
     asn::Free(asn_DEF_ASN_RRC_DL_DCCH_Message, pdu);
 
+    m_logger->debug("UE[%ld]: Sent RRC Security Mode Command to UE, TxId=%d", ueId, txId);
 
 }
 

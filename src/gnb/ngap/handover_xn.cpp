@@ -106,10 +106,10 @@ void NgapTask::prepareXnHandover(int64_t ueId,
     for (auto &resource : stored.sessions)
     {
         // Xn decoded these with the source ID; normalize before GTP indexes the
-        // session.  The vector remains in the pending map, keeping the borrowed
-        // pointer valid until GTP consumes its queued message.
+        // session.  GTP receives its own copy of the resource, so the lifetime of
+        // this vector no longer has to cover the queued message.
         resource.ueId = ueId;
-        auto failure = setupPduSessionResource(stored.ctx.get(), &resource);
+        auto failure = setupPduSessionResource(stored.ctx.get(), resource);
         if (failure)
             m_logger->warn("UE[%ld] Xn target rejected PSI[%d], cause=%d", ueId, resource.psi,
                            static_cast<int>(*failure));

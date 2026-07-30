@@ -68,8 +68,12 @@ void GnbRlsTask::onLoop()
             m_base->rrcTask->push(std::move(m));
             break;
         }
-        case NmGnbRlsToRls::SIGNAL_LOST: {
-            m_logger->debug("UE[%ld] signal lost", w.ueId);
+        case NmGnbRlsToRls::SIGNAL_LOST: 
+        case NmGnbRlsToRls::RADIO_LINK_FAILURE: {
+            m_logger->info("UE[%ld] signal lost", w.ueId);
+            auto m = std::make_unique<NmGnbRlsToRrc>(NmGnbRlsToRrc::RADIO_LINK_FAILURE);
+            m->ueId = w.ueId;
+            m_base->rrcTask->push(std::move(m));
             break;
         }
         case NmGnbRlsToRls::UPLINK_DATA: {
@@ -87,10 +91,6 @@ void GnbRlsTask::onLoop()
             m->rrcChannel = w.rrcChannel;
             m->data       = std::move(w.data);
             m_base->rrcTask->push(std::move(m));
-            break;
-        }
-        case NmGnbRlsToRls::RADIO_LINK_FAILURE: {
-            m_logger->debug("radio link failure [%d]", (int)w.rlfCause);
             break;
         }
         case NmGnbRlsToRls::TRANSMISSION_FAILURE: {

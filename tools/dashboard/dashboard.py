@@ -13,6 +13,7 @@ import os
 import random
 import re
 import shlex
+import signal
 import socket
 import struct
 import subprocess
@@ -122,15 +123,22 @@ class ManagedProcess:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            # A process that emits a byte which is not valid UTF-8 must not be able to kill
+            # the reader thread, which would silently truncate the log file from that point on.
+            errors="replace",
             bufsize=1,
         )
 
         def _reader() -> None:
             assert self.proc is not None
             assert self.proc.stdout is not None
-            for line in self.proc.stdout:
-                self.pane.append_log(line)
-                self._write_log_file(line)
+            try:
+                for line in self.proc.stdout:
+                    self.pane.append_log(line)
+                    self._write_log_file(line)
+            except Exception as exc:  # keep reporting the exit status even if reading failed
+                self.pane.append_log(f"[log reader stopped: {exc!r}]")
+                self._write_log_file(f"[log reader stopped: {exc!r}]\n")
             code = self.proc.wait()
             self.pane.append_log(f"[process exited with code {code}]")
             self._write_log_file(f"[process exited with code {code}]\n")
@@ -352,6 +360,9 @@ class WindowedDashboard:
         # ── Main window layout ────────────────────────────────────────────────
         self.content_frame: Optional[ttk.Frame] = None
         self.log_widgets: Dict[str, scrolledtext.ScrolledText] = {}
+        # Lines currently rendered in each log widget, so refreshes can update them
+        # in place instead of rebuilding and resetting the user's scroll position.
+        self._rendered_log_lines: Dict[str, List[str]] = {}
         self.scalar_vars: Dict[str, tk.StringVar] = {}
         self.header_config_var = tk.StringVar(value="Demo: None")
         self.header_run_var = tk.StringVar(value="Status: Ready")
@@ -1195,7 +1206,9 @@ class WindowedDashboard:
             if returncode == 0:
                 self.root.after(0, self._on_reset_success)
             else:
-                self.root.after(0, lambda: self._on_reset_failed(f"exited with code {returncode}"))
+                self.root.after(0, lambda: self._on_reset_failed(
+                    f"reset_command {self._describe_exit(returncode)}"
+                ))
         except FileNotFoundError:
             self._reset_proc = None
             if not self.stop_event.is_set():
@@ -1211,7 +1224,7 @@ class WindowedDashboard:
                 for a in self.core_status_command_args]
         parts = shlex.split(cmd) + args if cmd else []
         self._demo_log("[core] checking core status: " + " ".join(parts))
-        returncode = -1
+        returncode: Optional[int] = None
         try:
             proc = subprocess.Popen(
                 parts,
@@ -1231,11 +1244,27 @@ class WindowedDashboard:
         if self.stop_event.is_set():
             return
         if returncode == 0:
-            self._demo_log("[core] core is running → running reset_command")
+            self._demo_log("[core] status_command exited with code 0 → core is running → running reset_command")
             self._run_core_reset()
         else:
-            self._demo_log("[core] core is not fully running → running start_command")
+            self._demo_log(
+                f"[core] status_command {self._describe_exit(returncode)}"
+                " → core is not fully running → running start_command"
+            )
             self._run_core_start()
+
+    @staticmethod
+    def _describe_exit(returncode: Optional[int]) -> str:
+        """Human-readable exit status, naming the signal for signal-killed commands."""
+        if returncode is None:
+            return "did not run"
+        signum = -returncode if returncode < 0 else (returncode - 128 if returncode > 128 else 0)
+        try:
+            name = signal.Signals(signum).name if signum > 0 else ""
+        except ValueError:
+            name = ""
+        suffix = f" (killed by {name})" if name else ""
+        return f"exited with code {returncode}{suffix}"
 
     def _run_core_start(self) -> None:
         cmd = self.core_start_command.strip()
@@ -1264,7 +1293,7 @@ class WindowedDashboard:
                 self.root.after(0, self._on_reset_success)
             else:
                 self.root.after(0, lambda: self._on_reset_failed(
-                    f"start_command exited with code {returncode}"
+                    f"start_command {self._describe_exit(returncode)}"
                 ))
         except FileNotFoundError:
             if not self.stop_event.is_set():
@@ -1293,7 +1322,7 @@ class WindowedDashboard:
                 for a in self.core_address_check_command_args]
         parts = shlex.split(cmd) + args if cmd else []
         self._demo_log("[addr-check] running: " + " ".join(parts))
-        returncode = -1
+        returncode: Optional[int] = None
         try:
             proc = subprocess.Popen(
                 parts,
@@ -1321,7 +1350,7 @@ class WindowedDashboard:
                 self._demo_log(f"[addr-check] waiting {delay}s for core services to come up...")
                 self.root.after(delay * 1000, self._launch_demo_processes)
         else:
-            error = f"address_check_command exited with code {returncode}"
+            error = f"address_check_command {self._describe_exit(returncode)}"
             self._demo_log(f"[addr-check] FAILED: {error}")
             self.root.after(0, lambda e=error: self._on_address_check_failed(e))
 
@@ -5502,17 +5531,62 @@ class WindowedDashboard:
         self.program_running = False
         self.inject_status_var.set("Program stopped")
 
+    @staticmethod
+    def _count_dropped(prev: List[str], lines: List[str]) -> Optional[int]:
+        """How many lines aged off the front, or None if `lines` is not a continuation
+        of `prev` (a pane reset, which has to be re-rendered from scratch)."""
+        if not prev:
+            return 0
+        for dropped in range(len(prev) + 1):
+            kept = prev[dropped:]
+            if lines[:len(kept)] == kept:
+                return dropped
+        return None
+
+    def _update_log_widget(self, key: str, widget: scrolledtext.ScrolledText,
+                           lines: List[str]) -> None:
+        """Bring a log pane up to date without yanking the reader's scroll position.
+
+        The pane is edited in place — old lines trimmed off the front, new ones appended
+        — because Tk keeps the view anchored to the same text across those edits. A pane
+        parked at the bottom keeps tailing; anywhere else the reader stays put. Rebuilding
+        the whole widget, as this used to do, resets both the scroll position and any
+        selection the user is in the middle of making.
+        """
+        prev = self._rendered_log_lines.get(key, [])
+        if lines == prev and widget.index("end-1c") != "1.0":
+            return
+
+        at_bottom = widget.yview()[1] >= 0.999
+        # An empty widget with lines on record means it was rebuilt underneath us
+        # (the user-plane window is destroyed and recreated), so start over.
+        if widget.index("end-1c") == "1.0":
+            prev = []
+        dropped = self._count_dropped(prev, lines)
+
+        widget.configure(state=tk.NORMAL)
+        if dropped is None:
+            widget.delete("1.0", tk.END)
+            widget.insert("end-1c", "\n".join(lines))
+            at_bottom = True
+        else:
+            if dropped:
+                widget.delete("1.0", f"{dropped + 1}.0")
+            kept = len(prev) - dropped
+            added = lines[kept:]
+            if added:
+                widget.insert("end-1c", ("\n" if kept else "") + "\n".join(added))
+        widget.configure(state=tk.DISABLED)
+
+        if at_bottom:
+            widget.see(tk.END)
+        self._rendered_log_lines[key] = lines
+
     def _refresh_ui(self) -> None:
         for key in self.log_widgets:
             _, logs = self.panes[key].snapshot()
 
-            widget = self.log_widgets[key]
-            text = "\n".join(logs)
-            widget.configure(state=tk.NORMAL)
-            widget.delete("1.0", tk.END)
-            widget.insert(tk.END, text)
-            widget.see(tk.END)
-            widget.configure(state=tk.DISABLED)
+            self._update_log_widget(key, self.log_widgets[key], logs)
 
         for key, var in self.scalar_vars.items():
             scalars, _ = self.panes[key].snapshot()
@@ -5534,22 +5608,14 @@ class WindowedDashboard:
                 )
 
             with self.user_plane_lock:
-                rx_text = "\n".join(self.user_plane_rx_logs)
-                tx_text = "\n".join(self.user_plane_tx_logs)
+                rx_lines = list(self.user_plane_rx_logs)
+                tx_lines = list(self.user_plane_tx_logs)
 
             if self.user_plane_rx_widget is not None:
-                self.user_plane_rx_widget.configure(state=tk.NORMAL)
-                self.user_plane_rx_widget.delete("1.0", tk.END)
-                self.user_plane_rx_widget.insert(tk.END, rx_text)
-                self.user_plane_rx_widget.see(tk.END)
-                self.user_plane_rx_widget.configure(state=tk.DISABLED)
+                self._update_log_widget("user-plane-rx", self.user_plane_rx_widget, rx_lines)
 
             if self.user_plane_tx_widget is not None:
-                self.user_plane_tx_widget.configure(state=tk.NORMAL)
-                self.user_plane_tx_widget.delete("1.0", tk.END)
-                self.user_plane_tx_widget.insert(tk.END, tx_text)
-                self.user_plane_tx_widget.see(tk.END)
-                self.user_plane_tx_widget.configure(state=tk.DISABLED)
+                self._update_log_widget("user-plane-tx", self.user_plane_tx_widget, tx_lines)
 
         interval = 500 if self.demo_running else 2000
         self.root.after(interval, self._refresh_ui)

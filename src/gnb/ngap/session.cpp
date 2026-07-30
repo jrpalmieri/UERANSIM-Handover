@@ -84,14 +84,14 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
                 continue;
             }
 
-            auto *resource = new PduSessionResource(ue->ctxId, static_cast<int>(item->pDUSessionID));
-            resource->sNssai = ngap_utils::SnssaiFromAsn(item->s_NSSAI);
-            makeNgapPduSessionItems(resource, transfer);
+            PduSessionResource resource{ue->ctxId, static_cast<int>(item->pDUSessionID)};
+            resource.sNssai = ngap_utils::SnssaiFromAsn(item->s_NSSAI);
+            makeNgapPduSessionItems(&resource, transfer);
 
             // Instruct GTP to setup the UP tunnel
-            m_logger->debug("UE[%ld]: Processing PDU session resource setup request item with PSI=%d", ue->ctxId, resource->psi);
+            m_logger->debug("UE[%ld]: Processing PDU session resource setup request item with PSI=%d", ue->ctxId, resource.psi);
             auto error = setupPduSessionResource(ue, resource);
-            
+
             // GTP failure
             if (error.has_value())
             {
@@ -107,7 +107,7 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
                 asn::Free(asn_DEF_ASN_NGAP_PDUSessionResourceSetupUnsuccessfulTransfer, tr);
 
                 auto *res = asn::New<ASN_NGAP_PDUSessionResourceFailedToSetupItemSURes>();
-                res->pDUSessionID = resource->psi;
+                res->pDUSessionID = resource.psi;
                 asn::SetOctetString(res->pDUSessionResourceSetupUnsuccessfulTransfer, encodedTr);
 
                 failedList.push_back(res);
@@ -115,17 +115,13 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
             // GTP success
             else
             {
-
-                // add to the session list to be sent to RRC
-                sessionList->emplace_back(*resource);
-
-                m_logger->debug("UE[%ld]: PDU session resource setup successful with PSI=%d", ue->ctxId, resource->psi);
+                m_logger->debug("UE[%ld]: PDU session resource setup successful with PSI=%d", ue->ctxId, resource.psi);
                 if (item->pDUSessionNAS_PDU)
                     deliverDownlinkNas(ue->ctxId, asn::GetOctetString(*item->pDUSessionNAS_PDU));
 
                 auto *tr = asn::New<ASN_NGAP_PDUSessionResourceSetupResponseTransfer>();
 
-                for (const auto &flow : resource->qosFlows)
+                for (const auto &flow : resource.qosFlows)
                 {
                     auto *associatedQosFlowItem = asn::New<ASN_NGAP_AssociatedQosFlowItem>();
                     associatedQosFlowItem->qosFlowIdentifier = flow.qfi;
@@ -135,8 +131,8 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
                 auto &upInfo = tr->dLQosFlowPerTNLInformation.uPTransportLayerInformation;
                 upInfo.present = ASN_NGAP_UPTransportLayerInformation_PR_gTPTunnel;
                 upInfo.choice.gTPTunnel = asn::New<ASN_NGAP_GTPTunnel>();
-                asn::SetBitString(upInfo.choice.gTPTunnel->transportLayerAddress, resource->downTunnel.address);
-                asn::SetOctetString4(upInfo.choice.gTPTunnel->gTP_TEID, (octet4)resource->downTunnel.teid);
+                asn::SetBitString(upInfo.choice.gTPTunnel->transportLayerAddress, resource.downTunnel.address);
+                asn::SetOctetString4(upInfo.choice.gTPTunnel->gTP_TEID, (octet4)resource.downTunnel.teid);
 
                 OctetString encodedTr =
                     ngap_encode::EncodeS(asn_DEF_ASN_NGAP_PDUSessionResourceSetupResponseTransfer, tr);
@@ -147,10 +143,14 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
                 asn::Free(asn_DEF_ASN_NGAP_PDUSessionResourceSetupResponseTransfer, tr);
 
                 auto *res = asn::New<ASN_NGAP_PDUSessionResourceSetupItemSURes>();
-                res->pDUSessionID = resource->psi;
+                res->pDUSessionID = resource.psi;
                 asn::SetOctetString(res->pDUSessionResourceSetupResponseTransfer, encodedTr);
 
                 successList.push_back(res);
+
+                // Hand the session on to RRC. This is the last use of the resource, so it
+                // is moved rather than copied.
+                sessionList->emplace_back(std::move(resource));
             }
 
             asn::Free(asn_DEF_ASN_NGAP_PDUSessionResourceSetupRequestTransfer, transfer);
@@ -227,28 +227,33 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
 }
 
 /**
- * @brief Instructs GTP to setup a UP tunnel for the given PDU session resource. 
- * Returns an optional NGAP cause in case of failure.
- * 
- * @param ue 
- * @param resource 
- * @return std::optional<NgapCause> 
+ * @brief Assigns the downlink tunnel endpoint to the given PDU session resource and instructs
+ * GTP to setup the user plane tunnel. Returns an optional NGAP cause in case of failure.
+ *
+ * The caller keeps ownership of the resource, which is updated in place with the assigned
+ * downlink address and TEID so that the caller can encode them into its NGAP response. The
+ * GTP task receives an independent copy, because it runs on another thread and retains the
+ * session after this request completes.
+ *
+ * @param ue the NGAP context of the UE that owns the session
+ * @param resource the session resource to set up, updated in place with the downlink tunnel
+ * @return std::optional<NgapCause> the failure cause, or an empty optional on success
  */
-std::optional<NgapCause> NgapTask::setupPduSessionResource(NgapUeContext *ue, PduSessionResource *resource)
+std::optional<NgapCause> NgapTask::setupPduSessionResource(NgapUeContext *ue, PduSessionResource &resource)
 {
-    if (resource->sessionType != PduSessionType::IPv4)
+    if (resource.sessionType != PduSessionType::IPv4)
     {
         m_logger->err("UE[%ld]: PDU session resource could not setup: Only IPv4 is supported", ue->ctxId);
         return NgapCause::RadioNetwork_unspecified;
     }
 
-    if (resource->upTunnel.address.length() == 0)
+    if (resource.upTunnel.address.length() == 0)
     {
         m_logger->err("UE[%ld]: PDU session resource could not setup: Uplink TNL information is missing", ue->ctxId);
         return NgapCause::Protocol_transfer_syntax_error;
     }
 
-    if (resource->qosFlows.empty())
+    if (resource.qosFlows.empty())
     {
         m_logger->err("UE[%ld]: PDU session resource could not setup: QoS flow list is null or empty", ue->ctxId);
         return NgapCause::Protocol_semantic_error;
@@ -256,17 +261,19 @@ std::optional<NgapCause> NgapTask::setupPduSessionResource(NgapUeContext *ue, Pd
 
     std::string gtpIp = m_base->config->gtpAdvertiseIp.value_or(m_base->config->gtpIp);
 
-    resource->downTunnel.address = utils::IpToOctetString(gtpIp);
-    resource->downTunnel.teid = ++m_downlinkTeidCounter;
+    resource.downTunnel.address = utils::IpToOctetString(gtpIp);
+    resource.downTunnel.teid = ++m_downlinkTeidCounter;
 
+    // This is the only deep copy of the resource in the session setup path. Everything the
+    // caller does afterwards reads or moves its own object, so the two threads never share one.
     auto w = std::make_unique<NmGnbNgapToGtp>(NmGnbNgapToGtp::SESSION_CREATE);
-    w->resource = resource;
+    w->resource = std::make_unique<PduSessionResource>(resource);
     m_base->gtpTask->push(std::move(w));
 
     // Add the PDUSessionID to the UE's session list
-    ue->pduSessions.insert(resource->psi);
+    ue->pduSessions.insert(resource.psi);
     m_logger->debug("UE[%ld]: PDU session resource setup, added to session list with PSI=%d",
-        ue->ctxId, resource->psi);
+        ue->ctxId, resource.psi);
 
     return {};
 }

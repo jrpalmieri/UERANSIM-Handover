@@ -30,6 +30,15 @@ void GnbRrcTask::handleRlsSapMessage(NmGnbRlsToRrc &msg)
         handleUplinkRrc(msg.ueId, msg.cRnti, msg.rrcChannel, msg.data);
         break;
     }
+    case NmGnbRlsToRrc::RADIO_LINK_FAILURE: {
+        m_logger->info("UE[%ld] radio link failure received from RLS", msg.ueId);
+        handleRadioLinkFailure(msg.ueId);
+        break;
+    }
+    default: {
+        m_logger->unhandledNts(msg);
+        break;
+    }
     }
 }
 

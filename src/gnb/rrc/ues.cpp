@@ -22,9 +22,6 @@ RrcUeContext *GnbRrcTask::createUe(int64_t ueId, int crnti)
     return ctx;
 }
 
-// Context lookups live in management.cpp (findCtxByUeId / findCtxByCrnti);
-// the former tryFindUeByUeId / tryFindUeByCrnti duplicates were removed.
-
 // Thread-safe snapshot of a UE's RRC context, for callers on other task
 // threads (e.g. Xn context transfer).  See m_ueCtxMutex in task.hpp.
 bool GnbRrcTask::getUeContext(int64_t ueId, std::optional<RrcUeContext> &out)
@@ -41,6 +38,8 @@ bool GnbRrcTask::getUeContext(int64_t ueId, std::optional<RrcUeContext> &out)
 
 /**
  * @brief Deletes the UE's RRC context.
+ * 
+ * Performs C-RNTI release so it can be reused for future UEs.  Deletes the RRC context object and removes it from the m_ueCtx map.
  *
  * @param ueId
  */

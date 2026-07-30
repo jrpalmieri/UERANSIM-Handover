@@ -987,60 +987,54 @@ void NgapTask::sendHandoverRequestAcknowledge(uint32_t transactionId, int64_t ue
     if (rrcAdmittedSessions) {
         for (auto &resource : *rrcAdmittedSessions)
         {
-            // Heap-allocate the resource before GTP setup: setupPduSessionResource()
-            //  hands the raw pointer to the GTP task, which reads it asynchronously —
-            //  a pointer into the function-local rrcAdmittedSessions vector would be
-            //  dangling by then.  (Same heap-allocate convention as the normal
-            //  session-setup path in session.cpp.)
-            auto *res = new PduSessionResource(resource);
-
             // Stamp the adopted UE identity: the resources were built in
             //  receiveHandoverRequest() with the placeholder ueId=0, and GTP keys
-            //  its session tree (and UE-context check) by resource->ueId.
-            res->ueId = ueId;
+            //  its session tree (and UE-context check) by resource.ueId.
+            resource.ueId = ueId;
 
-            // send session to GTP to setup
-            auto setupError = setupPduSessionResource(ue, res);
+            // Send the session to GTP to setup. GTP is given its own copy, so this
+            //  element of rrcAdmittedSessions can stay where it is.
+            auto setupError = setupPduSessionResource(ue, resource);
 
             // check if the setup failed
             if (setupError.has_value())
             {
-                m_logger->warn("UE[%ld] handover PDU session[%d]: setup failed cause=%d", ue->ctxId, res->psi,
+                m_logger->warn("UE[%ld] handover PDU session[%d]: setup failed cause=%d", ue->ctxId, resource.psi,
                             (int)setupError.value());
 
                 OctetString encodedFail = MakeHoSetupUnsuccessfulTransfer(setupError.value());
 
                 auto *failed = asn::New<ASN_NGAP_PDUSessionResourceFailedToSetupItemHOAck>();
-                failed->pDUSessionID = res->psi;
+                failed->pDUSessionID = resource.psi;
                 asn::SetOctetString(failed->handoverResourceAllocationUnsuccessfulTransfer, encodedFail);
                 failedList.push_back(failed);
             }
             else
             {
-                // note: the ack transfer must encode the heap copy — setupPduSessionResource()
-                //  wrote the downlink tunnel (address/TEID) into it, not into `resource`
-                OctetString encodedAck = MakeHoAcknowledgeTransfer(*res);
+                // setupPduSessionResource() wrote the downlink tunnel (address/TEID) into
+                //  `resource` itself, so the acknowledge transfer encodes it directly
+                OctetString encodedAck = MakeHoAcknowledgeTransfer(resource);
                 if (encodedAck.length() == 0)
                 {
                     m_logger->warn("UE[%ld] handover PDU session %d: failed to encode acknowledge transfer", ue->ctxId,
-                                res->psi);
+                                resource.psi);
 
                     OctetString encodedFail = MakeHoSetupUnsuccessfulTransfer(NgapCause::Protocol_semantic_error);
 
                     auto *failed = asn::New<ASN_NGAP_PDUSessionResourceFailedToSetupItemHOAck>();
-                    failed->pDUSessionID = res->psi;
+                    failed->pDUSessionID = resource.psi;
                     asn::SetOctetString(failed->handoverResourceAllocationUnsuccessfulTransfer, encodedFail);
                     failedList.push_back(failed);
                 }
                 else
                 {
                     auto *admitted = asn::New<ASN_NGAP_PDUSessionResourceAdmittedItem>();
-                    admitted->pDUSessionID = res->psi;
+                    admitted->pDUSessionID = resource.psi;
                     asn::SetOctetString(admitted->handoverRequestAcknowledgeTransfer, encodedAck);
                     admittedList.push_back(admitted);
 
-                    m_logger->debug("UE[%ld] handover PDU session[%d]: admitted teid=%u", ue->ctxId, res->psi,
-                                    res->downTunnel.teid);
+                    m_logger->debug("UE[%ld] handover PDU session[%d]: admitted teid=%u", ue->ctxId, resource.psi,
+                                    resource.downTunnel.teid);
                 }
             }
 

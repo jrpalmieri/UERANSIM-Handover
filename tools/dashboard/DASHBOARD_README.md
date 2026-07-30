@@ -22,7 +22,7 @@ This tool is used to control satellite simulations using UERANSIM-Handover and O
 
 
 ```bash
-python3 tools/UI/dashboard.py --config tools/UI/config.example.json
+python3 tools/dashboard/dashboard.py --config tools/dashboard/run_configs/config.example.yaml
 ```
 
 Menu bar:

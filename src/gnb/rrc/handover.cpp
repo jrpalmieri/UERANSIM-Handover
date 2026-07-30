@@ -610,12 +610,23 @@ void GnbRrcTask::rejectHandoverRequest(ERequestingTask requestingTask, uint32_t 
     }
 }
 
-// Handles a Handover Request msg from XN or NGAP.
-// The rrcContainer is used by the Source-to-Target Transparent Container (NGAP) or rrc-Context (Xn).
-//  This function decodes the container, creates a provisional RRC UE context, stores it in the pending handover map,
-//  and creates a targetToSourceTransparentContainer containing the RRCReconfiguration message to send to the UE.
-// On completion is sends a message to the requester indicating success (HANDOVER_REQUEST_ACK) or failure
-//  (XnAP HandoverPreparationFailure / NGAP HandoverFailure via rejectHandoverRequest()).
+/**
+ * @brief Handles a Handover Request msg from XN or NGAP.  Triggered by receiving a HANDOVER_REQUEST_RECEIVED message
+ *  from the Xn or NGAP task.
+ * 
+ *  The rrcContainer is provided by the source gNB (as a Source-to-Target Transparent Container (NGAP) or rrc-Context (Xn) ).
+ *  This function decodes the container, creates a provisional RRC UE context, stores it in the pending handover map,
+ *  and creates a targetToSourceTransparentContainer containing the RRCReconfiguration message to send to the UE.
+ * 
+ * @param sourceGnbId    ID of the source gNB
+ * @param transactionId  the requester's transaction id (xnTxId / ngapTxId)
+ * @param rrcContainer   the source-to-target transparent container
+ * @param sessionList    list of PDU session resources
+ * @param isCho          flag indicating if this is a Conditional Handover (CHO) request
+ * @param requestingTask which interface delivered the Handover Request
+ * @param xnCoreContext  core context for Xn
+ * @param xnChoRequest   CHO request for Xn
+ */
 void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
         std::unique_ptr<OctetString> rrcContainer,
         std::unique_ptr<std::vector<PduSessionResource>> sessionList,
@@ -623,47 +634,50 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
         std::unique_ptr<XnHandoverCoreContext> xnCoreContext,
         std::unique_ptr<XnChoRequest> xnChoRequest)
 {
+
+    // The new (provisional) RRC context for this UE
+    RrcUeContext *ue = nullptr;
+
     (void)xnChoRequest;
 
-    // Strip the transparent-container wrapper before decoding: the payload
-    // DecodeCustomRrcContext expects starts 16 bytes in (see
-    // UnwrapSourceToTargetContainer).
+    // Decode the source-to-target transparent container
+    //   Note: need to strip the transparent-container wrapper before decoding: the payload
+    //      expected by DecodeCustomRrcContext starts 16 bytes in (see UnwrapSourceToTargetContainer).
     OctetString innerContext{};
-    RrcUeContext *ue = nullptr;
     if (UnwrapSourceToTargetContainer(*rrcContainer, innerContext))
         ue = DecodeCustomRrcContext(innerContext);
     else
         m_logger->err("handleHandoverRequest: malformed source-to-target container (transactionId=%u)",
                       transactionId);
 
-    // GUARD 1: container decode failure → reject with a protocol/ASN-error cause
-    //  (previously returned silently, leaving the source waiting for an ACK)
+    // Check for decode failure
     if (!ue)
     {
         m_logger->err("handleHandoverRequest: Failed to decode RRC Container for transactionId=%u", transactionId);
+        // TODO: correct cause for decode failure? Universal for NGAP and XNAP?
         rejectHandoverRequest(requestingTask, transactionId,
                               NgapCause::Protocol_abstract_syntax_error_falsely_constructed_message,
                               ASN_XNAP_Cause_PR_protocol, nullptr);
         return;
     }
 
-    // GUARD 2: the decoded ueId keys the pending-handover map and all later
-    //  context matching — a non-positive value would poison both, so reject it
+    // Check for invalid ueId
     if (ue->ueId <= 0)
     {
         m_logger->err("handleHandoverRequest: decoded RRC context has invalid ueId=%ld (transactionId=%u)",
                       ue->ueId, transactionId);
+        // TODO: correct cause for decode failure? Universal for NGAP and XNAP?
         rejectHandoverRequest(requestingTask, transactionId,
                               NgapCause::Protocol_semantic_error,
                               ASN_XNAP_Cause_PR_protocol, ue);
         return;
     }
 
-    // GUARD 3 (replace policy): a pending handover already exists for this UE —
-    //  e.g. a source retry after timeout, or a CHO re-preparation.  Latest wins:
-    //  free the stale entry's context and C-RNTI, then proceed with the new
-    //  request.  (Previously the map assignment silently overwrote the entry,
-    //  leaking the old context and its C-RNTI.)
+    // Check for an existing handover pending in progress for this UE.
+    //  Could happen from a source retry after timeout, or a CHO re-preparation.
+    //  Policy is latest wins:
+    //    free the old entry's context and C-RNTI, then proceed with the new
+    //    request.
     auto itDup = m_handoversPending.find(ue->ueId);
     if (itDup != m_handoversPending.end())
     {
@@ -676,18 +690,19 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
     // generate new cRNTI for the UE in the target cell
     int newCrnti = m_crntiMgr.allocate();
 
-    // GUARD 4: C-RNTI pool exhausted (allocate() returns 0) → reject with
-    //  no-radio-resources.  (Previously unchecked: the context proceeded with
-    //  cRnti=0, which normalizeCrntiForRrc() would later remap to 1, colliding
-    //  with a legitimately-assigned C-RNTI.)
+    // Check for C-RNTI pool exhausted (allocate() returns 0, which is an invalid C-RNTI).
+    //   Reject handover request, cause is no radio resources.
     if (newCrnti == 0)
     {
         m_logger->err("UE[%ld] handleHandoverRequest: C-RNTI pool exhausted, rejecting handover", ue->ueId);
+        // TODO: Universal cause for NGAP and XN?
         rejectHandoverRequest(requestingTask, transactionId,
                               NgapCause::RadioNetwork_no_radio_resources_available_in_target_cell,
                               ASN_XNAP_Cause_PR_radioNetwork, ue);
         return;
     }
+
+    // assign new CRNTI to UE context
     ue->cRnti = newCrnti;
 
     if (requestingTask == ERequestingTask::XN)
@@ -766,12 +781,11 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
     int t304Ms = 1000; // default T304 value to include in the RRCReconfiguration
     auto targetContainer = makeTargetToSourceTransparentContainer(ue->ueId, ue->cRnti, t304Ms, rrcTxId);
 
-    // GUARD 5: container build failure → reject.  (Previously returned silently,
-    //  leaking the decoded context and the freshly-allocated C-RNTI — the helper
-    //  releases both.)
+    // check for container build failure
     if (!targetContainer)
     {
         m_logger->err("handleHandoverRequest: Failed to create target-to-source RRC Container for UE[%ld]", ue->ueId);
+        // TODO: correct cause for container build failure? Universal for NGAP and XNAP?
         rejectHandoverRequest(requestingTask, transactionId,
                               NgapCause::RadioNetwork_unspecified,
                               ASN_XNAP_Cause_PR_radioNetwork, ue);
@@ -789,13 +803,17 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
     };
 
 
-    // Send the HANDOVER_REQUEST_ACK back to the requester with the rrcContainer
     if (requestingTask == ERequestingTask::XN)
     {
 
-        // Prepare the target's core/user-plane state before advertising the
-        // RRC command to the source.  Copy the admitted list because Xn still
-        // owns the original list for construction of HandoverRequestAck.
+        // For XN handovers, we need to create an NGAP provisional context for the UE, as well as
+        //  create user plane context.  The XN_HANDOVER_PREPARE message to NGAP will cause NGAP task to handle both.
+        //  Note that we need to copy the admitted list because Xn still
+        //    owns the original list for construction of HandoverRequestAck.
+
+        // Note that this assumes that NGAP and GTP will be successful in creating the context (there is no error checking).
+        //  TODO: modify this logic so that we can handle NGAP/GTP failures and send a HandoverPreparationFailure back to the source gNB.
+        //     which may require a change from using NTP message to a direct function call to the NGAP/GTP tasks.
         auto core = std::make_unique<NmGnbRrcToNgap>(NmGnbRrcToNgap::XN_HANDOVER_PREPARE);
         core->ueId = ue->ueId;
         core->xnCoreContext = std::move(xnCoreContext);
@@ -1473,16 +1491,6 @@ std::unique_ptr<OctetString> GnbRrcTask::makeTargetToSourceTransparentContainer(
 
     return std::make_unique<OctetString>(std::move(encoded));
 }
-
-
-
-
-
-
-
-
-
-
 
 
 /**

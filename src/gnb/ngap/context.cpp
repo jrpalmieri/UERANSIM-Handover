@@ -140,12 +140,12 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
                 continue;
             }
 
-            auto *resource = new PduSessionResource(ue->ctxId, static_cast<int>(item->pDUSessionID));
-            resource->sNssai = ngap_utils::SnssaiFromAsn(item->s_NSSAI);
-            makeNgapPduSessionItems(resource, transfer);
+            PduSessionResource resource{ue->ctxId, static_cast<int>(item->pDUSessionID)};
+            resource.sNssai = ngap_utils::SnssaiFromAsn(item->s_NSSAI);
+            makeNgapPduSessionItems(&resource, transfer);
 
             // Instructs GTP to setup the UP Tunnel
-            m_logger->debug("UE[%ld] PDU Session Resource Setup sent to GTP psi=%d", ue->ctxId, resource->psi);
+            m_logger->debug("UE[%ld] PDU Session Resource Setup sent to GTP psi=%d", ue->ctxId, resource.psi);
             auto error = setupPduSessionResource(ue, resource);
 
             if (error.has_value())
@@ -163,21 +163,17 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
                 asn::Free(asn_DEF_ASN_NGAP_PDUSessionResourceSetupUnsuccessfulTransfer, tr);
 
                 auto *res = asn::New<ASN_NGAP_PDUSessionResourceFailedToSetupItemCxtRes>();
-                res->pDUSessionID = resource->psi;
+                res->pDUSessionID = resource.psi;
                 asn::SetOctetString(res->pDUSessionResourceSetupUnsuccessfulTransfer, encodedTr);
 
                 failedList.push_back(res);
             }
             else
             {
-
-                // add to the session list to be sent to RRC
-                sessionList->emplace_back(*resource);
-
                 // Create the response transfer for the successful PDU session setup
                 auto *tr = asn::New<ASN_NGAP_PDUSessionResourceSetupResponseTransfer>();
 
-                for (const auto &flow : resource->qosFlows)
+                for (const auto &flow : resource.qosFlows)
                 {
                     auto *associatedQosFlowItem = asn::New<ASN_NGAP_AssociatedQosFlowItem>();
                     associatedQosFlowItem->qosFlowIdentifier = flow.qfi;
@@ -187,8 +183,8 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
                 auto &upInfo = tr->dLQosFlowPerTNLInformation.uPTransportLayerInformation;
                 upInfo.present = ASN_NGAP_UPTransportLayerInformation_PR_gTPTunnel;
                 upInfo.choice.gTPTunnel = asn::New<ASN_NGAP_GTPTunnel>();
-                asn::SetBitString(upInfo.choice.gTPTunnel->transportLayerAddress, resource->downTunnel.address);
-                asn::SetOctetString4(upInfo.choice.gTPTunnel->gTP_TEID, (octet4)resource->downTunnel.teid);
+                asn::SetBitString(upInfo.choice.gTPTunnel->transportLayerAddress, resource.downTunnel.address);
+                asn::SetOctetString4(upInfo.choice.gTPTunnel->gTP_TEID, (octet4)resource.downTunnel.teid);
 
                 OctetString encodedTr =
                     ngap_encode::EncodeS(asn_DEF_ASN_NGAP_PDUSessionResourceSetupResponseTransfer, tr);
@@ -199,10 +195,14 @@ void NgapTask::receiveInitialContextSetup(int amfId, ASN_NGAP_InitialContextSetu
                 asn::Free(asn_DEF_ASN_NGAP_PDUSessionResourceSetupResponseTransfer, tr);
 
                 auto *res = asn::New<ASN_NGAP_PDUSessionResourceSetupItemCxtRes>();
-                res->pDUSessionID = resource->psi;
+                res->pDUSessionID = resource.psi;
                 asn::SetOctetString(res->pDUSessionResourceSetupResponseTransfer, encodedTr);
 
                 successList.push_back(res);
+
+                // Hand the session on to RRC. This is the last use of the resource, so it
+                // is moved rather than copied.
+                sessionList->emplace_back(std::move(resource));
             }
 
             asn::Free(asn_DEF_ASN_NGAP_PDUSessionResourceSetupRequestTransfer, transfer);

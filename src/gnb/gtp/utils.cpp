@@ -8,6 +8,8 @@
 
 #include "utils.hpp"
 
+#include <utility>
+
 #include <utils/common.hpp>
 
 namespace nr::gnb
@@ -17,8 +19,17 @@ PduSessionTree::PduSessionTree() : mapByDownTeid{}, mapByUeId{}
 {
 }
 
-// insert the mapping between the given UE ID, PDU session ID, and downlink TEID into the tree
-void PduSessionTree::insertSession(int64_t ueId, int psi, PduSessionResource &session)
+/**
+ * @brief Inserts the given session into the tree, indexed by UE ID, PDU session ID and
+ * downlink TEID. The tree takes ownership of the session, which is moved into place.
+ * On the duplicate TEID and duplicate PDU session paths nothing is inserted and the
+ * caller's session is left untouched.
+ *
+ * @param ueId the identity of the UE that owns the session
+ * @param psi the PDU session identity
+ * @param session the session resource to store, moved from on a successful insert
+ */
+void PduSessionTree::insertSession(int64_t ueId, int psi, PduSessionResource &&session)
 {
     UeSessionId usi = {ueId, psi};
 
@@ -36,7 +47,7 @@ void PduSessionTree::insertSession(int64_t ueId, int psi, PduSessionResource &se
     }
 
     mapByDownTeid[session.downTunnel.teid] = usi;
-    mapByUeId[ueId].emplace_back(session);
+    mapByUeId[ueId].emplace_back(std::move(session));
 }
 
 // returns the Ue Id and PDU session Id for a given downlink TEID (or null if not found)

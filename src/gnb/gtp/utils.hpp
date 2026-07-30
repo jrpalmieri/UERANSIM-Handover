@@ -53,7 +53,7 @@ class PduSessionTree
 
   public:
     PduSessionTree();
-    void insertSession(int64_t ueId, int psi, PduSessionResource &session);
+    void insertSession(int64_t ueId, int psi, PduSessionResource &&session);
     UeSessionId* findByDownTeid(uint32_t teid);
     uint64_t findBySessionId(int64_t ue, int psi);
     int getSession(int64_t ueId, int psi, PduSessionResource *&session);

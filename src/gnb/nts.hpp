@@ -49,10 +49,12 @@ struct NmGnbRlsToRrc : NtsMessage
     {
         SIGNAL_DETECTED,
         UPLINK_RRC,
+        RADIO_LINK_FAILURE,
     } present;
 
     // SIGNAL_DETECTED
     // UPLINK_RRC
+    // RADIO_LINK_FAILURE
     int64_t ueId{};
 
     // SIGNAL_DETECTED
@@ -343,7 +345,10 @@ struct NmGnbNgapToGtp : NtsMessage
     std::unique_ptr<GtpUeContextUpdate> update{};
 
     // SESSION_CREATE
-    PduSessionResource *resource{};
+    // The message owns the resource. The GTP task runs on its own thread and keeps the
+    // session past the end of the request that created it, so it is given an independent
+    // copy rather than a borrowed pointer into the sender's storage.
+    std::unique_ptr<PduSessionResource> resource{};
 
     // UE_CONTEXT_RELEASE_RECEIVED
     // SESSION_RELEASE

@@ -15,6 +15,7 @@
 #include <utils/common.hpp>
 #include <utils/constants.hpp>
 
+#include <arpa/inet.h>
 #include <cstdio>
 #include <string>
 
@@ -22,7 +23,14 @@ namespace {
 
 struct TunPacketInfo
 {
+    enum class IpVersion
+    {
+        IPV4,
+        IPV6,
+    };
+
     bool valid{false};
+    IpVersion ipVersion{IpVersion::IPV4};
     std::string srcIp;
     std::string dstIp;
     std::string proto;
@@ -30,38 +38,81 @@ struct TunPacketInfo
     uint16_t dstPort{0};
 };
 
+
+/**
+ * Parses a TUN packet and extracts its information (for purposes of logging).
+ *
+ * Expects an IPv4 or IPv6 packet encoded into an OctetString. If the packet is
+ * not valid, the returned TunPacketInfo will have valid=false.
+ *
+ * @param data The raw packet data.
+ * @return A TunPacketInfo struct containing the parsed information.
+ */
 static TunPacketInfo ParseTunPacket(const OctetString &data)
 {
     TunPacketInfo info;
     const uint8_t *p = data.data();
     int len = data.length();
 
-    if (len < 20 || (p[0] >> 4) != 4)
+    if (len < 1)
         return info;
 
-    int ihl = (p[0] & 0x0F) * 4;
-    if (len < ihl)
+    int headerLength;
+    uint8_t proto;
+    uint8_t version = p[0] >> 4;
+    char srcBuf[INET6_ADDRSTRLEN];
+    char dstBuf[INET6_ADDRSTRLEN];
+
+    if (version == 4)
+    {
+        if (len < 20)
+            return info;
+
+        headerLength = (p[0] & 0x0F) * 4;
+        if (headerLength < 20 || len < headerLength)
+            return info;
+
+        if (inet_ntop(AF_INET, p + 12, srcBuf, sizeof(srcBuf)) == nullptr ||
+            inet_ntop(AF_INET, p + 16, dstBuf, sizeof(dstBuf)) == nullptr)
+            return info;
+
+        info.ipVersion = TunPacketInfo::IpVersion::IPV4;
+        proto = p[9];
+    }
+    else if (version == 6)
+    {
+        if (len < 40)
+            return info;
+
+        headerLength = 40;
+        if (inet_ntop(AF_INET6, p + 8, srcBuf, sizeof(srcBuf)) == nullptr ||
+            inet_ntop(AF_INET6, p + 24, dstBuf, sizeof(dstBuf)) == nullptr)
+            return info;
+
+        info.ipVersion = TunPacketInfo::IpVersion::IPV6;
+        proto = p[6];
+    }
+    else
+    {
         return info;
+    }
 
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%u.%u.%u.%u", p[12], p[13], p[14], p[15]);
-    info.srcIp = buf;
-    snprintf(buf, sizeof(buf), "%u.%u.%u.%u", p[16], p[17], p[18], p[19]);
-    info.dstIp = buf;
+    info.srcIp = srcBuf;
+    info.dstIp = dstBuf;
 
-    uint8_t proto = p[9];
     switch (proto)
     {
     case 1:  info.proto = "ICMP"; break;
     case 6:  info.proto = "TCP";  break;
     case 17: info.proto = "UDP";  break;
+    case 58: info.proto = "ICMPv6"; break;
     default: { char pb[12]; snprintf(pb, sizeof(pb), "IP(%u)", proto); info.proto = pb; break; }
     }
 
-    if ((proto == 6 || proto == 17) && len >= ihl + 4)
+    if ((proto == 6 || proto == 17) && len >= headerLength + 4)
     {
-        info.srcPort = static_cast<uint16_t>((p[ihl] << 8) | p[ihl + 1]);
-        info.dstPort = static_cast<uint16_t>((p[ihl + 2] << 8) | p[ihl + 3]);
+        info.srcPort = static_cast<uint16_t>((p[headerLength] << 8) | p[headerLength + 1]);
+        info.dstPort = static_cast<uint16_t>((p[headerLength + 2] << 8) | p[headerLength + 3]);
     }
 
     info.valid = true;
@@ -72,11 +123,14 @@ static std::string FormatPacketDesc(const TunPacketInfo &pkt)
 {
     if (!pkt.valid)
         return "?";
-    char buf[72];
+    char buf[128];
     if (pkt.srcPort == 0 && pkt.dstPort == 0)
-        snprintf(buf, sizeof(buf), "%s %s->%s", pkt.proto.c_str(), pkt.srcIp.c_str(), pkt.dstIp.c_str());
+        snprintf(buf, sizeof(buf), "%s: %s %s->%s", pkt.ipVersion == TunPacketInfo::IpVersion::IPV4 ? "IPv4" : "IPv6", pkt.proto.c_str(), pkt.srcIp.c_str(), pkt.dstIp.c_str());
+    else if (pkt.ipVersion == TunPacketInfo::IpVersion::IPV6)
+        snprintf(buf, sizeof(buf), "IPv6: %s [%s]:%u->[%s]:%u", pkt.proto.c_str(), pkt.srcIp.c_str(), pkt.srcPort,
+                 pkt.dstIp.c_str(), pkt.dstPort);
     else
-        snprintf(buf, sizeof(buf), "%s %s:%u->%s:%u", pkt.proto.c_str(), pkt.srcIp.c_str(), pkt.srcPort,
+        snprintf(buf, sizeof(buf), "IPv4: %s %s:%u->%s:%u", pkt.proto.c_str(), pkt.srcIp.c_str(), pkt.srcPort,
                  pkt.dstIp.c_str(), pkt.dstPort);
     return buf;
 }

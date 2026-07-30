@@ -28,3 +28,12 @@ by name). Running it without changing an input leaves the tree byte-identical, s
 `git status src/asn` after a run is how you check the code really matches the definitions.
 The compiler is a fork pinned by commit in that script. See `asn1-definitions/README.md`
 for the toolchain and `docs/ASN1_R18_Migration_Plan.md` for why the tree is the way it is.
+
+## comment content
+
+Each function should include a comment block in /**/ format.  The function comments should
+use the "@brief" tag to describe the operation of the function, and the "@param" tags to 
+describe the parameters passed.  
+
+Use normal English in comments, not developer slang.  Developer slang can be ambiguous as to
+meaning.

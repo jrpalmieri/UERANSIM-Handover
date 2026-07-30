@@ -216,11 +216,10 @@ void RlsControlTask::handleRlsMessage(NmGnbRlsToRls &w)
 
         if (m.pduType == rls::EPduType::DATA)
         {
-            // On the source gNB this is the simulated PDCP UL receive COUNT.
-            // Keep the next expected value so Xn SN Status Transfer can align
-            // the target with the UE's continuing uplink sequence.
+            // Find the Data Radio Bearer in the UE context.  If it doesn't exist, log a warning and drop the packet.
+            //  Note: DRBs are stored in teh UE context with bit 6 set (e.g. 0x41 is DRB 1).  So we need to set bit 6 in the comparison to find the correct DRB.
             auto bearer = std::find_if(ctx->radioBearers.begin(), ctx->radioBearers.end(),
-                [&m](const RadioBearer &b) { return b.bearerId == (m.radioBearer & 0x7f); });
+                [&m](const RadioBearer &b) { return b.bearerId == ( (m.radioBearer & 0x3f) | 0x40); });
             if (bearer != ctx->radioBearers.end())
             {
                 const uint32_t nextCount = NextPdcpCount(m.pduId);
@@ -238,7 +237,7 @@ void RlsControlTask::handleRlsMessage(NmGnbRlsToRls &w)
             out->psi  = static_cast<int>(m.payloadType);
             out->data = std::move(m.pdu);
             m_mainTask->push(std::move(out));
-            m_logger->debug("UE[%ld]: received uplink data. Psi=%d, PduId=%u, RB=%02x, QFI=%d, AckPdu=%s", ueId, m.payloadType, m.pduId, m.radioBearer & 0x7f, m.sdapByte & 0x3f, m.ackPdu ? "true" : "false");
+            m_logger->debug("UE[%ld]: received uplink data. PDU Session (PayloadType)=%d, PduId=%u, RB=0x%02x, QFI=%d, AckPdu=%s", ueId, m.payloadType, m.pduId, m.radioBearer & 0x7f, m.sdapByte & 0x3f, m.ackPdu ? "true" : "false");
         }
         else if (m.pduType == rls::EPduType::RRC)
         {
@@ -249,12 +248,12 @@ void RlsControlTask::handleRlsMessage(NmGnbRlsToRls &w)
             out->rrcChannel = static_cast<rrc::RrcChannel>(m.payloadType);
             out->data       = std::move(m.pdu);
             m_mainTask->push(std::move(out));
-            m_logger->debug("UE[%ld]: received uplink RRC. Channel=%d, PduId=%u, RB=%02x, QFI=%d, AckPdu=%s", ueId, m.payloadType, m.pduId, m.radioBearer & 0x7f, m.sdapByte & 0x3f, m.ackPdu ? "true" : "false");
+            m_logger->debug("UE[%ld]: received uplink RRC. RRC channel (PayloadType)=%d, PduId=%u, RB=0x%02x, QFI=%d, AckPdu=%s", ueId, m.payloadType, m.pduId, m.radioBearer & 0x7f, m.sdapByte & 0x3f, m.ackPdu ? "true" : "false");
 
         }
         else
         {
-            m_logger->debug("UE[%ld]: received uplink UNKNOWN PDU. PayloadType=%d, PduId=%u, RB=%02x, QFI=%d, AckPdu=%s", ueId, m.payloadType, m.pduId, m.radioBearer & 0x7f, m.sdapByte & 0x3f, m.ackPdu ? "true" : "false");
+            m_logger->debug("UE[%ld]: received uplink UNKNOWN PDU. PayloadType=%d, PduId=%u, RB=0x%02x, QFI=%d, AckPdu=%s", ueId, m.payloadType, m.pduId, m.radioBearer & 0x7f, m.sdapByte & 0x3f, m.ackPdu ? "true" : "false");
         }
     }
     else
@@ -575,7 +574,7 @@ void RlsControlTask::handleRemoveUeContext(int64_t ueId)
     std::unique_lock<std::shared_mutex> lock(m_ueCtxMutex);
     deleteRlsUeContext(ueId);
     m_deferredSnStatus.erase(ueId);
-    m_logger->info("UE[%ld] provisional target RLS context removed", ueId);
+    m_logger->info("UE[%ld]: RLS context removed", ueId);
 }
 
 

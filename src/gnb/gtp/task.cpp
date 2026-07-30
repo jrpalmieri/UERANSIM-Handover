@@ -132,7 +132,7 @@ void GtpTask::onLoop()
             break;
         }
         case NmGnbNgapToGtp::SESSION_CREATE: {
-            handleSessionCreate(w.resource);
+            handleSessionCreate(std::move(w.resource));
             break;
         }
         case NmGnbNgapToGtp::SESSION_RELEASE: {
@@ -206,24 +206,40 @@ void GtpTask::handleUeContextUpdate(const GtpUeContextUpdate &msg)
     m_logger->debug("UE[%ld]: Context updated. AMBR: UL=%lu bps, DL=%lu bps", ue->ueId, ue->ueAmbr.ulAmbr, ue->ueAmbr.dlAmbr);
 }
 
-void GtpTask::handleSessionCreate(PduSessionResource *session)
+/**
+ * @brief Stores a PDU session resource handed over by the NGAP task and refreshes the rate
+ * limiter for the UE and the session. The task takes ownership of the resource and moves it
+ * into the session tree.
+ *
+ * @param session the session resource to store, owned by this task
+ */
+void GtpTask::handleSessionCreate(std::unique_ptr<PduSessionResource> session)
 {
     if (!m_ueContexts.count(session->ueId))
     {
         m_logger->err("UE[%ld] PDU session resource could not be created, UE context not found", session->ueId);
         return;
     }
-    
-    m_sessionTree.insertSession(session->ueId, session->psi, *session);
 
-    updateAmbrForUe(session->ueId);
-    updateAmbrForSession(session->ueId, session->psi);
+    // Capture what the log line needs before the resource is moved into the tree.
+    // The logger is a printf style variadic, so the S-NSSAI SD has to be rendered into a
+    // named std::string first. Passing the temporary directly would push a non-trivially
+    // copyable object through the "..." parameter list, which is undefined behavior.
+    const int64_t ueId = session->ueId;
+    const int psi = session->psi;
+    const int sst = (int)session->sNssai.sst;
+    const uint32_t downTeid = session->downTunnel.teid;
+    const uint32_t upTeid = session->upTunnel.teid;
+    const std::string sdText =
+        session->sNssai.sd.has_value() ? std::to_string((uint32_t)session->sNssai.sd.value()) : std::string{"none"};
 
-    m_logger->debug("UE[%ld]: PDU session resource created. PSI[%d], sNssai SST=%d SD=%s, DownTunnelId=%d, UpTunnelId=%d",
-        session->ueId, session->psi,
-        (int)session->sNssai.sst,
-        session->sNssai.sd.has_value() ? std::to_string((int)(uint32_t)session->sNssai.sd.value()) : "none",
-        session->downTunnel.teid, session->upTunnel.teid);
+    m_sessionTree.insertSession(ueId, psi, std::move(*session));
+
+    updateAmbrForUe(ueId);
+    updateAmbrForSession(ueId, psi);
+
+    m_logger->debug("UE[%ld]: PDU session resource created. PSI[%d], sNssai SST=%d SD=%s, DownTunnelId=%u, UpTunnelId=%u",
+        ueId, psi, sst, sdText.c_str(), downTeid, upTeid);
 
 }
 
