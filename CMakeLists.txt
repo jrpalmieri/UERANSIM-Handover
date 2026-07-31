@@ -95,7 +95,7 @@ if(BUILD_UNIT_TESTS)
     target_link_libraries(rrc_reference_location_tests common-lib)
 
     # Round trip of the custom source-to-target handover container, which carries the
-    # UE's RRC context between the two gNBs. See src/gnb/handover_container.hpp.
+    # UE's RRC context between the two gNBs. See src/gnb/rrc/handover_container.hpp.
     add_executable(handover_container_tests tests/handover_container_tests.cpp)
     target_compile_options(handover_container_tests PRIVATE -Wall -Wextra -pedantic)
     target_link_libraries(handover_container_tests gnb)

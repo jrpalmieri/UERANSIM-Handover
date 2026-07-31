@@ -14,7 +14,7 @@
 //   prioritizeNeighbors()             – rank CHO target candidates (satellite-aware)
 //   makeTargetToSourceTransparentContainer() / makeSourceToTargetTransparentContainerSimulated()
 //   ho_container::EncodeRrcContext() / ho_container::DecodeRrcContext() – custom
-//       transparent-container payload (declared in gnb/handover_container.hpp, which
+//       transparent-container payload (declared in rrc/handover_container.hpp, which
 //       owns the framing that wraps it)
 //   createHandoverPreparationInformation() – standards-based HandoverPreparationInformation encode
 //
@@ -22,9 +22,9 @@
 //  RRCReconfigurationComplete handling lives in reconfiguration.cpp.)
 //
 
+#include "handover_container.hpp"
 #include "task.hpp"
 
-#include <gnb/handover_container.hpp>
 #include <gnb/neighbors.hpp>
 #include <gnb/ngap/task.hpp>
 #include <gnb/xn/task.hpp>
@@ -654,12 +654,14 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
     {
         ue = ho_container::DecodeRrcContext(innerContext);
 
-        // The source stamps the CHO indication into the container itself, so it survives
-        // interfaces that carry no CHO IE of their own.
+        // The CHO indication carried in the container is informational on the N2 path:
+        // conditional handover is not supported there, so the request is admitted as a
+        // classic handover regardless.  Only the requesting interface decides the mode.
         if (containerChoIndication && !isCho)
         {
-            m_logger->debug("handleHandoverRequest: CHO indicated by container (transactionId=%u)", transactionId);
-            isCho = true;
+            m_logger->warn("handleHandoverRequest: container indicates CHO but %s signalled a classic handover; "
+                           "preparing as classic (transactionId=%u)",
+                           requestingTask == ERequestingTask::XN ? "Xn" : "N2", transactionId);
         }
     }
     else

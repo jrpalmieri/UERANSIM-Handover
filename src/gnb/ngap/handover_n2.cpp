@@ -14,10 +14,8 @@
 #include "utils.hpp"
 
 #include <gnb/gtp/task.hpp>
-#include <gnb/handover_container.hpp>
 #include <gnb/neighbors.hpp>
 #include <gnb/rrc/task.hpp>
-#include <lib/rrc/encode.hpp>
 #include <utils/common.hpp>
 
 #include <asn/ngap/ASN_NGAP_Cause.h>
@@ -67,22 +65,8 @@
 #include <asn/ngap/ASN_NGAP_UserLocationInformationNR.h>
 #include <asn/ngap/ASN_NGAP_NR-CGI.h>
 
-#include <asn/rrc/ASN_RRC_AS-Context.h>
-#include <asn/rrc/ASN_RRC_AS-Config.h>
-#include <asn/rrc/ASN_RRC_DL-DCCH-Message.h>
-#include <asn/rrc/ASN_RRC_HandoverPreparationInformation-IEs.h>
-#include <asn/rrc/ASN_RRC_HandoverPreparationInformation.h>
-#include <asn/rrc/ASN_RRC_MeasConfig.h>
-#include <asn/rrc/ASN_RRC_MeasIdToAddMod.h>
-#include <asn/rrc/ASN_RRC_MeasIdToAddModList.h>
-#include <asn/rrc/ASN_RRC_RRCReconfiguration-IEs.h>
-#include <asn/rrc/ASN_RRC_RRCReconfiguration.h>
-#include <asn/rrc/ASN_RRC_RRCReconfiguration-v1530-IEs.h>
-#include <asn/rrc/ASN_RRC_CellGroupConfig.h>
-#include <asn/rrc/ASN_RRC_SpCellConfig.h>
-#include <asn/rrc/ASN_RRC_ReconfigurationWithSync.h>
-#include <asn/rrc/ASN_RRC_ServingCellConfigCommon.h>
-#include <asn/rrc/ASN_RRC_ReestablishmentInfo.h>
+// No asn/rrc includes: NGAP does not build, decode or inspect RRC messages.  The RRC
+// containers it carries are opaque byte strings handed to and from the RRC task.
 
 #include <optional>
 
@@ -91,115 +75,16 @@ const int HANDOVER_TIMEOUT_MS = 5000;
 namespace nr::gnb
 {
 
-static constexpr uint32_t CUSTOM_S2T_MAGIC = 0x53325443; // "S2TC"
-static constexpr uint8_t CUSTOM_S2T_VERSION = 1;
-static constexpr uint32_t CUSTOM_S2T_DEFAULT_BLOB_SIZE = 0;
-static constexpr uint32_t CUSTOM_T2S_MAGIC = 0x54325343; // "T2SC"
-static constexpr uint8_t CUSTOM_T2S_VERSION = 1;
-static constexpr uint32_t CUSTOM_T2S_DEFAULT_BLOB_SIZE = 0;
-static constexpr uint8_t CUSTOM_S2T_FLAG_CHO_INDICATION = 0x01;
+// The layout of the transparent containers (magic, version, flags, lengths) is not
+// declared here on purpose: those containers belong to the two gNBs' RRC layers and are
+// opaque byte strings to NGAP.  See gnb/rrc/handover_container.hpp.
+
 // Must stay aligned with (or exceed) the RRC layer's COND_HANDOVER_TIMEOUT_MS
 // (rrc/handover.cpp, 100 s): both pending maps guard the same CHO preparation,
 // and NGAP expiring first would strand a still-valid RRC candidate — its
 // eventual HandoverNotify would find no NGAP context to promote.
 static constexpr int CHO_CANDIDATE_TIMEOUT_MS = 100000;
 
-
-// struct CustomS2tTransparentContainer
-// {
-//     OctetString rrcContext{};
-//     OctetString ngapContext{};
-//     OctetString gtpContext{};
-//     OctetString blob{};
-
-//     int64_t sourceUeId{-1};
-//     int64_t sourceAmfUeNgapId{-1};
-//     int64_t sourceRanUeNgapId{-1};
-//     int sourceAssociatedAmfId{-1};
-//     int sourceUplinkStream{0};
-//     int sourceDownlinkStream{0};
-//     AggregateMaximumBitRate sourceUeAmbr{};
-//     HandoverPreparationInfo handoverPreparation{};
-//     bool choIndication{};
-// };
-
-
-
-
-// static OctetString EncodeCustomNgapContext(const NgapUeContext &ue, int64_t sourceUeId)
-// {
-//     OctetString ngapContext{};
-//     ngapContext.appendOctet8(sourceUeId);
-//     ngapContext.appendOctet8(ue.amfUeNgapId);
-//     ngapContext.appendOctet8(ue.ranUeNgapId);
-//     ngapContext.appendOctet4(ue.associatedAmfId);
-//     ngapContext.appendOctet4(ue.uplinkStream);
-//     ngapContext.appendOctet4(ue.downlinkStream);
-//     return ngapContext;
-// }
-
-// static OctetString EncodeCustomGtpContext(const NgapUeContext &ue)
-// {
-//     OctetString gtpContext{};
-//     gtpContext.appendOctet8(ue.ueAmbr.dlAmbr);
-//     gtpContext.appendOctet8(ue.ueAmbr.ulAmbr);
-//     return gtpContext;
-// }
-
-// static bool DecodeCustomNgapContext(const OctetString &ngapContext, CustomS2tTransparentContainer &decoded)
-// {
-//     // sourceUeId(8) + amfUeNgapId(8) + ranUeNgapId(8) + amfId(4) + ulStream(4) + dlStream(4)
-//     if (ngapContext.length() < 36)
-//         return false;
-
-//     decoded.sourceUeId = static_cast<int64_t>(ngapContext.get8UL(0));
-//     decoded.sourceAmfUeNgapId = static_cast<int64_t>(ngapContext.get8UL(8));
-//     decoded.sourceRanUeNgapId = static_cast<int64_t>(ngapContext.get8UL(16));
-//     decoded.sourceAssociatedAmfId = static_cast<int>(ngapContext.get4UI(24));
-//     decoded.sourceUplinkStream = static_cast<int>(ngapContext.get4UI(28));
-//     decoded.sourceDownlinkStream = static_cast<int>(ngapContext.get4UI(32));
-//     return true;
-// }
-
-// static bool DecodeCustomGtpContext(const OctetString &gtpContext, CustomS2tTransparentContainer &decoded)
-// {
-//     // dlAmbr(8) + ulAmbr(8)
-//     if (gtpContext.length() < 16)
-//         return false;
-
-//     decoded.sourceUeAmbr.dlAmbr = gtpContext.get8UL(0);
-//     decoded.sourceUeAmbr.ulAmbr = gtpContext.get8UL(8);
-//     return true;
-// }
-
-
-// static std::optional<OctetString> DecodeTargetToSourceTransparentContainer(const OctetString &encoded)
-// {
-//     // magic(4) + version(1) + flags(1) + reserved(2) + rrcLen(4) + ngapLen(4) + gtpLen(4) + blobLen(4)
-//     if (encoded.length() < 24)
-//         return std::nullopt;
-
-//     uint32_t magic = encoded.get4UI(0);
-//     uint8_t version = static_cast<uint8_t>(encoded.getI(4));
-//     if (magic != CUSTOM_T2S_MAGIC || version != CUSTOM_T2S_VERSION)
-//         return std::nullopt;
-
-//     uint32_t rrcLen = encoded.get4UI(8);
-//     uint32_t ngapLen = encoded.get4UI(12);
-//     uint32_t gtpLen = encoded.get4UI(16);
-//     uint32_t blobLen = encoded.get4UI(20);
-
-//     uint64_t payloadLen = static_cast<uint64_t>(rrcLen) + static_cast<uint64_t>(ngapLen) +
-//                           static_cast<uint64_t>(gtpLen) + static_cast<uint64_t>(blobLen);
-//     uint64_t expectedTotalLen = 24ull + payloadLen;
-//     if (expectedTotalLen != static_cast<uint64_t>(encoded.length()))
-//         return std::nullopt;
-
-//     if (rrcLen == 0)
-//         return std::nullopt;
-
-//     return encoded.subCopy(24, static_cast<int>(rrcLen));
-// }
 
 static OctetString MakeHoSetupUnsuccessfulTransfer(NgapCause cause)
 {
@@ -245,129 +130,8 @@ static OctetString MakeHoRequiredTransfer()
     return encoded;
 }
 
-// static OctetString MakeRrcHandoverPreparationInformation(int64_t sourceNci,
-//                                                          const HandoverPreparationInfo &handoverPrep)
-// {
-//     auto *msg = asn::New<ASN_RRC_HandoverPreparationInformation>();
-//     msg->criticalExtensions.present = ASN_RRC_HandoverPreparationInformation__criticalExtensions_PR_c1;
-//     msg->criticalExtensions.choice.c1 = asn::NewFor(msg->criticalExtensions.choice.c1);
-//     msg->criticalExtensions.choice.c1->present =
-//         ASN_RRC_HandoverPreparationInformation__criticalExtensions__c1_PR_handoverPreparationInformation;
-
-//     auto &ies = msg->criticalExtensions.choice.c1->choice.handoverPreparationInformation =
-//         asn::New<ASN_RRC_HandoverPreparationInformation_IEs>();
-
-//     ies->as_Context = asn::New<ASN_RRC_AS_Context>();
-//     ies->as_Context->reestablishmentInfo = asn::New<ASN_RRC_ReestablishmentInfo>();
-//     ies->as_Context->reestablishmentInfo->sourcePhysCellId = static_cast<long>(sourceNci);
-//     asn::SetBitStringInt<16>(0, ies->as_Context->reestablishmentInfo->targetCellShortMAC_I);
-
-//     OctetString reconfig = EncodeRrcReconfigurationMeasIds(handoverPrep);
-//     if (reconfig.length() > 0)
-//     {
-//         ies->sourceConfig = asn::New<ASN_RRC_AS_Config>();
-//         asn::SetOctetString(ies->sourceConfig->rrcReconfiguration, reconfig);
-//     }
-
-//     OctetString encoded = rrc::encode::EncodeS(asn_DEF_ASN_RRC_HandoverPreparationInformation, msg);
-//     asn::Free(asn_DEF_ASN_RRC_HandoverPreparationInformation, msg);
-//     return encoded;
-// }
 
 
-/**
- * @brief Logs the contents of a SourceToTarget transparent container.
- * 
- * @param logger The logger to use for output
- * @param container The transparent container to log
- */
-// static void LogRrcHandoverPreparationInformation(Logger &logger, const OctetString &rrcContext,
-//                                                  HandoverPreparationInfo *handoverPrep)
-// {
-//     auto *msg = rrc::encode::Decode<ASN_RRC_HandoverPreparationInformation>(
-//         asn_DEF_ASN_RRC_HandoverPreparationInformation, rrcContext);
-//     if (!msg)
-//     {
-//         logger.warn("Custom SourceToTarget RRC context decode failed as HandoverPreparationInformation");
-//         return;
-//     }
-
-//     auto *c1 = msg->criticalExtensions.choice.c1;
-//     bool isHpi = msg->criticalExtensions.present == ASN_RRC_HandoverPreparationInformation__criticalExtensions_PR_c1 &&
-//                  c1 != nullptr &&
-//                  c1->present ==
-//                      ASN_RRC_HandoverPreparationInformation__criticalExtensions__c1_PR_handoverPreparationInformation &&
-//                  c1->choice.handoverPreparationInformation != nullptr;
-
-//     if (!isHpi)
-//     {
-//         logger.warn("SourceToTarget container decoded but did not contain handoverPreparationInformation");
-//         asn::Free(asn_DEF_ASN_RRC_HandoverPreparationInformation, msg);
-//         return;
-//     }
-
-//     auto *ies = c1->choice.handoverPreparationInformation;
-//     long sourcePhysCellId = -1;
-//     int targetShortMac = -1;
-
-//     if (ies->as_Context != nullptr && ies->as_Context->reestablishmentInfo != nullptr)
-//     {
-//         sourcePhysCellId = ies->as_Context->reestablishmentInfo->sourcePhysCellId;
-//         targetShortMac = asn::GetBitStringInt<16>(ies->as_Context->reestablishmentInfo->targetCellShortMAC_I);
-//     }
-
-//     logger.info("Decoded SourceToTarget container: ueCapCount=%d sourceConfig=%s rrmConfig=%s "
-//                 "asContext=%s sourcePhysCellId=%ld targetShortMac=0x%04x",
-//                 ies->ue_CapabilityRAT_List.list.count,
-//                 ies->sourceConfig != nullptr ? "present" : "notPresent",
-//                 ies->rrm_Config != nullptr ? "present" : "notPresent",
-//                 ies->as_Context != nullptr ? "present" : "notPresent",
-//                 sourcePhysCellId,
-//                 targetShortMac >= 0 ? targetShortMac : 0);
-
-//     if (handoverPrep != nullptr && ies->sourceConfig != nullptr)
-//     {
-//         OctetString encodedReconfig = asn::GetOctetString(ies->sourceConfig->rrcReconfiguration);
-//         handoverPrep->measIdentities = DecodeRrcReconfigurationMeasIds(encodedReconfig);
-//         logger.info("Decoded %zu measurement identities from handoverPreparationInformation",
-//                     handoverPrep->measIdentities.size());
-//     }
-
-//     asn::Free(asn_DEF_ASN_RRC_HandoverPreparationInformation, msg);
-// }
-
-// static bool LogAndDecodeCustomSourceToTargetTransparentContainer(Logger &logger, const OCTET_STRING_t &container,
-//                                                                  CustomS2tTransparentContainer &decoded)
-// {
-//     auto sourceToTarget = asn::GetOctetString(container);
-//     auto maybeDecoded = DecodeCustomSourceToTargetTransparentContainer(sourceToTarget);
-//     if (!maybeDecoded.has_value())
-//     {
-//         logger.warn("Custom SourceToTarget transparent container decode failed");
-//         return false;
-//     }
-
-//     decoded = std::move(*maybeDecoded);
-//     logger.info("Decoded custom SourceToTarget container: sourceUeId=%ld amfUeNgapId=%ld ranUeNgapId=%ld "
-//                 "amfId=%d ulStream=%d dlStream=%d dlAmbr=%lu ulAmbr=%lu cho=%d rrc=%dB ngap=%dB gtp=%dB "
-//                 "blob=%dB",
-//                 decoded.sourceUeId,
-//                 decoded.sourceAmfUeNgapId,
-//                 decoded.sourceRanUeNgapId,
-//                 decoded.sourceAssociatedAmfId,
-//                 decoded.sourceUplinkStream,
-//                 decoded.sourceDownlinkStream,
-//                 static_cast<unsigned long>(decoded.sourceUeAmbr.dlAmbr),
-//                 static_cast<unsigned long>(decoded.sourceUeAmbr.ulAmbr),
-//                 decoded.choIndication ? 1 : 0,
-//                 decoded.rrcContext.length(),
-//                 decoded.ngapContext.length(),
-//                 decoded.gtpContext.length(),
-//                 decoded.blob.length());
-
-//     LogRrcHandoverPreparationInformation(logger, decoded.rrcContext, &decoded.handoverPreparation);
-//     return true;
-// }
 
 void NgapTask::sendHandoverFailure(NgapCause cause, int64_t ueId) 
 {
@@ -823,12 +587,13 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg, 
                    "s2tContainer=%zuB pduSessionCount=%d", transactionId,
                    amfId, amfUeNgapId, hoType, sourceToTargetSize, requestedPsCount);
 
-    // Unwrap the NGAP layer of the source-to-target container.  The AMF relays the source's
+    // Peel off the NGAP layer of the source-to-target container.  The AMF relays the source's
     // SourceToTarget-TransparentContainer verbatim; it is an APER-encoded
-    // SourceNGRANNode-ToTargetNGRANNode-TransparentContainer whose rRCContainer IE carries the
-    // simulator's custom RRC-context blob (GnbRrcTask::makeSourceToTargetTransparentContainerSimulated).
-    // RRC decodes the blob and nothing else, so the NGAP framing has to come off here — passing
-    // the whole APER container on left the target unable to recover the source's RRC context.
+    // SourceNGRANNode-ToTargetNGRANNode-TransparentContainer, an NGAP IE that NGAP owns and so
+    // decodes here.  Its rRCContainer field is an opaque byte string belonging to the peer
+    // gNB's RRC layer: it is passed to the RRC task untouched and is never inspected here.
+    // (Handing on the whole APER container instead left the target unable to recover the
+    // source's RRC context.)
     OctetString sourceRrcContext{};
     {
         auto *s2tContainer = ngap_encode::Decode<ASN_NGAP_SourceNGRANNode_ToTargetNGRANNode_TransparentContainer>(
@@ -856,17 +621,11 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg, 
         return;
     }
 
-    // NGAP has no CHO IE of its own in this build, so the conditional-handover indication is
-    // read from the flags of the container the source RRC framed (RRC reads it again for its
-    // own state; NGAP needs it here to pick the candidate timeout below).
+    // NGAP has no CHO IE of its own in Release 18, so the conditional-handover indication is
+    // always false: conditional handover is not supported on the N2 path, and every N2
+    // HandoverRequest is prepared here as a classic handover.  The peer RRC's container is
+    // not an alternative source for this - it is not NGAP's to open.
     bool isCho = false;
-    if (!ho_container::UnwrapSourceToTarget(sourceRrcContext, nullptr, &isCho))
-    {
-        m_logger->warn("receiveHandoverRequest: NGTxId[%d]: rRCContainer (%dB) is not a recognized source-to-target "
-                       "container; leaving the handover decode to RRC",
-                       transactionId, sourceRrcContext.length());
-    }
-
 
     /* create a new provisional NGAP UE context */
 

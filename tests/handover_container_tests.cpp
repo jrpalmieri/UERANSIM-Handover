@@ -1,13 +1,13 @@
 //
 // Round-trip tests for the simulator's custom source-to-target handover container
-// (gnb/handover_container.hpp + the payload codec in gnb/rrc/handover.cpp).
+// (gnb/rrc/handover_container.hpp + the payload codec in gnb/rrc/handover.cpp).
 //
 // The container is what carries the UE's RRC context from the source gNB to the
 // target, so a silent asymmetry between the encoder and the decoder shows up only as
 // a target-side handover rejection.  These tests pin the round trip down directly.
 //
 
-#include <gnb/handover_container.hpp>
+#include <gnb/rrc/handover_container.hpp>
 #include <gnb/types.hpp>
 
 #include <iostream>

@@ -1,13 +1,16 @@
 //
 // Wire format of the simulator's custom source-to-target handover container.
 //
-// The container is opaque to every node between the two gNBs (AMF on N2, nothing
-// on Xn), so instead of a standards-compliant HandoverPreparationInformation the
-// simulator carries a flat serialization of the source's RrcUeContext.  RRC owns
-// the payload codec (EncodeRrcContext / DecodeRrcContext, defined in
-// gnb/rrc/handover.cpp); this header owns the framing and declares both, because the
-// NGAP task has to recognize the frame too — it needs the CHO indication before
-// the payload ever reaches RRC.
+// RRC-internal: this header belongs to the gNB RRC task and nothing outside it may
+// include it.  The container is opaque to every node between the two gNBs (the AMF
+// on N2, nothing on Xn), and it is equally opaque to this gNB's own NGAP and Xn
+// tasks — they carry the byte string from the source RRC to the target RRC without
+// looking inside it, exactly as the real interfaces do.
+//
+// Instead of a standards-compliant HandoverPreparationInformation the simulator
+// carries a flat serialization of the source's RrcUeContext.  The payload codec
+// (EncodeRrcContext / DecodeRrcContext) is defined in gnb/rrc/handover.cpp; the
+// framing around it lives here so the two halves of the format stay together.
 //
 // Layout:
 //   0..3    magic "S2TC"
@@ -58,7 +61,7 @@ inline constexpr int S2T_HEADER_SIZE = 16;
 /**
  * @brief Frames an encoded RRC context payload as a source-to-target container.
  *
- * @param rrcContext    the RRC context payload (EncodeCustomRrcContext output)
+ * @param rrcContext    the RRC context payload (EncodeRrcContext output)
  * @param blobSize      bytes of zero padding to append, to simulate a larger real payload
  * @param choIndication true if this container prepares a conditional handover
  */
@@ -79,8 +82,8 @@ inline OctetString WrapSourceToTarget(const OctetString &rrcContext, uint32_t bl
 /**
  * @brief Inverse of WrapSourceToTarget(): validates the frame and yields the payload.
  *
- * Both outputs are optional, so a peer that only needs the CHO indication (NGAP)
- * can pass nullptr for the payload.
+ * Both outputs are optional; a caller that only needs one of them passes nullptr
+ * for the other.
  *
  * @param container        the received container
  * @param rrcContextOut    receives the RRC context payload, may be nullptr

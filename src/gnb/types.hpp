@@ -95,20 +95,10 @@ struct RRCHandoverPending
     bool isXn{};
 };
 
-struct HandoverMeasurementIdentity
-{
-    long measId{};
-    long measObjectId{};
-    long reportConfigId{};
-    nr::rrc::common::HandoverEventType eventKind{};
-    std::string eventType{};
-};
-
-struct HandoverPreparationInfo
-{
-    std::vector<HandoverMeasurementIdentity> measIdentities{};
-    OctetString measConfigRrcReconfiguration{};
-};
+// The payload of the source-to-target transparent container is deliberately not
+// described here: it is RRC's alone.  Its layout lives in gnb/rrc/handover_container.hpp
+// and the UE state it carries is RrcUeContext itself, so no shared mirror struct is
+// needed; NGAP and Xn only ever see the finished byte string.
 
 struct NGAPHandoverPending
 {
