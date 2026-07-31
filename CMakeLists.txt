@@ -94,6 +94,12 @@ if(BUILD_UNIT_TESTS)
     target_link_libraries(rrc_reference_location_tests asn-rrc)
     target_link_libraries(rrc_reference_location_tests common-lib)
 
+    # Round trip of the custom source-to-target handover container, which carries the
+    # UE's RRC context between the two gNBs. See src/gnb/handover_container.hpp.
+    add_executable(handover_container_tests tests/handover_container_tests.cpp)
+    target_compile_options(handover_container_tests PRIVATE -Wall -Wextra -pedantic)
+    target_link_libraries(handover_container_tests gnb)
+
     # Golden-vector harness: detects any change in ASN.1 codec behaviour when
     # the skeleton runtime is replaced. See docs/ASN1_R18_Migration_Plan.md.
     add_executable(asn1_golden tests/asn1_golden.cpp)

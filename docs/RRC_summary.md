@@ -148,7 +148,7 @@ In NTN mode, before building, `satHandoverTriggerCalc()` (sat_calcs.cpp) propaga
 
 `receiveMeasurementReport()` extracts serving RSRP and the best neighbor (NCI is carried in `physCellId`), stores them in the UE context, and calls `evaluateHandoverDecision()`, which re-checks the triggering event's condition (A2/A3/A5 against RSRPs; D1 against the UE's reported position) and, if met and no handover is already pending, runs `executeBasicHandover()`:
 
-1. Builds the **source-to-target transparent container**: a simulator-custom binary blob (`makeSourceToTargetTransparentContainerSimulated` → `EncodeCustomRrcContext`) carrying ueId, C-RNTI, NH/NCC and security bitmaps/K_gNB, and the full measurement configuration (measIdentities, reportConfigEvents, measObjects), plus an optional padding blob to simulate realistic container sizes. It is opaque to NGAP/Xn/AMF, as in the real architecture.
+1. Builds the **source-to-target transparent container**: a simulator-custom binary blob (`makeSourceToTargetTransparentContainerSimulated` → `ho_container::EncodeRrcContext`, framed by `ho_container::WrapSourceToTarget`) carrying ueId, C-RNTI, NH/NCC and security bitmaps/K_gNB, and the full measurement configuration (measIdentities, reportConfigEvents, measObjects), plus an optional padding blob to simulate realistic container sizes. It is opaque to NGAP/Xn/AMF, as in the real architecture.
 2. Looks the target up in the runtime neighbor store; the neighbor's `handoverInterface` selects the path:
    - **Xn**: `HANDOVER_REQUEST_SEND` to the Xn task,
    - **N2**: `HANDOVER_REQUIRED` to the NGAP task.

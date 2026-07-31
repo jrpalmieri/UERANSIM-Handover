@@ -13,7 +13,9 @@
 //   processConditionalHandover() / completeConditionalHandover() / clearChoPendingState() – CHO preparation
 //   prioritizeNeighbors()             – rank CHO target candidates (satellite-aware)
 //   makeTargetToSourceTransparentContainer() / makeSourceToTargetTransparentContainerSimulated()
-//   EncodeCustomRrcContext() / DecodeCustomRrcContext() – custom transparent-container payload
+//   ho_container::EncodeRrcContext() / ho_container::DecodeRrcContext() – custom
+//       transparent-container payload (declared in gnb/handover_container.hpp, which
+//       owns the framing that wraps it)
 //   createHandoverPreparationInformation() – standards-based HandoverPreparationInformation encode
 //
 // (MeasConfig construction and MeasurementReport reception live in measurement.cpp;
@@ -22,6 +24,7 @@
 
 #include "task.hpp"
 
+#include <gnb/handover_container.hpp>
 #include <gnb/neighbors.hpp>
 #include <gnb/ngap/task.hpp>
 #include <gnb/xn/task.hpp>
@@ -103,10 +106,6 @@ static constexpr int MAX_COND_RECONFIG_ID = 8;
 
 namespace nr::gnb
 {
-
-static RrcUeContext *DecodeCustomRrcContext(const OctetString &data);
-static bool UnwrapSourceToTargetContainer(const OctetString &container, OctetString &rrcContextOut,
-                                          bool *choIndicationOut = nullptr);
 
 using HandoverEventType = nr::rrc::common::HandoverEventType;
 using nr::sat::EcefPosition;
@@ -640,15 +639,34 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
 
     (void)xnChoRequest;
 
-    // Decode the source-to-target transparent container
-    //   Note: need to strip the transparent-container wrapper before decoding: the payload
-    //      expected by DecodeCustomRrcContext starts 16 bytes in (see UnwrapSourceToTargetContainer).
+    // Decode the source-to-target transparent container.
+    //   The interfaces hand over the framed container as the source built it, so the
+    //   16-byte wrapper has to come off before the payload can be decoded back into an
+    //   RRC context (see ho_container::WrapSourceToTarget).
     OctetString innerContext{};
-    if (UnwrapSourceToTargetContainer(*rrcContainer, innerContext))
-        ue = DecodeCustomRrcContext(innerContext);
+    bool containerChoIndication = false;
+
+    if (!rrcContainer)
+    {
+        m_logger->err("handleHandoverRequest: no source-to-target container (transactionId=%u)", transactionId);
+    }
+    else if (ho_container::UnwrapSourceToTarget(*rrcContainer, &innerContext, &containerChoIndication))
+    {
+        ue = ho_container::DecodeRrcContext(innerContext);
+
+        // The source stamps the CHO indication into the container itself, so it survives
+        // interfaces that carry no CHO IE of their own.
+        if (containerChoIndication && !isCho)
+        {
+            m_logger->debug("handleHandoverRequest: CHO indicated by container (transactionId=%u)", transactionId);
+            isCho = true;
+        }
+    }
     else
-        m_logger->err("handleHandoverRequest: malformed source-to-target container (transactionId=%u)",
-                      transactionId);
+    {
+        m_logger->err("handleHandoverRequest: malformed source-to-target container, %dB (transactionId=%u)",
+                      rrcContainer->length(), transactionId);
+    }
 
     // Check for decode failure
     if (!ue)
@@ -672,6 +690,16 @@ void GnbRrcTask::handleHandoverRequest(int sourceGnbId, uint32_t transactionId,
                               ASN_XNAP_Cause_PR_protocol, ue);
         return;
     }
+
+    m_logger->info("UE[%ld] source RRC context decoded from %s container: srcC-RNTI=%d measIds=%zu "
+                   "reportConfigs=%zu measObjects=%zu mode=%s",
+                   ue->ueId,
+                   requestingTask == ERequestingTask::XN ? "Xn" : "N2",
+                   ue->cRnti,
+                   ue->measIdentities.size(),
+                   ue->reportConfigEvents.size(),
+                   ue->measObjects.size(),
+                   isCho ? "cho-prepare" : "classic");
 
     // Check for an existing handover pending in progress for this UE.
     //  Could happen from a source retry after timeout, or a CHO re-preparation.
@@ -1055,6 +1083,16 @@ void GnbRrcTask::processConditionalHandover(int64_t ueId, const nr::rrc::common:
 
     for (int64_t targetNci : prepState.candidateNcis)
     {
+        // Each candidate is prepared independently, so every request carries its own
+        // copy of the source-to-target container (the message takes ownership of it).
+        auto rrcContainer = makeSourceToTargetTransparentContainerSimulated(*ue, 0, true);
+        if (!rrcContainer)
+        {
+            m_logger->err("UE[%ld] CHO profile %d: failed to build source-to-target container for targetNCI=%ld; "
+                          "skipping candidate", ue->ueId, choProfileIdx, targetNci);
+            continue;
+        }
+
         auto choReq = std::make_unique<GnbCondHandoverRequest>();
         // TODO: setup the CHO request parameters based on score and T1 conditions
         choReq->choTrigger = 0;
@@ -1066,6 +1104,7 @@ void GnbRrcTask::processConditionalHandover(int64_t ueId, const nr::rrc::common:
         w->ueId = ue->ueId;
         w->hoTargetNci = targetNci;
         w->hoCause = NgapCause::RadioNetwork_handover_desirable_for_radio_reason;
+        w->rrcContainer = std::move(rrcContainer);
         w->choParams = std::move(choReq);
         m_base->ngapTask->push(std::move(w));
     }
@@ -1541,14 +1580,6 @@ OctetString GnbRrcTask::createHandoverPreparationInformation(int64_t ueId)
     return encoded;
 }
 
-static constexpr uint32_t CUSTOM_S2T_MAGIC = 0x53325443; // "S2TC"
-static constexpr uint8_t CUSTOM_S2T_VERSION = 1;
-static constexpr uint32_t CUSTOM_S2T_DEFAULT_BLOB_SIZE = 0;
-static constexpr uint32_t CUSTOM_T2S_MAGIC = 0x54325343; // "T2SC"
-static constexpr uint8_t CUSTOM_T2S_VERSION = 1;
-static constexpr uint32_t CUSTOM_T2S_DEFAULT_BLOB_SIZE = 0;
-static constexpr uint8_t CUSTOM_S2T_FLAG_CHO_INDICATION = 0x01;
-
 static uint64_t doubleToU64(double d)
 {
     uint64_t u;
@@ -1578,7 +1609,7 @@ static void appendRefLoc(OctetString &out, const nr::rrc::common::EventReference
 
 // Encodes a RrcUeContext into a flat binary OctetString.
 // Layout: fixed header | measIdentities | reportConfigEvents | measObjects
-static OctetString EncodeCustomRrcContext(RrcUeContext &ue)
+OctetString ho_container::EncodeRrcContext(const RrcUeContext &ue)
 {
     OctetString out{};
 
@@ -1655,10 +1686,10 @@ static OctetString EncodeCustomRrcContext(RrcUeContext &ue)
     return out;
 }
 
-// Decodes a flat binary OctetString produced by EncodeCustomRrcContext into a heap-allocated
+// Decodes a flat binary OctetString produced by EncodeRrcContext into a heap-allocated
 // RrcUeContext.  Returns nullptr if the buffer is too short or otherwise malformed.
 // Caller owns the returned pointer.
-static RrcUeContext *DecodeCustomRrcContext(const OctetString &data)
+RrcUeContext *ho_container::DecodeRrcContext(const OctetString &data)
 {
     const int total = data.length();
     int off = 0;
@@ -1794,64 +1825,19 @@ static RrcUeContext *DecodeCustomRrcContext(const OctetString &data)
  */
 std::unique_ptr<OctetString> GnbRrcTask::makeSourceToTargetTransparentContainerSimulated(RrcUeContext &ue, uint32_t blobSize, bool choIndication)
 {
-    auto rrcContext = EncodeCustomRrcContext(ue);
+    auto rrcContext = ho_container::EncodeRrcContext(ue);
     if (rrcContext.length() == 0)
+    {
+        m_logger->err("UE[%ld] failed to encode RRC context for source-to-target container", ue.ueId);
         return nullptr;
+    }
 
-    auto blob = OctetString::FromSpare(static_cast<int>(blobSize));
+    auto encoded = ho_container::WrapSourceToTarget(rrcContext, blobSize, choIndication);
 
-    OctetString encoded{};
-    encoded.appendOctet4(CUSTOM_S2T_MAGIC);
-    encoded.appendOctet(CUSTOM_S2T_VERSION);
-    // indicator that this a ConditionalHandover (CHO) request
-    uint8_t flags = choIndication ? CUSTOM_S2T_FLAG_CHO_INDICATION : 0;
-    encoded.appendOctet(flags);
-    encoded.appendOctet2(0); // reserved
-
-    // relevant UE context information
-    encoded.appendOctet4(static_cast<uint32_t>(rrcContext.length()));
-    encoded.appendOctet4(static_cast<uint32_t>(blob.length()));
-    encoded.append(rrcContext);
-    encoded.append(blob);
+    m_logger->debug("UE[%ld] source-to-target container built: rrcContext=%dB padding=%uB total=%dB cho=%s",
+                    ue.ueId, rrcContext.length(), blobSize, encoded.length(), choIndication ? "true" : "false");
 
     return std::make_unique<OctetString>(std::move(encoded));
-}
-
-/**
- * Inverse of makeSourceToTargetTransparentContainerSimulated(): strips the
- * 16-byte wrapper (magic, version, flags, reserved, rrcContext length, blob
- * length) and yields just the EncodeCustomRrcContext() payload.
- *
- * Without this the target fed the whole wrapped container straight into
- * DecodeCustomRrcContext(), which reads a ueId from offset 0 and so parsed the
- * ASCII magic "S2TC" as the UE identity. Nothing caught it because the
- * target-side container decode had never actually executed.
- */
-static bool UnwrapSourceToTargetContainer(const OctetString &container, OctetString &rrcContextOut,
-                                          bool *choIndicationOut)
-{
-    static constexpr int HEADER_SIZE = 16;
-    if (container.length() < HEADER_SIZE)
-        return false;
-
-    if (static_cast<uint32_t>(container.get4I(0)) != CUSTOM_S2T_MAGIC)
-        return false;
-    if (static_cast<uint8_t>(container.getI(4)) != CUSTOM_S2T_VERSION)
-        return false;
-
-    const uint8_t flags = static_cast<uint8_t>(container.getI(5));
-    // octets 6..7 are reserved
-    const int contextLen = container.get4I(8);
-    // octets 12..15 hold the trailing blob length, which the target ignores.
-
-    if (contextLen < 0 || HEADER_SIZE + contextLen > container.length())
-        return false;
-
-    if (choIndicationOut)
-        *choIndicationOut = (flags & CUSTOM_S2T_FLAG_CHO_INDICATION) != 0;
-
-    rrcContextOut = container.subCopy(HEADER_SIZE, contextLen);
-    return true;
 }
 
 

@@ -209,7 +209,7 @@ class NgapTask : public NtsTask
     // expireTime has passed — i.e. the UE never completed the handover.
     void sweepPendingHandovers();
 
-    std::unique_ptr<OctetString> makeSourceTargetNgranTransparentContainer(int64_t targetNCI, const Plmn &targetPlmn, std::unique_ptr<OctetString> rrcContainer);
+    std::unique_ptr<OctetString> makeSourceTargetNgranTransparentContainer(int64_t targetNCI, const Plmn &targetPlmn, const OctetString &rrcContainer);
 
     /* Xn Handover (gNB-gNB) */
 

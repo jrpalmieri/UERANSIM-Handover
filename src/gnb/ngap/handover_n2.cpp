@@ -14,6 +14,7 @@
 #include "utils.hpp"
 
 #include <gnb/gtp/task.hpp>
+#include <gnb/handover_container.hpp>
 #include <gnb/neighbors.hpp>
 #include <gnb/rrc/task.hpp>
 #include <lib/rrc/encode.hpp>
@@ -527,6 +528,15 @@ void NgapTask::sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause c
         return;
     }
 
+    // RRC owns the source-to-target container (it holds the UE's RRC context); NGAP only
+    // relays it.  Without it the target has nothing to build a UE context from, so there is
+    // no point in starting the procedure.
+    if (!rrcContainer || rrcContainer->length() == 0)
+    {
+        m_logger->err("UE[%ld]: sendHandoverRequired: no source-to-target container provided by RRC. Aborting.", ueId);
+        return;
+    }
+
     // get target cell info
     auto neighborOpt = m_base->neighbors->findByNci(targetNci);
     if (!neighborOpt)
@@ -608,7 +618,13 @@ void NgapTask::sendHandoverRequired(int64_t ueId, int64_t targetNci, NgapCause c
     // IE: SourceToTarget-TransparentContainer
     // TODO: need to add SessionInformationList to enable DL Forwarding
     {
-        auto sttc = makeSourceTargetNgranTransparentContainer(targetNci, neighbor.plmn, std::move(rrcContainer));
+        auto sttc = makeSourceTargetNgranTransparentContainer(targetNci, neighbor.plmn, *rrcContainer);
+        if (!sttc)
+        {
+            m_logger->err("UE[%ld]: sendHandoverRequired: failed to encode SourceToTarget-TransparentContainer", ueId);
+            for (auto *ie : ies) asn::Free(asn_DEF_ASN_NGAP_ProtocolIE_Field_13561P101, ie);
+            return;
+        }
         auto *ie = asn::New<ASN_NGAP_ProtocolIE_Field_13561P101>();
         ie->id = ASN_NGAP_ProtocolIE_ID_id_SourceToTarget_TransparentContainer;
         ie->criticality = ASN_NGAP_Criticality_reject;
@@ -807,12 +823,49 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg, 
                    "s2tContainer=%zuB pduSessionCount=%d", transactionId,
                    amfId, amfUeNgapId, hoType, sourceToTargetSize, requestedPsCount);
 
-    
-    // *******************
-    // Here is where we decode the custom Conditional Handover IE
-    //  For now, we assume that the Conditional Handover IE is not present
-    // ************************
+    // Unwrap the NGAP layer of the source-to-target container.  The AMF relays the source's
+    // SourceToTarget-TransparentContainer verbatim; it is an APER-encoded
+    // SourceNGRANNode-ToTargetNGRANNode-TransparentContainer whose rRCContainer IE carries the
+    // simulator's custom RRC-context blob (GnbRrcTask::makeSourceToTargetTransparentContainerSimulated).
+    // RRC decodes the blob and nothing else, so the NGAP framing has to come off here — passing
+    // the whole APER container on left the target unable to recover the source's RRC context.
+    OctetString sourceRrcContext{};
+    {
+        auto *s2tContainer = ngap_encode::Decode<ASN_NGAP_SourceNGRANNode_ToTargetNGRANNode_TransparentContainer>(
+            asn_DEF_ASN_NGAP_SourceNGRANNode_ToTargetNGRANNode_TransparentContainer,
+            ieContainer->SourceToTarget_TransparentContainer);
+
+        if (s2tContainer == nullptr)
+        {
+            m_logger->err("receiveHandoverRequest: NGTxId[%d]: cannot decode "
+                          "SourceNGRANNode-ToTargetNGRANNode-TransparentContainer (%zuB)",
+                          transactionId, sourceToTargetSize);
+            sendHandoverFailure(NgapCause::Protocol_abstract_syntax_error_falsely_constructed_message, amfUeNgapId);
+            return;
+        }
+
+        sourceRrcContext = asn::GetOctetString(s2tContainer->rRCContainer);
+        asn::Free(asn_DEF_ASN_NGAP_SourceNGRANNode_ToTargetNGRANNode_TransparentContainer, s2tContainer);
+    }
+
+    if (sourceRrcContext.length() == 0)
+    {
+        m_logger->err("receiveHandoverRequest: NGTxId[%d]: source-to-target container carries an empty rRCContainer",
+                      transactionId);
+        sendHandoverFailure(NgapCause::Protocol_semantic_error, amfUeNgapId);
+        return;
+    }
+
+    // NGAP has no CHO IE of its own in this build, so the conditional-handover indication is
+    // read from the flags of the container the source RRC framed (RRC reads it again for its
+    // own state; NGAP needs it here to pick the candidate timeout below).
     bool isCho = false;
+    if (!ho_container::UnwrapSourceToTarget(sourceRrcContext, nullptr, &isCho))
+    {
+        m_logger->warn("receiveHandoverRequest: NGTxId[%d]: rRCContainer (%dB) is not a recognized source-to-target "
+                       "container; leaving the handover decode to RRC",
+                       transactionId, sourceRrcContext.length());
+    }
 
 
     /* create a new provisional NGAP UE context */
@@ -894,7 +947,7 @@ void NgapTask::receiveHandoverRequest(int amfId, ASN_NGAP_HandoverRequest *msg, 
     // send rrc container to RRC for processing
 
     auto rrcMsg = std::make_unique<NmGnbNgapToRrc>(NmGnbNgapToRrc::HANDOVER_REQUEST_RECEIVED);
-    rrcMsg->rrcContainer = std::make_unique<OctetString>(asn::GetOctetString(ieContainer->SourceToTarget_TransparentContainer));
+    rrcMsg->rrcContainer = std::make_unique<OctetString>(std::move(sourceRrcContext));
     rrcMsg->ngapTxId = transactionId;
     rrcMsg->isCho = isCho;
     rrcMsg->sessionList = std::move(sessionList);
@@ -1385,12 +1438,15 @@ void NgapTask::sendHandoverNotify(int64_t ueId)
 //   The provided RRC container is inserted into the rrcContainer IE.
 //   The target NCI and PLMN are used to build the targetCell_ID IE.
 //   The UEHistoryInformation IE is left empty in this implementation.
-std::unique_ptr<OctetString> NgapTask::makeSourceTargetNgranTransparentContainer(int64_t targetNCI, const Plmn &targetPlmn, std::unique_ptr<OctetString> rrcContainer)
+//
+//   The target side undoes this in receiveHandoverRequest(): the rRCContainer IE is
+//   extracted and handed to RRC untouched, since only the two gNBs understand it.
+std::unique_ptr<OctetString> NgapTask::makeSourceTargetNgranTransparentContainer(int64_t targetNCI, const Plmn &targetPlmn, const OctetString &rrcContainer)
 {
     auto *container = asn::New<ASN_NGAP_SourceNGRANNode_ToTargetNGRANNode_TransparentContainer>();
 
     // rRCContainer (mandatory)
-    asn::SetOctetString(container->rRCContainer, *rrcContainer);
+    asn::SetOctetString(container->rRCContainer, rrcContainer);
 
     // targetCell_ID (mandatory) — build NR-CGI from the neighbor entry
     container->targetCell_ID.present = ASN_NGAP_NGRAN_CGI_PR_nR_CGI;
@@ -1404,6 +1460,9 @@ std::unique_ptr<OctetString> NgapTask::makeSourceTargetNgranTransparentContainer
     OctetString encoded = ngap_encode::EncodeS(
         asn_DEF_ASN_NGAP_SourceNGRANNode_ToTargetNGRANNode_TransparentContainer, container);
     asn::Free(asn_DEF_ASN_NGAP_SourceNGRANNode_ToTargetNGRANNode_TransparentContainer, container);
+
+    if (encoded.length() == 0)
+        return nullptr;
 
     return std::make_unique<OctetString>(std::move(encoded));
 }
