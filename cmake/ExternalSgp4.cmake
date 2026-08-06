@@ -28,6 +28,11 @@ ExternalProject_Add(sgp4_external
     CMAKE_ARGS
         -DCMAKE_BUILD_TYPE=Release
         -DCMAKE_INSTALL_PREFIX=${SGP4_INSTALL_DIR}
+        # An external project does not inherit the parent's cache, so the
+        # compiler launcher has to be handed over explicitly. Empty when ccache
+        # is absent, which CMake treats as "no launcher".
+        -DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}
+        -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}
     INSTALL_COMMAND
         ${CMAKE_COMMAND} --install <BINARY_DIR>
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

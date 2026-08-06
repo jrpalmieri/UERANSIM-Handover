@@ -7,6 +7,30 @@ set(CMAKE_C_STANDARD 11)
 
 option(STATIC_BUILD "Build fully static executables for portability across Ubuntu versions" OFF)
 option(BUILD_UNIT_TESTS "Build local C++ unit-test executables" ON)
+option(USE_CCACHE "Route compilation through ccache when it is installed" ON)
+
+#################### COMPILER CACHE ####################
+
+# This tree compiles about 5,500 translation units, roughly 5,200 of them the
+# generated ASN.1 sources under src/asn. Those sources change only when the
+# definitions in asn1-definitions are regenerated, so on a normal rebuild almost
+# every one of them is recompiled to a result that is byte-for-byte identical to
+# the previous one. ccache turns each of those recompilations into a cache
+# lookup. It is used only when installed, and the build behaves the same without
+# it, so this stays enabled by default rather than being a developer opt-in.
+#
+# The launcher variables are read when a target is created, so this must come
+# before the add_subdirectory calls below.
+if(USE_CCACHE)
+    find_program(CCACHE_PROGRAM ccache)
+    if(CCACHE_PROGRAM)
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        message(STATUS "ccache enabled: ${CCACHE_PROGRAM}")
+    else()
+        message(STATUS "ccache not found; compiling without a compiler cache")
+    endif()
+endif()
 
 include_directories(src)
 
